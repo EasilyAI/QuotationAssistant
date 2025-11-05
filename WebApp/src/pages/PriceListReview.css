@@ -1,0 +1,285 @@
+/* Price List Review Page Styles */
+.price-list-review-page {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.price-list-review-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  gap: 24px;
+}
+
+/* Price List Info Section */
+.price-list-info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-label {
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--color-text-primary);
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--color-text-primary);
+  transition: border-color 0.2s ease;
+  font-family: var(--font-family);
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.form-select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M5 7.5L10 12.5L15 7.5' stroke='%23121417' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 40px;
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* Items Count */
+.items-count {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--color-background-gray);
+  border-radius: var(--radius-md);
+}
+
+.count-text {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--color-text-secondary);
+}
+
+.count-text strong {
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+/* Price Table */
+.price-table-container {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+
+.price-table {
+  display: flex;
+  flex-direction: column;
+  min-width: 1200px;
+}
+
+/* Table Header */
+.price-table-header {
+  display: grid;
+  grid-template-columns: 140px 250px 150px 110px 130px 90px 80px 120px;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--color-background-gray);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.price-header-cell {
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--color-text-primary);
+  padding: 4px;
+}
+
+/* Table Body */
+.price-table-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.price-table-row {
+  display: grid;
+  grid-template-columns: 140px 250px 150px 110px 130px 90px 80px 120px;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--color-border-light);
+  align-items: center;
+}
+
+.price-table-row:last-child {
+  border-bottom: none;
+}
+
+.price-table-row:hover {
+  background: var(--color-background-gray);
+}
+
+.price-cell {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+/* Cell Inputs */
+.cell-input,
+.cell-select {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--color-text-primary);
+  transition: border-color 0.2s ease;
+}
+
+.cell-input:focus,
+.cell-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.cell-select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg width='16' height='16' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M5 7.5L10 12.5L15 7.5' stroke='%23121417' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  padding-right: 28px;
+}
+
+/* Remove numbers input spinner */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Action Buttons */
+.price-cell.actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.action-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.remove-btn {
+  background: var(--color-background-gray);
+  color: var(--color-error);
+}
+
+.remove-btn:hover {
+  background: var(--color-error);
+  color: var(--color-background);
+}
+
+/* Add Item Section */
+.add-item-section {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  padding: 20px;
+}
+
+.add-item-btn-large {
+  min-width: 200px;
+}
+
+/* Notes Section */
+.notes-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.section-title {
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 24px;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+/* Responsive Price Table */
+@media (max-width: 1400px) {
+  .price-table-container {
+    overflow-x: scroll;
+  }
+}
+
