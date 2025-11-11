@@ -1,11 +1,15 @@
 import boto3
 import json
+import os
+import csv
+from collections import defaultdict
+from typing import List, Dict, Any, Tuple
 
-def start_job(bucket, document, region='us-east-1'):
+def start_job(bucket, document, features=['TABLES','FORMS'], region='us-east-1'):
     client = boto3.client('textract', region_name=region)
     response = client.start_document_analysis(
         DocumentLocation={'S3Object': {'Bucket': bucket, 'Name': document}},
-        FeatureTypes=['TABLES','FORMS'] #TODO - remove forms if all the information is in the tables
+        FeatureTypes=features
     )
     job_id = response['JobId']
     print(f"Started job with JobId: {job_id}")
@@ -46,9 +50,7 @@ def save_results_to_file(pages, out_filename='textract_output.json'):
 
 
 
-    import json, os, csv
-from collections import defaultdict
-from typing import List, Dict, Any, Tuple
+
 
 
 def load_textract_pages(path: str) -> List[Dict[str, Any]]:
