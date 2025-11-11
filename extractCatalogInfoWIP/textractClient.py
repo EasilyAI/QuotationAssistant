@@ -98,17 +98,24 @@ def _collect_cells_for_table(tblock, id_map):
     """Return list of CELLs, and MERGED_CELLs (if any) for this table."""
     cells, merged = [], []
     for rel in tblock.get("Relationships", []):
-        if rel.get("Type") != "CHILD":
-            continue
-        for cid in rel.get("Ids", []):
-            b = id_map.get(cid)
-            if not b: 
-                continue
-            bt = b.get("BlockType")
-            if bt == "CELL":
-                cells.append(b)
-            elif bt == "MERGED_CELL":
-                merged.append(b)
+        rel_type = rel.get("Type")
+        # CELLs are linked via CHILD relationship
+        if rel_type == "CHILD":
+            for cid in rel.get("Ids", []):
+                b = id_map.get(cid)
+                if not b: 
+                    continue
+                bt = b.get("BlockType")
+                if bt == "CELL":
+                    cells.append(b)
+        # MERGED_CELLs are linked via MERGED_CELL relationship (not CHILD)
+        elif rel_type == "MERGED_CELL":
+            for cid in rel.get("Ids", []):
+                b = id_map.get(cid)
+                if not b:
+                    continue
+                if b.get("BlockType") == "MERGED_CELL":
+                    merged.append(b)
     return cells, merged
 
 def extract_tables_from_blocks_unmerged(blocks, replicate_data=True, header_scan_rows=5):
@@ -136,35 +143,10 @@ def extract_tables_from_blocks_unmerged(blocks, replicate_data=True, header_scan
         spans = [[(1,1) for _ in range(max_col)] for _ in range(max_row)]
         is_header_row = [False]*max_row  # we'll guess header band later
 
-        # Helper: place text across span
-        def place_text(r0, c0, rs, cs, txt, is_header=False, replicate=True):
-            # top-left always gets text and span
-            grid[r0][c0] = txt if not grid[r0][c0] else grid[r0][c0]
-            spans[r0][c0] = (rs, cs)
-            # optional replication across covered cells
-            if replicate:
-                for rr in range(r0, r0+rs):
-                    for cc in range(c0, c0+cs):
-                        if rr == r0 and cc == c0:
-                            continue
-                        if is_header:
-                            # In header rows, copy parent so we can compose later
-                            if not grid[rr][cc]:
-                                grid[rr][cc] = txt
-                        else:
-                            if not grid[rr][cc]:
-                                grid[rr][cc] = txt
-
-        # First pass: put CELL text and spans
-        for c in cells:
-            r0 = c.get("RowIndex", 1)-1
-            c0 = c.get("ColumnIndex", 1)-1
-            rs = c.get("RowSpan", 1)
-            cs = c.get("ColumnSpan", 1)
-            txt = get_text_for_block(c, id_map)
-            place_text(r0, c0, rs, cs, txt, is_header=False, replicate=replicate_data)
-
-        # If MERGED_CELL is present, ensure its text is propagated as well
+        # Step 1: Process MERGED_CELLs first to establish merged regions and find their text
+        # Build a map of merged regions: (r0, c0, rs, cs) -> text_value
+        merged_regions = {}  # key: (r0, c0, rs, cs), value: text
+        
         for m in merged_cells:
             # Textract links MERGED_CELL -> CHILD -> CELL ids
             child_ids = []
@@ -174,7 +156,8 @@ def extract_tables_from_blocks_unmerged(blocks, replicate_data=True, header_scan
             child_cells = [id_map[i] for i in child_ids if id_map.get(i) and id_map[i].get("BlockType")=="CELL"]
             if not child_cells:
                 continue
-            # Compute merged area (min row/col, max row/col)
+            
+            # Compute merged area boundaries
             r_indices = []
             c_indices = []
             for cc in child_cells:
@@ -184,11 +167,120 @@ def extract_tables_from_blocks_unmerged(blocks, replicate_data=True, header_scan
                 cs = cc.get("ColumnSpan", 1)
                 r_indices.extend(list(range(ri, ri+rs)))
                 c_indices.extend(list(range(ci, ci+cs)))
+            
             r0, c0 = min(r_indices), min(c_indices)
             rs = max(r_indices) - r0 + 1
             cs = max(c_indices) - c0 + 1
-            txt = get_text_for_block(m, id_map) or get_text_for_block(child_cells[0], id_map)
-            place_text(r0, c0, rs, cs, txt, is_header=False, replicate=replicate_data)
+            
+            # Try to get text from MERGED_CELL block first, then from any child cell
+            txt = get_text_for_block(m, id_map)
+            if not txt or not txt.strip():
+                # Search through all child cells to find where the text actually is
+                for cc in child_cells:
+                    txt = get_text_for_block(cc, id_map)
+                    if txt and txt.strip():
+                        break
+            
+            if txt and txt.strip():
+                merged_regions[(r0, c0, rs, cs)] = txt.strip()
+        
+        # Step 2: Process all CELLs and place their text
+        # Also track which cells are part of merged regions
+        cell_spans = {}  # key: (r0, c0), value: (rs, cs)
+        
+        for c in cells:
+            r0 = c.get("RowIndex", 1)-1
+            c0 = c.get("ColumnIndex", 1)-1
+            rs = c.get("RowSpan", 1)
+            cs = c.get("ColumnSpan", 1)
+            
+            # Store span information
+            cell_spans[(r0, c0)] = (rs, cs)
+            spans[r0][c0] = (rs, cs)
+            
+            # Get text for this cell
+            txt = get_text_for_block(c, id_map)
+            if txt and txt.strip():
+                grid[r0][c0] = txt.strip()
+        
+        # Step 3: Apply merged region text to all positions in the merged area
+        for (r0, c0, rs, cs), txt in merged_regions.items():
+            for rr in range(r0, r0+rs):
+                for cc in range(c0, c0+cs):
+                    grid[rr][cc] = txt
+                    spans[rr][cc] = (rs, cs)
+        
+        # Step 4: If replicate_data=True, replicate text across all spans
+        # For each cell with a span, collect text from ALL cells within that span, join them, and replicate
+        span_regions = {}  # key: (r0, c0, rs, cs), value: set of (r, c) positions
+        
+        if replicate_data:
+            # Create a map of span regions: (r0, c0, rs, cs) -> set of all cells in that span
+            
+            # Process regular cells with spans
+            for (r0, c0), (rs, cs) in cell_spans.items():
+                if rs > 1 or cs > 1:  # Only process cells that actually span
+                    # Collect all positions in this span
+                    positions = set()
+                    for rr in range(r0, r0+rs):
+                        for cc in range(c0, c0+cs):
+                            positions.add((rr, cc))
+                    span_regions[(r0, c0, rs, cs)] = positions
+            
+            # Process merged regions
+            for (r0, c0, rs, cs) in merged_regions.keys():
+                positions = set()
+                for rr in range(r0, r0+rs):
+                    for cc in range(c0, c0+cs):
+                        positions.add((rr, cc))
+                span_regions[(r0, c0, rs, cs)] = positions
+            
+            # For each span region, collect text from ALL cells within it, join, and replicate
+            # Build a map of position -> original cell block for text extraction
+            position_to_cell = {}
+            for (r0, c0), (rs, cs) in cell_spans.items():
+                for rr in range(r0, r0+rs):
+                    for cc in range(c0, c0+cs):
+                        # Find the original cell block for this position
+                        for c in cells:
+                            cr0 = c.get("RowIndex", 1)-1
+                            cc0 = c.get("ColumnIndex", 1)-1
+                            crs = c.get("RowSpan", 1)
+                            ccs = c.get("ColumnSpan", 1)
+                            if cr0 <= rr < cr0 + crs and cc0 <= cc < cc0 + ccs:
+                                position_to_cell[(rr, cc)] = c
+                                break
+            
+            for (r0, c0, rs, cs), positions in span_regions.items():
+                # Collect all text values from ORIGINAL cell blocks within this span (not from grid)
+                text_parts = []
+                seen_text = set()  # Deduplicate text values
+                
+                for (rr, cc) in positions:
+                    # Try to get text from original cell block first
+                    cell_block = position_to_cell.get((rr, cc))
+                    if cell_block:
+                        cell_text = get_text_for_block(cell_block, id_map)
+                        if cell_text and cell_text.strip():
+                            text_stripped = cell_text.strip()
+                            if text_stripped not in seen_text:
+                                text_parts.append(text_stripped)
+                                seen_text.add(text_stripped)
+                    else:
+                        # Fallback to grid if no cell block found
+                        cell_text = grid[rr][cc]
+                        if cell_text and cell_text.strip():
+                            text_stripped = cell_text.strip()
+                            if text_stripped not in seen_text:
+                                text_parts.append(text_stripped)
+                                seen_text.add(text_stripped)
+                
+                # Join all text parts with space (deduplicated)
+                if text_parts:
+                    joined_text = " ".join(text_parts)
+                    # Replicate the joined text to ALL cells in the span
+                    for (rr, cc) in positions:
+                        grid[rr][cc] = joined_text
 
         # ---- Header detection & composition (multi-row headers) ----
         # Density-based header band guess
@@ -212,6 +304,72 @@ def extract_tables_from_blocks_unmerged(blocks, replicate_data=True, header_scan
                     parts.append(t)
             header = " / ".join(parts) if parts else f"col_{c+1}"
             headers.append(header)
+
+        # Step 5: Handle cells that should be merged but Textract didn't detect as merged
+        # This is a fallback for cases where Textract doesn't detect RowSpan > 1
+        # We infer merged groups by looking for patterns: non-empty cell followed by empty cells until next non-empty
+        # But only do this if replicate_data=True and we haven't already handled these cells via spans
+        # Also: skip header region when inferring (use header_scan_rows as a hint, but don't rely on exact detection)
+        if replicate_data:
+            # Track which positions are already covered by explicit spans
+            covered_positions = set()
+            for (r0, c0, rs, cs) in span_regions.keys():
+                for rr in range(r0, r0+rs):
+                    for cc in range(c0, c0+cs):
+                        covered_positions.add((rr, cc))
+            
+            # Start inference from after the header region (use header_scan_rows as hint)
+            data_start_row = min(header_scan_rows + 1, max_row)
+            
+            # For each column, identify inferred merged groups (only for positions not already covered)
+            for col in range(max_col):
+                row = data_start_row  # Start from after header region
+                while row < max_row:
+                    # Skip if this position is already covered by an explicit span
+                    if (row, col) in covered_positions:
+                        row += 1
+                        continue
+                    
+                    # Check if current cell has a value
+                    if grid[row][col] and grid[row][col].strip():
+                        # Found start of a potential merged cell group
+                        value = grid[row][col]
+                        group_start = row
+                        
+                        # Find the end of this group (next non-empty cell or end of table)
+                        # Also collect all text values in this group
+                        text_parts = [value.strip()]
+                        row += 1
+                        group_positions = [(group_start, col)]
+                        
+                        while row < max_row:
+                            # Skip if this position is already covered by an explicit span
+                            if (row, col) in covered_positions:
+                                break
+                            
+                            # Stop if we hit a non-empty cell (start of next group)
+                            if grid[row][col] and grid[row][col].strip():
+                                break
+                            
+                            # This is an empty cell in the same group
+                            group_positions.append((row, col))
+                            row += 1
+                        
+                        # If we found a group with multiple positions, join and replicate
+                        if len(group_positions) > 1:
+                            # Collect any additional text from cells in the group
+                            for (rr, cc) in group_positions[1:]:
+                                if grid[rr][cc] and grid[rr][cc].strip():
+                                    text_parts.append(grid[rr][cc].strip())
+                            
+                            # Join all text parts and replicate
+                            if text_parts:
+                                joined_text = " ".join(text_parts)
+                                for (rr, cc) in group_positions:
+                                    grid[rr][cc] = joined_text
+                    else:
+                        # Empty cell, move to next
+                        row += 1
 
         # Body rows
         body_rows = [grid[r] for r in range(max_row) if not is_header_row[r]]
