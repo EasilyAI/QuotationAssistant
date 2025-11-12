@@ -443,3 +443,222 @@ def get_header_row_count(column_headers: List[Dict[str, Any]]) -> int:
     
     # Return the maximum row_index (1-based, so max row_index = number of header rows)
     return max(row_indices)
+
+
+def has_ordering_number_header(headers):
+    """
+    Check if headers contain an ordering number column and return its index.
+    
+    Args:
+        headers: List of header strings.
+    
+    Returns:
+        int or None: Column index (0-based) if found, None otherwise.
+    """
+    # Normalize to lower-case, remove common non-alpha chars, for fuzzy matching
+    norm = lambda s: ''.join(c.lower() for c in s if c.isalnum() or c.isspace())
+    for idx, h in enumerate(headers):
+        hn = norm(h)
+        # Look for "ordering" and "number" close to each other
+        if "ordering" in hn and "number" in hn:
+            return idx
+        # Some catalogs may use just "ordering", or "order number"
+        if "order" in hn and "number" in hn:
+            return idx
+        # Accept "ordering#" or "ordering no."
+        if "ordering" in hn and ("no" in hn or "#" in hn):
+            return idx
+    return None
+
+
+def convert_grid_to_catalog_products(
+    grid_result: Dict[str, Any], 
+    tblock: Dict[str, Any] = None, 
+    id_map: Dict[str, Any] = None,
+    tindex: int = None
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Convert table grid result to catalog products dictionary keyed by ordering number.
+    
+    This function takes the output from convert_table_block_to_grid() and converts it
+    into a format suitable for the UI catalog review page. The result is a dictionary
+    where keys are ordering numbers and values are product objects.
+    
+    Args:
+        grid_result: Dictionary from convert_table_block_to_grid() with keys:
+            - "headers": list of column header strings
+            - "rows": list of data rows (each row is a list of cell values)
+            - "page": page number (optional)
+            - "spans": span information (optional)
+        tblock: Optional TABLE block from Textract. Required for location information.
+        id_map: Optional dictionary mapping block Ids to blocks. Required for location information.
+        tindex: Optional index of the table block in the table blocks list. Required for location information.
+    
+    Returns:
+        Dictionary mapping ordering numbers to product objects:
+        {
+            "PN-12345": {
+                "id": int (auto-generated),
+                "orderingNumber": "PN-12345",
+                "specs": {
+                    "Header Name": "Cell Value",
+                    ...
+                },
+                "location": {
+                    "page": int,
+                    "boundingBox": {
+                        "left": float (0-1, relative to page width),
+                        "top": float (0-1, relative to page height),
+                        "width": float (0-1, relative to page width),
+                        "height": float (0-1, relative to page height)
+                    }
+                }
+            },
+            ...
+        }
+        
+        Note: Empty fields (specs, location) are omitted from the output.
+    
+    The function:
+    1. Identifies the ordering number column (using has_ordering_number_header)
+    2. Converts all other columns to specs as an object (column header as key, cell value as value)
+    3. Uses ordering number as the dictionary key
+    4. Auto-generates sequential IDs for each product
+    5. Includes location information with PDF bounding box coordinates if tblock and id_map provided
+    6. Omits empty fields (specs, location) from the output
+    
+    Examples:
+        >>> grid = {
+        ...     "headers": ["Ordering Number", "Pressure", "Material"],
+        ...     "rows": [
+        ...         ["PN-123", "1000psi", "SS316"],
+        ...         ["PN-456", "500psi", "Aluminum"]
+        ...     ],
+        ...     "page": 2
+        ... }
+        >>> products = convert_grid_to_catalog_products(grid, tblock, id_map)
+        >>> products["PN-123"]["specs"]
+        {'Pressure': '1000psi', 'Material': 'SS316'}
+        >>> products["PN-123"]["location"]["boundingBox"]
+        {'left': 0.1, 'top': 0.2, 'width': 0.15, 'height': 0.02}
+    """
+    headers = grid_result.get("headers", [])
+    rows = grid_result.get("rows", [])
+    page = grid_result.get("page", None)
+    
+    if not headers or not rows:
+        return {}
+    
+    # Find ordering number column index
+    ordering_col_idx = has_ordering_number_header(headers)
+    
+    if ordering_col_idx is None:
+        # If no ordering number column found, return empty dict
+        return {}
+    
+    # Identify spec columns (all columns except ordering number)
+    spec_column_indices = []
+    for idx, header in enumerate(headers):
+        if idx != ordering_col_idx:
+            spec_column_indices.append(idx)
+    
+    # Build a mapping from (row_index, col_index) to cell for location lookup
+    # We need to find which Textract column index corresponds to the ordering column
+    cell_position_map = {}
+    if tblock and id_map:
+        cells, _ = _collect_cells_for_table(tblock, id_map)
+        # Find the Textract column index that corresponds to our ordering column
+        # We'll match by finding cells in the first data row that match the ordering numbers
+        # First, build a map of all cells by their position
+        for cell in cells:
+            cell_row = cell.get("RowIndex")
+            cell_col = cell.get("ColumnIndex")
+            cell_text = get_text_for_block(cell, id_map).strip()
+            if cell_row and cell_col:
+                cell_position_map[(cell_row, cell_col)] = {
+                    "rowIndex": cell_row,
+                    "columnIndex": cell_col,
+                    "text": cell_text,
+                    "cell": cell
+                }
+    
+    products = {}
+    product_id_counter = 1
+    
+    for row_idx, row in enumerate(rows):
+        # Skip empty rows
+        if not row or all(not str(cell).strip() for cell in row):
+            continue
+        
+        # Extract ordering number
+        ordering_number = str(row[ordering_col_idx]).strip() if ordering_col_idx < len(row) else ""
+        
+        # Skip rows without ordering number
+        if not ordering_number:
+            continue
+        
+        # Build specs as object (column header as key, cell value as value)
+        specs = {}
+        for spec_col_idx in spec_column_indices:
+            if spec_col_idx < len(row):
+                spec_key = headers[spec_col_idx].strip()
+                spec_value = str(row[spec_col_idx]).strip()
+                # Only add spec if both key and value are non-empty
+                if spec_key and spec_value:
+                    specs[spec_key] = spec_value
+        
+        # Get location information with PDF coordinates
+        location = None
+        if tblock and id_map and cell_position_map:
+            # Find the cell that matches this ordering number
+            matching_cell_info = None
+            for (cell_row, cell_col), cell_info in cell_position_map.items():
+                if cell_info["text"] == ordering_number:
+                    matching_cell_info = cell_info
+                    break
+            
+            if matching_cell_info and matching_cell_info.get("cell"):
+                cell = matching_cell_info["cell"]
+                geometry = cell.get("Geometry", {})
+                bounding_box = geometry.get("BoundingBox", {})
+                
+                # Extract bounding box coordinates for PDF preview
+                if bounding_box:
+                    location = {
+                        "page": page,
+                        "boundingBox": {
+                            "left": bounding_box.get("Left", 0),
+                            "top": bounding_box.get("Top", 0),
+                            "width": bounding_box.get("Width", 0),
+                            "height": bounding_box.get("Height", 0)
+                        }
+                    }
+        
+        if not location and page is not None:
+            # Fallback: use page only (no coordinates available)
+            location = {
+                "page": page
+            }
+        
+        # Create product object (only include non-empty fields)
+        product = {
+            "id": product_id_counter,
+            "orderingNumber": ordering_number
+        }
+        
+        # Only add specs if not empty
+        if specs:
+            product["specs"] = specs
+        
+        # Only add location if available
+        if location:
+            product["location"] = location
+
+        if tindex:
+            product["tindex"] = tindex
+        
+        products[ordering_number] = product
+        
+        product_id_counter += 1
+    
+    return products
