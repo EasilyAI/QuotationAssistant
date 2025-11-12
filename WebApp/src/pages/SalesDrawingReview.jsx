@@ -4,7 +4,7 @@ import './SalesDrawingReview.css';
 
 const SalesDrawingReview = () => {
   const navigate = useNavigate();
-  const { id } = useParams();
+  const { id: _id } = useParams(); // id available for future use
 
   const [drawingData, setDrawingData] = useState({
     drawingName: "Hydraulic Cylinder Assembly",

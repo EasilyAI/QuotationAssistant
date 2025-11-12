@@ -8,7 +8,6 @@ const Files = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedYear, setSelectedYear] = useState(null);
-  const [sortBy, setSortBy] = useState('date');
 
   // Separate uploads into in-progress and completed
   const inProgressUploads = mockUploads.filter(u => u.status === 'In Progress' || u.status === 'Pending');

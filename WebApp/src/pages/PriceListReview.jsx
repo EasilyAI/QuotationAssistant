@@ -4,7 +4,7 @@ import './PriceListReview.css';
 
 const PriceListReview = () => {
   const navigate = useNavigate();
-  const { id } = useParams();
+  const { id: _id } = useParams(); // id available for future use
 
   const [priceListData, setpriceListData] = useState({
     name: "Industrial Valves Price List Q1 2024",

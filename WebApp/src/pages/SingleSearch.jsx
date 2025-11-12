@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AddToQuotationDialog from '../components/AddToQuotationDialog';
-import { mockSearchResults, getSearchResultsByType, getTopSearchResults } from '../data/mockSearchResults';
+import { getSearchResultsByType } from '../data/mockSearchResults';
 import './SingleSearch.css';
 
 const SingleSearch = () => {

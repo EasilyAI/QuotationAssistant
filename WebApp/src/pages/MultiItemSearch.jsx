@@ -33,7 +33,7 @@ const MultiItemSearch = () => {
     if (restoredState?.uploadedFileName) {
       setUploadedFile({ name: restoredState.uploadedFileName });
     }
-  }, []);
+  }, [restoredState?.uploadedFileName]);
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
