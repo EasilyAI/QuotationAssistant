@@ -297,3 +297,149 @@ def convert_grid_result_to_dataframe(grid_result, include_page_column=False):
     if include_page_column:
         df.insert(0, "page", grid_result.get("page"))
     return df
+
+
+def get_special_cells_texts(tblock: Dict[str, Any], id_map: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Extract text from all special cell types for a specific table block.
+    
+    Args:
+        tblock: A TABLE block from Textract response.
+        id_map: Dictionary mapping block Ids to blocks for lookup.
+    
+    Returns:
+        Dictionary with keys for each special cell type, containing lists of dicts with:
+        {
+            "text": str,
+            "page": int or None,
+            "block_id": str,
+            "row_index": int or None (for CELL blocks),
+            "column_index": int or None (for CELL blocks)
+        }
+        
+        Keys: "TABLE_TITLE", "TABLE_FOOTER", "TABLE_SECTION_TITLE", 
+              "COLUMN_HEADER", "TABLE_SUMMARY"
+    """
+    # Target special cell types
+    special_types = {
+        "TABLE_TITLE": [],
+        "TABLE_FOOTER": [],
+        "TABLE_SECTION_TITLE": [],
+        "COLUMN_HEADER": [],
+        "TABLE_SUMMARY": []
+    }
+    
+    page = tblock.get("Page", None)
+    
+    # Check table relationships for special block types (e.g., TABLE_TITLE, TABLE_FOOTER)
+    for rel in tblock.get("Relationships", []):
+        rel_type = rel.get("Type")
+        if rel_type in special_types:
+            for block_id in rel.get("Ids", []):
+                block = id_map.get(block_id)
+                if block:
+                    text = get_text_for_block(block, id_map)
+                    if text and text.strip():
+                        special_types[rel_type].append({
+                            "text": text.strip(),
+                            "page": block.get("Page", page),
+                            "block_id": block_id,
+                            "row_index": None,
+                            "column_index": None
+                        })
+    
+    # Get all cells for this table
+    cells, merged_cells = _collect_cells_for_table(tblock, id_map)
+    
+    # Check CELL blocks for EntityTypes matching special types
+    for cell in cells:
+        entity_types = cell.get("EntityTypes", [])
+        for entity_type in entity_types:
+            if entity_type in special_types:
+                text = get_text_for_block(cell, id_map)
+                if text and text.strip():
+                    special_types[entity_type].append({
+                        "text": text.strip(),
+                        "page": cell.get("Page", page),
+                        "block_id": cell.get("Id", ""),
+                        "row_index": cell.get("RowIndex"),
+                        "column_index": cell.get("ColumnIndex")
+                    })
+    
+    # Also check MERGED_CELL blocks for EntityTypes
+    for merged_cell in merged_cells:
+        entity_types = merged_cell.get("EntityTypes", [])
+        for entity_type in entity_types:
+            if entity_type in special_types:
+                text = get_text_for_block(merged_cell, id_map)
+                if text and text.strip():
+                    # For merged cells, try to get position from child cells
+                    row_index = None
+                    column_index = None
+                    for rel in merged_cell.get("Relationships", []):
+                        if rel.get("Type") == "CHILD":
+                            for cid in rel.get("Ids", []):
+                                child = id_map.get(cid)
+                                if child and child.get("BlockType") == "CELL":
+                                    row_index = child.get("RowIndex")
+                                    column_index = child.get("ColumnIndex")
+                                    break
+                            if row_index is not None:
+                                break
+                    
+                    special_types[entity_type].append({
+                        "text": text.strip(),
+                        "page": merged_cell.get("Page", page),
+                        "block_id": merged_cell.get("Id", ""),
+                        "row_index": row_index,
+                        "column_index": column_index
+                    })
+    
+    return special_types
+
+
+def get_header_row_count(column_headers: List[Dict[str, Any]]) -> int:
+    """
+    Calculate the number of header rows based on COLUMN_HEADER cells.
+    
+    The function finds the maximum row_index among COLUMN_HEADER cells, which
+    indicates how many rows the header spans. Textract uses 1-based indexing
+    for RowIndex, so if the max row_index is 3, there are 3 header rows.
+    
+    Args:
+        special_cells: Dictionary returned from get_special_cells_texts().
+    
+    Returns:
+        int: Number of header rows (0 if no COLUMN_HEADER cells found).
+    
+    Examples:
+        >>> special_cells = {
+        ...     "COLUMN_HEADER": [
+        ...         {"row_index": 1, "text": "Name"},
+        ...         {"row_index": 2, "text": "Price"},
+        ...         {"row_index": 3, "text": "Description"}
+        ...     ]
+        ... }
+        >>> get_header_row_count(special_cells)
+        3
+        
+        >>> special_cells = {"COLUMN_HEADER": []}
+        >>> get_header_row_count(special_cells)
+        0
+    """
+    fallback_row_count = 2
+    if not column_headers:
+        return fallback_row_count
+    
+    # Extract row_index values, filtering out None values
+    row_indices = [
+        cell.get("row_index") 
+        for cell in column_headers 
+        if cell.get("row_index") is not None
+    ]
+    
+    if not row_indices:
+        return fallback_row_count
+    
+    # Return the maximum row_index (1-based, so max row_index = number of header rows)
+    return max(row_indices)
