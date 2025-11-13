@@ -8,3 +8,9 @@ __pycache__/
 
 **serverless/
 **.serverless/
+
+extractCatalogInfo/serverless/
+extractCatalogInfo/.serverless/
+extractCatalogInfo/.serverless/
+.DS_Store
+WebApp/.DS_Store
