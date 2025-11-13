@@ -25,6 +25,7 @@ def get_cors_headers():
 def get_presigned_url(event, context):
     # Handle OPTIONS preflight request
     # For API Gateway HTTP API v2, check the method in requestContext
+    json.dumps(event)
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
         return {
@@ -49,14 +50,15 @@ def get_presigned_url(event, context):
 
     # Generate fileId and S3 key
     file_id = str(uuid.uuid4())
-    # Try to preserve extension from original filename
+    
+    # Get extension from the file name, but DO NOT append it again to the key
     if "." in file_name:
         ext = file_name.rsplit(".", 1)[-1].lower()
     else:
         ext = "bin"
 
-    # S3 key pattern - you can adjust this to your structure
-    key = f"uploads/{file_name}.{ext}"
+    # The file_name already contains extension; use as-is for S3 key
+    key = f"uploads/{file_name}"
 
     # Save initial record in Files table
     table = dynamodb.Table(FILES_TABLE)
@@ -147,6 +149,7 @@ def get_file_info(event, context):
 
 
 def process_uploaded_file(event, context):
+    print(json.dumps(event))
     return {
         "statusCode": 200,
         "body": json.dumps({
