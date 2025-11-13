@@ -267,6 +267,40 @@
   margin: 0;
 }
 
+/* Upload Waiting Message */
+.upload-waiting-message {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(33, 136, 201, 0.1);
+  border: 1px solid rgba(33, 136, 201, 0.3);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 21px;
+  color: #2188C9;
+  margin-top: 8px;
+}
+
+.upload-waiting-message svg {
+  flex-shrink: 0;
+}
+
+.upload-waiting-message .spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Upload Success Message */
 .upload-success-message {
   display: flex;

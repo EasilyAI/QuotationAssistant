@@ -10,8 +10,13 @@ export const API_CONFIG = {
   // Endpoint to get presigned URL for S3 upload
   // This endpoint should accept: POST /api/files/presigned-url
   // Body: { fileName: string, fileType: string, contentType: string }
-  // Returns: { uploadUrl: string, fileKey: string }
+  // Returns: { uploadUrl: string, fileKey: string, fileId: string }
   PRESIGNED_URL_ENDPOINT: '/api/files/presigned-url',
+  
+  // Endpoint to get file information after upload
+  // This endpoint should accept: GET /api/files/{fileId}
+  // Returns: { fileId, fileName, fileType, status, ...other file metadata }
+  FILE_INFO_ENDPOINT: '/api/files',
   
   // S3 Bucket Configuration
   S3_BUCKET: 'hb-files-raw',

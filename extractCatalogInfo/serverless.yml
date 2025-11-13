@@ -83,6 +83,17 @@ functions:
           path: /api/files/presigned-url
           method: options
 
+  # HTTP API for UI -> get file information after upload
+  getFileInfo:
+    handler: handler.get_file_info
+    events:
+      - httpApi:
+          path: /api/files/{fileId}
+          method: get
+      - httpApi:
+          path: /api/files/{fileId}
+          method: options
+
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
   processUploadedFile:

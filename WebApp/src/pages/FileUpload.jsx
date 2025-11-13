@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
-import { uploadFileToS3, validateFile } from '../services/s3UploadService';
+import { uploadFileToS3, validateFile, getFileInfo } from '../services/s3UploadService';
 
 const FileUpload = () => {
   const navigate = useNavigate();
@@ -26,6 +26,7 @@ const FileUpload = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isWaitingForInfo, setIsWaitingForInfo] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
@@ -103,8 +104,8 @@ const FileUpload = () => {
     setUploadSuccess(false);
 
     try {
-      // Upload file to S3
-      const { fileKey, fileUrl } = await uploadFileToS3(
+      // Step 1: Upload file to S3
+      const { fileKey, fileUrl, fileId } = await uploadFileToS3(
         selectedFile,
         fileType,
         (progress) => {
@@ -112,28 +113,30 @@ const FileUpload = () => {
         }
       );
 
-      setUploadSuccess(true);
       setUploadProgress(100);
+      
+      // Step 2: Wait for backend to process and return file information
+      // This ensures the file is processed and we have the latest status/metadata
+      setIsWaitingForInfo(true);
+      const fileInfo = await getFileInfo(fileId);
+      setIsWaitingForInfo(false);
 
-      // TODO: Save file metadata to your backend API
-      // Example:
-      // await saveFileMetadata({
-      //   fileKey,
-      //   fileUrl,
-      //   fileName: selectedFile.name,
-      //   fileType,
-      //   ...formData
-      // });
+      setUploadSuccess(true);
 
-      // Wait a moment to show success message, then navigate
-      setTimeout(() => {
-        // Navigate to review screen after successful upload
-        navigate(`/files/review/new?type=${fileType}&fileKey=${fileKey}`);
-      }, 1000);
+      // Step 3: Navigate to review screen with file information
+      // Pass the file info in the navigation state or URL params
+      navigate(`/files/review/new?type=${fileType}&fileId=${fileId}&fileKey=${fileKey}`, {
+        state: {
+          fileInfo,
+          fileKey,
+          fileUrl,
+        }
+      });
     } catch (error) {
       console.error('Upload error:', error);
       setUploadError(error.message || 'Failed to upload file. Please try again.');
       setIsUploading(false);
+      setIsWaitingForInfo(false);
     }
   };
 
@@ -440,8 +443,21 @@ const FileUpload = () => {
                     </div>
                   )}
 
+                  {/* Waiting for File Info */}
+                  {isWaitingForInfo && (
+                    <div className="upload-waiting-message">
+                      <svg className="spinner" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="10" stroke="#2188C9" strokeWidth="2" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="32">
+                          <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
+                          <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
+                        </circle>
+                      </svg>
+                      Processing file information...
+                    </div>
+                  )}
+
                   {/* Success Message */}
-                  {uploadSuccess && (
+                  {uploadSuccess && !isWaitingForInfo && (
                     <div className="upload-success-message">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M20 6L9 17L4 12" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -460,7 +476,7 @@ const FileUpload = () => {
                     </div>
                   )}
 
-                  {!isUploading && (
+                  {!isUploading && !isWaitingForInfo && (
                     <button 
                       className="remove-file-btn"
                       onClick={() => {
@@ -468,6 +484,7 @@ const FileUpload = () => {
                         setUploadError(null);
                         setUploadSuccess(false);
                         setUploadProgress(0);
+                        setIsWaitingForInfo(false);
                       }}
                     >
                       Remove File
@@ -509,9 +526,9 @@ const FileUpload = () => {
           <button 
             className="btn-primary" 
             onClick={handleUpload}
-            disabled={!selectedFile || isUploading}
+            disabled={!selectedFile || isUploading || isWaitingForInfo}
           >
-            {isUploading ? 'Uploading...' : 'Upload'}
+            {isWaitingForInfo ? 'Processing...' : isUploading ? 'Uploading...' : 'Upload'}
           </button>
         </div>
       </div>

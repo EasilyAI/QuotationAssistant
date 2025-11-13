@@ -12,7 +12,15 @@ import { API_CONFIG } from '../config/apiConfig';
  * @returns {Promise<{uploadUrl: string, fileKey: string}>}
  */
 const getPresignedUrl = async (fileName, fileType, contentType) => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PRESIGNED_URL_ENDPOINT}`, {
+  // Normalize URL to avoid double slashes
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
+    ? API_CONFIG.BASE_URL.slice(0, -1) 
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.PRESIGNED_URL_ENDPOINT.startsWith('/')
+    ? API_CONFIG.PRESIGNED_URL_ENDPOINT
+    : `/${API_CONFIG.PRESIGNED_URL_ENDPOINT}`;
+  
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -82,12 +90,12 @@ const uploadToS3 = async (file, uploadUrl, onProgress) => {
  * @param {File} file - File to upload
  * @param {string} fileType - Type of file (catalog, sales-drawing, price-list)
  * @param {Function} onProgress - Optional progress callback (progress: number) => void
- * @returns {Promise<{fileKey: string, fileUrl: string}>}
+ * @returns {Promise<{fileKey: string, fileUrl: string, fileId: string}>}
  */
 export const uploadFileToS3 = async (file, fileType, onProgress) => {
   try {
     // Step 1: Get presigned URL from backend
-    const { uploadUrl, fileKey } = await getPresignedUrl(
+    const { uploadUrl, fileKey, fileId } = await getPresignedUrl(
       file.name,
       fileType,
       file.type
@@ -96,18 +104,50 @@ export const uploadFileToS3 = async (file, fileType, onProgress) => {
     // Step 2: Upload file directly to S3
     await uploadToS3(file, uploadUrl, onProgress);
 
-    // Step 3: Return file key and URL
+    // Step 3: Return file key, URL, and fileId
     // TODO: Update this URL format based on your S3 bucket configuration
     const fileUrl = `https://${API_CONFIG.S3_BUCKET}.s3.${API_CONFIG.S3_REGION}.amazonaws.com/${fileKey}`;
     
     return {
       fileKey,
       fileUrl,
+      fileId,
     };
   } catch (error) {
     console.error('S3 upload error:', error);
     throw error;
   }
+};
+
+/**
+ * Get file information/status from backend after upload
+ * @param {string} fileId - File ID returned from presigned URL
+ * @returns {Promise<Object>} File information from backend
+ */
+export const getFileInfo = async (fileId) => {
+  // Normalize URL to avoid double slashes
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
+    ? API_CONFIG.BASE_URL.slice(0, -1) 
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+  
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      // TODO: Add authentication header if needed
+      // 'Authorization': `Bearer ${getAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to get file information' }));
+    throw new Error(error.message || `Failed to get file information: ${response.statusText}`);
+  }
+
+  return response.json();
 };
 
 /**

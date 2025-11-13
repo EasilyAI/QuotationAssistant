@@ -56,7 +56,7 @@ def get_presigned_url(event, context):
         ext = "bin"
 
     # S3 key pattern - you can adjust this to your structure
-    key = f"{file_name}/{file_id}.{ext}"
+    key = f"uploads/{file_name}.{ext}"
 
     # Save initial record in Files table
     table = dynamodb.Table(FILES_TABLE)
@@ -94,6 +94,56 @@ def get_presigned_url(event, context):
         "body": json.dumps(response_body),
         "headers": get_cors_headers(),
     }
+
+
+def get_file_info(event, context):
+    # Handle OPTIONS preflight request
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    # Extract fileId from path parameters
+    # For HTTP API v2, path parameters are in event["pathParameters"]
+    path_params = event.get("pathParameters") or {}
+    file_id = path_params.get("fileId")
+    
+    if not file_id:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Get file information from DynamoDB
+    table = dynamodb.Table(FILES_TABLE)
+    try:
+        response = table.get_item(Key={"fileId": file_id})
+        
+        if "Item" not in response:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "File not found"}),
+                "headers": get_cors_headers(),
+            }
+        
+        file_info = response["Item"]
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps(file_info),
+            "headers": get_cors_headers(),
+        }
+    except Exception as e:
+        print(f"Error getting file info: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to get file information"}),
+            "headers": get_cors_headers(),
+        }
 
 
 def process_uploaded_file(event, context):
