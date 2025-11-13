@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
+import { uploadFileToS3, validateFile } from '../services/s3UploadService';
 
 const FileUpload = () => {
   const navigate = useNavigate();
@@ -24,6 +25,10 @@ const FileUpload = () => {
 
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -36,7 +41,15 @@ const FileUpload = () => {
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
+      // Validate file before setting
+      const validation = validateFile(file, fileType);
+      if (!validation.valid) {
+        setUploadError(validation.error);
+        return;
+      }
       setSelectedFile(file);
+      setUploadError(null);
+      setUploadSuccess(false);
     }
   };
 
@@ -55,7 +68,15 @@ const FileUpload = () => {
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) {
+      // Validate file before setting
+      const validation = validateFile(file, fileType);
+      if (!validation.valid) {
+        setUploadError(validation.error);
+        return;
+      }
       setSelectedFile(file);
+      setUploadError(null);
+      setUploadSuccess(false);
     }
   };
 
@@ -63,10 +84,57 @@ const FileUpload = () => {
     navigate('/files');
   };
 
-  const handleUpload = () => {
-    console.log('Uploading:', formData, selectedFile);
-    // Navigate to review screen after upload
-    navigate(`/files/review/new?type=${fileType}`);
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      setUploadError('Please select a file to upload');
+      return;
+    }
+
+    // Validate file again before upload
+    const validation = validateFile(selectedFile, fileType);
+    if (!validation.valid) {
+      setUploadError(validation.error);
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadError(null);
+    setUploadSuccess(false);
+
+    try {
+      // Upload file to S3
+      const { fileKey, fileUrl } = await uploadFileToS3(
+        selectedFile,
+        fileType,
+        (progress) => {
+          setUploadProgress(progress);
+        }
+      );
+
+      setUploadSuccess(true);
+      setUploadProgress(100);
+
+      // TODO: Save file metadata to your backend API
+      // Example:
+      // await saveFileMetadata({
+      //   fileKey,
+      //   fileUrl,
+      //   fileName: selectedFile.name,
+      //   fileType,
+      //   ...formData
+      // });
+
+      // Wait a moment to show success message, then navigate
+      setTimeout(() => {
+        // Navigate to review screen after successful upload
+        navigate(`/files/review/new?type=${fileType}&fileKey=${fileKey}`);
+      }, 1000);
+    } catch (error) {
+      console.error('Upload error:', error);
+      setUploadError(error.message || 'Failed to upload file. Please try again.');
+      setIsUploading(false);
+    }
   };
 
   // Get page title based on file type
@@ -358,12 +426,53 @@ const FileUpload = () => {
                   </svg>
                   <p className="file-name">{selectedFile.name}</p>
                   <p className="file-size">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
-                  <button 
-                    className="remove-file-btn"
-                    onClick={() => setSelectedFile(null)}
-                  >
-                    Remove File
-                  </button>
+                  
+                  {/* Upload Progress */}
+                  {isUploading && (
+                    <div className="upload-progress-container">
+                      <div className="upload-progress-bar">
+                        <div 
+                          className="upload-progress-fill" 
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <p className="upload-progress-text">{Math.round(uploadProgress)}%</p>
+                    </div>
+                  )}
+
+                  {/* Success Message */}
+                  {uploadSuccess && (
+                    <div className="upload-success-message">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 6L9 17L4 12" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      Upload successful!
+                    </div>
+                  )}
+
+                  {/* Error Message */}
+                  {uploadError && (
+                    <div className="upload-error-message">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      {uploadError}
+                    </div>
+                  )}
+
+                  {!isUploading && (
+                    <button 
+                      className="remove-file-btn"
+                      onClick={() => {
+                        setSelectedFile(null);
+                        setUploadError(null);
+                        setUploadSuccess(false);
+                        setUploadProgress(0);
+                      }}
+                    >
+                      Remove File
+                    </button>
+                  )}
                 </div>
               ) : (
                 <>
@@ -382,7 +491,7 @@ const FileUpload = () => {
                   <input
                     id="file-input"
                     type="file"
-                    accept=".pdf,.xlsx,.xls,.doc,.docx"
+                    accept={fileType === 'price-list' ? '.xlsx,.xls,.csv' : '.pdf'}
                     onChange={handleFileSelect}
                     style={{ display: 'none' }}
                   />
@@ -400,9 +509,9 @@ const FileUpload = () => {
           <button 
             className="btn-primary" 
             onClick={handleUpload}
-            disabled={!selectedFile}
+            disabled={!selectedFile || isUploading}
           >
-            Upload
+            {isUploading ? 'Uploading...' : 'Upload'}
           </button>
         </div>
       </div>

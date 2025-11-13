@@ -1,0 +1,143 @@
+service: hb-file-processing
+
+frameworkVersion: "3"
+
+custom:
+  # Single environment (no -dev / -prod suffixes)
+  # Bucket name must be globally unique, so we add the AWS account ID
+  uploadBucket: hb-files-raw
+  filesTable: hb-files
+  tempProductsTable: hb-temp-products
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: us-east-1
+  stage: dev                 # internal only, not used in resource names
+  profile: hb-client
+  deploymentBucket:
+    name: hb-file-processing-deployment-bucket
+    blockPublicAccess: true
+
+  httpApi:
+    cors: true
+    corsConfig:
+      allowedOrigins:
+        - "*"  # TODO: Replace with specific origins in production (e.g., ["http://localhost:3000", "https://yourdomain.com"])
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - X-Requested-With
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      maxAge: 3600
+
+  environment:
+    UPLOAD_BUCKET: ${self:custom.uploadBucket}
+    FILES_TABLE: ${self:custom.filesTable}
+    TEMP_PRODUCTS_TABLE: ${self:custom.tempProductsTable}
+
+  iamRoleStatements:
+    # S3 access for generating presigned URLs and accessing uploaded files
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:ListBucket
+      Resource:
+        - arn:aws:s3:::${self:custom.uploadBucket}
+        - arn:aws:s3:::${self:custom.uploadBucket}/*
+
+    # DynamoDB access for Files and TempProducts tables
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource:
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.filesTable}
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tempProductsTable}
+
+    # Textract permissions (for PDFs)
+    - Effect: Allow
+      Action:
+        - textract:StartDocumentAnalysis
+        - textract:GetDocumentAnalysis
+      Resource: "*"
+
+functions:
+  # HTTP API for UI -> get presigned URL to upload file to S3
+  getPresignedUrl:
+    handler: handler.get_presigned_url
+    events:
+      - httpApi:
+          path: /api/files/presigned-url
+          method: post
+      - httpApi:
+          path: /api/files/presigned-url
+          method: options
+
+  # Triggered whenever a file is uploaded to the bucket (via presigned URL)
+  # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
+  processUploadedFile:
+    handler: handler.process_uploaded_file
+    # S3 event configured manually - see setup instructions
+    # events:
+    #   - s3:
+    #       bucket: ${self:custom.uploadBucket}
+    #       event: s3:ObjectCreated:*
+
+resources:
+  Resources:
+    # UploadBucket: # bucket already exists, so we reference it by name only
+    # CORS is configured manually via AWS CLI (see setup instructions)
+    # UploadBucket:
+    #   Type: AWS::S3::Bucket
+    #   Properties:
+    #     BucketName: ${self:custom.uploadBucket}
+    #     CorsConfiguration:
+    #       CorsRules:
+    #         - AllowedOrigins:
+    #             - "*"  # TODO: Replace with specific origins in production
+    #           AllowedHeaders:
+    #             - "*"
+    #           AllowedMethods:
+    #             - GET
+    #             - PUT
+    #             - POST
+    #             - HEAD
+    #           MaxAge: 3000
+
+    FilesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.filesTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: fileId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: fileId
+            KeyType: HASH
+
+    TempProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tempProductsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: fileId
+            AttributeType: S
+          - AttributeName: productId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: fileId
+            KeyType: HASH
+          - AttributeName: productId
+            KeyType: RANGE
