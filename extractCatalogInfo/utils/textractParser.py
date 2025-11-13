@@ -1,5 +1,4 @@
 import json
-import pandas as pd
 from collections import defaultdict
 from typing import List, Dict, Any
 
@@ -366,26 +365,6 @@ def convert_table_block_to_grid(tblock, id_map, replicate_data=True, header_scan
         "rows": body_rows,
         "spans": spans,
     }
-
-
-def convert_grid_result_to_dataframe(grid_result, include_page_column=False):
-    """
-    Convenience function: Load table grid result as a pandas DataFrame.
-
-    Args:
-        grid_result (dict): Output from convert_table_block_to_grid().
-        include_page_column (bool): If True, include 'page' integer as a DataFrame column.
-
-    Returns:
-        pd.DataFrame: Table data, headers as DataFrame columns. Optionally with a 'page' column.
-    """
-    import pandas as pd
-    headers = grid_result["headers"]
-    rows = grid_result["rows"]
-    df = pd.DataFrame(rows, columns=headers)
-    if include_page_column:
-        df.insert(0, "page", grid_result.get("page"))
-    return df
 
 
 def get_special_cells_texts(tblock: Dict[str, Any], id_map: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:

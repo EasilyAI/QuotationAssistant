@@ -51,36 +51,55 @@ def get_presigned_url(event, context):
     # Generate fileId and S3 key
     file_id = str(uuid.uuid4())
     
-    # Get extension from the file name, but DO NOT append it again to the key
+    # Get extension from the file name
     if "." in file_name:
         ext = file_name.rsplit(".", 1)[-1].lower()
     else:
         ext = "bin"
 
-    # The file_name already contains extension; use as-is for S3 key
+    # S3 key is just the filename in uploads folder
+    # Format: uploads/{filename}
     key = f"uploads/{file_name}"
 
-    # Save initial record in Files table
+    # Save initial record in Files table with fileId in metadata
     table = dynamodb.Table(FILES_TABLE)
-    table.put_item(
-        Item={
-            "fileId": file_id,
-            "fileName": file_name,
-            "fileType": ext.upper(),  # PDF / XLSX / etc
-            "bucket": BUCKET,
-            "key": key,
-            "status": "PENDING_UPLOAD",
-            "createdAt": int(time.time()),
+    try:
+        table.put_item(
+            Item={
+                "fileId": file_id,
+                "fileName": file_name,
+                "fileType": ext.upper(),  # PDF / XLSX / etc
+                "bucket": BUCKET,
+                "key": key,
+                "status": "pending_upload",
+                "createdAt": int(time.time() * 1000),
+                # Store fileId as metadata for correlation
+                "metadata": {
+                    "originalFileName": file_name,
+                    "uploadedBy": "user",  # TODO: Add actual user info when auth is implemented
+                }
+            }
+        )
+    except Exception as e:
+        print(f"[get_presigned_url] ERROR: Failed to save to DynamoDB: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to create file record"}),
+            "headers": get_cors_headers(),
         }
-    )
 
     # Generate presigned URL for PUT upload
+    # Add fileId as metadata in S3 object for correlation
     upload_url = s3.generate_presigned_url(
         ClientMethod="put_object",
         Params={
             "Bucket": BUCKET,
             "Key": key,
             "ContentType": content_type,
+            "Metadata": {
+                "file-id": file_id,  # Store fileId in S3 object metadata
+                "original-filename": file_name,
+            }
         },
         ExpiresIn=3600,  # URL valid for 1 hour
     )

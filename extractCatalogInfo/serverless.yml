@@ -23,21 +23,28 @@ provider:
     blockPublicAccess: true
 
   httpApi:
-    cors: true
-    corsConfig:
+    cors:
       allowedOrigins:
         - "*"  # TODO: Replace with specific origins in production (e.g., ["http://localhost:3000", "https://yourdomain.com"])
       allowedHeaders:
         - Content-Type
         - Authorization
         - X-Requested-With
+        - X-Amz-Date
+        - X-Api-Key
+        - X-Amz-Security-Token
       allowedMethods:
         - GET
         - POST
         - PUT
         - DELETE
         - OPTIONS
+      allowCredentials: false
       maxAge: 3600
+      exposedResponseHeaders:
+        - Content-Type
+        - X-Amz-Date
+        - X-Amz-Request-Id
 
   environment:
     UPLOAD_BUCKET: ${self:custom.uploadBucket}
@@ -82,9 +89,6 @@ functions:
       - httpApi:
           path: /api/files/presigned-url
           method: post
-      - httpApi:
-          path: /api/files/presigned-url
-          method: options
 
   # HTTP API for UI -> get file information after upload
   getFileInfo:
@@ -93,14 +97,20 @@ functions:
       - httpApi:
           path: /api/files/{fileId}
           method: get
+
+  # HTTP API for UI -> get products extracted from a file
+  getFileProducts:
+    handler: process_upload_file.get_file_products
+    events:
       - httpApi:
-          path: /api/files/{fileId}
-          method: options
+          path: /api/files/{fileId}/products
+          method: get
 
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
   processUploadedFile:
     handler: process_upload_file.process_uploaded_file
+    timeout: 45  # 5 minutes for Textract processing
     # S3 event configured manually - see setup instructions
     # events:
     #   - s3:
@@ -140,18 +150,16 @@ resources:
           - AttributeName: fileId
             KeyType: HASH
 
-    TempProductsTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:custom.tempProductsTable}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: fileId
-            AttributeType: S
-          - AttributeName: productId
-            AttributeType: S
-        KeySchema:
-          - AttributeName: fileId
-            KeyType: HASH
-          - AttributeName: productId
-            KeyType: RANGE
+    # TempProductsTable - Temporarily commented out to remove from CloudFormation
+    # Will be recreated manually, then uncommented
+    # TempProductsTable:
+    #   Type: AWS::DynamoDB::Table
+    #   Properties:
+    #     TableName: ${self:custom.tempProductsTable}
+    #     BillingMode: PAY_PER_REQUEST
+    #     AttributeDefinitions:
+    #       - AttributeName: fileId
+    #         AttributeType: S
+    #     KeySchema:
+    #       - AttributeName: fileId
+    #         KeyType: HASH

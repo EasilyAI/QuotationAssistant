@@ -1,68 +1,86 @@
-import React, { useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
+import { getFileProducts } from '../services/s3UploadService';
 import './CatalogReview.css';
 
 const CatalogReview = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const fileType = searchParams.get('type') || 'catalog';
+  const fileId = searchParams.get('fileId') || id;
 
   const [expandedProduct, setExpandedProduct] = useState(null);
   const [showUnreviewedOnly, setShowUnreviewedOnly] = useState(false);
-  const [products, setProducts] = useState([
-    {
-      id: 1,
-      orderingNumber: "PN-12345",
-      description: "High-Pressure Valve, Stainless Steel",
-      specs: [
-        { key: "Pressure", value: "1000psi" },
-        { key: "Material", value: "316SS" },
-        { key: "Thread", value: "1/2in NPT" }
-      ],
-      manualInput: "",
-      isReviewed: false,
-      isSaved: false
-    },
-    {
-      id: 2,
-      orderingNumber: "ORD-67890",
-      description: "Standard Copper Tube, 1/2 inch",
-      specs: [
-        { key: "Diameter", value: "0.5in" },
-        { key: "Material", value: "Copper" },
-        { key: "Wall Thickness", value: "0.035in" }
-      ],
-      manualInput: "",
-      isReviewed: false,
-      isSaved: false
-    },
-    {
-      id: 3,
-      orderingNumber: "PN-98765",
-      description: "Industrial Grade Sealant",
-      specs: [
-        { key: "Temp Range", value: "-40C to 200C" },
-        { key: "Type", value: "Silicone" }
-      ],
-      manualInput: "",
-      isReviewed: true,
-      isSaved: true
-    },
-    // Add more mock products to demonstrate 20-30 items
-    ...Array.from({ length: 17 }, (_, i) => ({
-      id: i + 4,
-      orderingNumber: `PN-${10000 + i}`,
-      description: `Sample Product ${i + 4}`,
-      specs: [
-        { key: "Type", value: `Type ${i + 1}` },
-        { key: "Size", value: `${i + 1}mm` }
-      ],
-      manualInput: "",
-      isReviewed: i % 3 === 0,
-      isSaved: i % 3 === 0
-    }))
-  ]);
+  const [products, setProducts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  
+  // Load products from location state or fetch from API
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        setIsLoading(true);
+        setLoadError(null);
+        
+        // First try to get products from location state (passed from FileUpload)
+        if (location.state?.products && location.state.products.length > 0) {
+          console.log('[CatalogReview] Loading products from location state:', location.state.products);
+          const transformedProducts = transformBackendProducts(location.state.products);
+          setProducts(transformedProducts);
+          setIsLoading(false);
+          return;
+        }
+        
+        // If no products in state, fetch from API using fileId
+        if (fileId) {
+          console.log('[CatalogReview] Fetching products from API for fileId:', fileId);
+          const productsData = await getFileProducts(fileId);
+          console.log('[CatalogReview] Products fetched from API:', productsData);
+          
+          if (productsData.products && productsData.products.length > 0) {
+            const transformedProducts = transformBackendProducts(productsData.products);
+            setProducts(transformedProducts);
+          } else {
+            setLoadError('No products found for this file');
+          }
+        } else {
+          setLoadError('No file ID provided');
+        }
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error('[CatalogReview] Error loading products:', error);
+        setLoadError(error.message || 'Failed to load products');
+        setIsLoading(false);
+      }
+    };
+    
+    loadProducts();
+  }, [fileId, location.state]);
+  
+  // Transform backend products to UI format
+  const transformBackendProducts = (backendProducts) => {
+    return backendProducts.map((product, index) => {
+      // Convert specs object to array of key-value pairs
+      const specsArray = product.specs ? 
+        Object.entries(product.specs).map(([key, value]) => ({ key, value: String(value) })) :
+        [];
+      
+      return {
+        id: product.id || `product-${index}`,
+        orderingNumber: product.orderingNumber || '',
+        description: '', // Backend doesn't have description, user will need to add it
+        specs: specsArray,
+        manualInput: '',
+        isReviewed: product.status === 'approved' || product.status === 'reviewed',
+        isSaved: product.status === 'approved',
+        tableIndex: product.tableIndex,
+        location: product.location,
+      };
+    });
+  };
 
   const handleSpecChange = (productId, specIndex, field, value) => {
     setProducts(prev => prev.map(product => {
@@ -153,6 +171,78 @@ const CatalogReview = () => {
     : products;
 
   const reviewedCount = products.filter(p => p.isReviewed).length;
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="catalog-review-page">
+        <div className="catalog-review-container">
+          <div className="review-header">
+            <div className="review-header-content">
+              <h1 className="review-title">Catalog Product Review & Verification</h1>
+              <p className="review-subtitle">Loading products...</p>
+            </div>
+          </div>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center', 
+            minHeight: '400px',
+            flexDirection: 'column',
+            gap: '16px'
+          }}>
+            <svg className="spinner" width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="#2188C9" strokeWidth="2" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="32">
+                <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
+                <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+            <p style={{ fontSize: '16px', color: '#637887' }}>Loading products...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (loadError) {
+    return (
+      <div className="catalog-review-page">
+        <div className="catalog-review-container">
+          <div className="review-header">
+            <div className="review-header-content">
+              <h1 className="review-title">Catalog Product Review & Verification</h1>
+              <p className="review-subtitle">Error loading products</p>
+            </div>
+            <div className="review-header-actions">
+              <button className="btn-secondary" onClick={() => navigate('/files')}>
+                Back to Files
+              </button>
+            </div>
+          </div>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center', 
+            minHeight: '400px',
+            flexDirection: 'column',
+            gap: '16px',
+            padding: '40px'
+          }}>
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#1a1a1a', margin: 0 }}>
+              Failed to Load Products
+            </h3>
+            <p style={{ fontSize: '14px', color: '#637887', textAlign: 'center', maxWidth: '400px', margin: 0 }}>
+              {loadError}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="catalog-review-page">

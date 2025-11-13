@@ -33,6 +33,7 @@ function App() {
           {/* Files Routes */}
           <Route path="files" element={<Files />} />
           <Route path="files/upload" element={<FileUpload />} />
+          <Route path="files/review" element={<FileReviewRouter />} />
           <Route path="files/review/:id" element={<FileReviewRouter />} />
           <Route path="files/review/catalog/:id" element={<CatalogReview />} />
           <Route path="files/review/sales-drawing/:id" element={<SalesDrawingReview />} />

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
-import { uploadFileToS3, validateFile, getFileInfo } from '../services/s3UploadService';
+import { uploadFileToS3, validateFile, pollFileStatus, getFileProducts } from '../services/s3UploadService';
 
 const FileUpload = () => {
   const navigate = useNavigate();
@@ -26,10 +26,12 @@ const FileUpload = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isWaitingForInfo, setIsWaitingForInfo] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('');
+  const [processingDetails, setProcessingDetails] = useState(null);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -102,9 +104,12 @@ const FileUpload = () => {
     setUploadProgress(0);
     setUploadError(null);
     setUploadSuccess(false);
+    setProcessingStatus('');
+    setProcessingDetails(null);
 
     try {
       // Step 1: Upload file to S3
+      console.log('Uploading file to S3...');
       const { fileKey, fileUrl, fileId } = await uploadFileToS3(
         selectedFile,
         fileType,
@@ -114,29 +119,75 @@ const FileUpload = () => {
       );
 
       setUploadProgress(100);
-      
-      // Step 2: Wait for backend to process and return file information
-      // This ensures the file is processed and we have the latest status/metadata
-      setIsWaitingForInfo(true);
-      const fileInfo = await getFileInfo(fileId);
-      setIsWaitingForInfo(false);
-
       setUploadSuccess(true);
+      setIsUploading(false);
+      
+      // Step 2: Poll for processing status
+      console.log('File uploaded successfully, polling for processing status...');
+      setIsProcessing(true);
+      setProcessingStatus('File uploaded, starting processing...');
+      
+      const fileInfo = await pollFileStatus(
+        fileId,
+        (status, info) => {
+          console.log('Status update:', status, info);
+          
+          // Update processing status message
+          const statusMessages = {
+            'textract_started': 'Starting document analysis...',
+            'textract_processing': `Analyzing document. ${info.processingStage || ''}`,
+            'textract_completed': 'Document analysis completed',
+            'parsing_tables': `Extracting tables. ${info.processingStage || ''}`,
+            'saving_products': `Saving products to database...`,
+            'completed': 'Processing completed!'
+          };
+          
+          setProcessingStatus(statusMessages[status] || info.processingStage || 'Processing...');
+          
+          // Update processing details
+          if (info.pagesCount || info.tablesCount || info.productsCount) {
+            setProcessingDetails({
+              pages: info.pagesCount,
+              tables: info.tablesCount,
+              tablesWithProducts: info.tablesWithProducts,
+              products: info.productsCount
+            });
+          }
+        },
+        60, // max attempts
+        2000 // poll every 2 seconds
+      );
 
-      // Step 3: Navigate to review screen with file information
-      // Pass the file info in the navigation state or URL params
-      navigate(`/files/review/new?type=${fileType}&fileId=${fileId}&fileKey=${fileKey}`, {
+      console.log('Processing completed:', fileInfo);
+      setIsProcessing(false);
+
+      // Step 3: Get the extracted products
+      console.log('Fetching products...');
+      const productsData = await getFileProducts(fileId);
+      console.log('Products fetched:', productsData);
+
+      // Step 4: Navigate to review screen with products based on file type
+      // For catalogs, go to catalog review page
+      const reviewPath = fileType === 'catalog' 
+        ? `/files/review?fileId=${fileId}&type=catalog`
+        : `/files/review?fileId=${fileId}&type=${fileType}`;
+      
+      navigate(reviewPath, {
         state: {
           fileInfo,
+          products: productsData.products,
+          fileId,
           fileKey,
           fileUrl,
+          fileType,
         }
       });
+      
     } catch (error) {
-      console.error('Upload error:', error);
-      setUploadError(error.message || 'Failed to upload file. Please try again.');
+      console.error('Upload/Processing error:', error);
+      setUploadError(error.message || 'Failed to upload or process file. Please try again.');
       setIsUploading(false);
-      setIsWaitingForInfo(false);
+      setIsProcessing(false);
     }
   };
 
@@ -443,21 +494,8 @@ const FileUpload = () => {
                     </div>
                   )}
 
-                  {/* Waiting for File Info */}
-                  {isWaitingForInfo && (
-                    <div className="upload-waiting-message">
-                      <svg className="spinner" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="12" cy="12" r="10" stroke="#2188C9" strokeWidth="2" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="32">
-                          <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
-                          <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
-                        </circle>
-                      </svg>
-                      Processing file information...
-                    </div>
-                  )}
-
                   {/* Success Message */}
-                  {uploadSuccess && !isWaitingForInfo && (
+                  {uploadSuccess && !isProcessing && !isUploading && (
                     <div className="upload-success-message">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M20 6L9 17L4 12" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -476,7 +514,7 @@ const FileUpload = () => {
                     </div>
                   )}
 
-                  {!isUploading && !isWaitingForInfo && (
+                  {!isUploading && !isProcessing && (
                     <button 
                       className="remove-file-btn"
                       onClick={() => {
@@ -484,7 +522,9 @@ const FileUpload = () => {
                         setUploadError(null);
                         setUploadSuccess(false);
                         setUploadProgress(0);
-                        setIsWaitingForInfo(false);
+                        setIsProcessing(false);
+                        setProcessingStatus('');
+                        setProcessingDetails(null);
                       }}
                     >
                       Remove File
@@ -515,6 +555,38 @@ const FileUpload = () => {
                 </>
               )}
             </div>
+
+            {/* Processing Status - Below Upload Area */}
+            {isProcessing && (
+              <div className="processing-status-container" style={{ 
+                marginTop: '20px',
+                padding: '16px',
+                backgroundColor: '#f7f9fa',
+                borderRadius: '8px',
+                border: '1px solid #e1e8ed'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <svg className="spinner" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0, marginTop: '2px' }}>
+                    <circle cx="12" cy="12" r="10" stroke="#2188C9" strokeWidth="2" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="32">
+                      <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
+                      <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
+                    </circle>
+                  </svg>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '14px', fontWeight: '500', color: '#1a1a1a', marginBottom: '4px' }}>
+                      {processingStatus}
+                    </div>
+                    {processingDetails && (
+                      <div style={{ fontSize: '13px', color: '#637887' }}>
+                        {processingDetails.pages && `${processingDetails.pages} pages`}
+                        {processingDetails.tables && ` • ${processingDetails.tables} tables`}
+                        {processingDetails.products && ` • ${processingDetails.products} products`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -526,9 +598,9 @@ const FileUpload = () => {
           <button 
             className="btn-primary" 
             onClick={handleUpload}
-            disabled={!selectedFile || isUploading || isWaitingForInfo}
+            disabled={!selectedFile || isUploading || isProcessing}
           >
-            {isWaitingForInfo ? 'Processing...' : isUploading ? 'Uploading...' : 'Upload'}
+            {isProcessing ? 'Processing...' : isUploading ? 'Uploading...' : 'Upload'}
           </button>
         </div>
       </div>

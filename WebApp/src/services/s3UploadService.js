@@ -122,7 +122,7 @@ export const uploadFileToS3 = async (file, fileType, onProgress) => {
 /**
  * Get file information/status from backend after upload
  * @param {string} fileId - File ID returned from presigned URL
- * @returns {Promise<Object>} File information from backend
+ * @returns {Promise<Object>} File information from backend including status and processing metadata
  */
 export const getFileInfo = async (fileId) => {
   // Normalize URL to avoid double slashes
@@ -148,6 +148,96 @@ export const getFileInfo = async (fileId) => {
   }
 
   return response.json();
+};
+
+/**
+ * Get products extracted from a file
+ * @param {string} fileId - File ID to get products for
+ * @returns {Promise<{fileId: string, products: Array, count: number}>} Products data
+ */
+export const getFileProducts = async (fileId) => {
+  // Normalize URL to avoid double slashes
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
+    ? API_CONFIG.BASE_URL.slice(0, -1) 
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+  
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/products`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      // TODO: Add authentication header if needed
+      // 'Authorization': `Bearer ${getAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to get products' }));
+    throw new Error(error.message || `Failed to get products: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
+ * Poll file status until processing is complete
+ * @param {string} fileId - File ID to poll
+ * @param {Function} onStatusUpdate - Callback for status updates (status, fileInfo) => void
+ * @param {number} maxAttempts - Maximum number of polling attempts (default: 60)
+ * @param {number} intervalMs - Interval between polls in milliseconds (default: 2000)
+ * @returns {Promise<Object>} Final file info when processing is complete
+ */
+export const pollFileStatus = async (fileId, onStatusUpdate, maxAttempts = 60, intervalMs = 2000) => {
+  let attempts = 0;
+  
+  while (attempts < maxAttempts) {
+    try {
+      const fileInfo = await getFileInfo(fileId);
+      const status = fileInfo.status;
+      
+      // Call status update callback
+      if (onStatusUpdate) {
+        onStatusUpdate(status, fileInfo);
+      }
+      
+      // Check if processing is complete
+      if (status === 'completed') {
+        console.log('[pollFileStatus] Processing completed successfully');
+        return fileInfo;
+      }
+      
+      // Check if processing failed - STOP immediately, don't retry
+      if (status === 'failed') {
+        const errorMsg = fileInfo.error || fileInfo.processingStage || 'File processing failed';
+        console.error('[pollFileStatus] Processing failed:', errorMsg);
+        throw new Error(errorMsg);
+      }
+      
+      // Wait before next poll
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      attempts++;
+      
+    } catch (error) {
+      // If status is 'failed', throw immediately (don't retry)
+      if (error.message && (error.message.includes('failed') || error.message.includes('Failed'))) {
+        throw error;
+      }
+      
+      // For network errors, retry up to maxAttempts
+      console.warn(`[pollFileStatus] Attempt ${attempts + 1}/${maxAttempts} failed:`, error.message);
+      
+      if (attempts >= maxAttempts - 1) {
+        throw new Error(`Failed to get file status after ${maxAttempts} attempts: ${error.message}`);
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      attempts++;
+    }
+  }
+  
+  throw new Error(`File processing timed out after ${maxAttempts * intervalMs / 1000} seconds`);
 };
 
 /**
