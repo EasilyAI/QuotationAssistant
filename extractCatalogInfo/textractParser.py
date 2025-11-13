@@ -277,6 +277,21 @@ def convert_table_block_to_grid(tblock, id_map, replicate_data=True, header_scan
                     row += 1
 
     # --- Step 7: Detect category rows (merged cells spanning all columns) and extract type values ---
+    def _compose_category_text(row_idx: int) -> str:
+        if row_idx >= len(grid):
+            return ""
+        parts = []
+        last_val = None
+        for cell_val in grid[row_idx]:
+            text_val = cell_val.strip() if cell_val else ""
+            if not text_val:
+                continue
+            if last_val is not None and text_val == last_val:
+                continue
+            parts.append(text_val)
+            last_val = text_val
+        return " ".join(parts).strip()
+
     is_category_row = [False] * max_row
     category_types = {}  # row_index -> type text
     
@@ -285,30 +300,20 @@ def convert_table_block_to_grid(tblock, id_map, replicate_data=True, header_scan
         # Check if this merged cell spans all columns (category row)
         if cs >= max_col and rs == 1:
             # This is a category row - mark it and store the type
-            is_category_row[r0] = True
-            category_types[r0] = txt.strip()
+            type_text = _compose_category_text(r0)
+            if type_text:
+                is_category_row[r0] = True
+                category_types[r0] = type_text
     
     # Also check regular cells for full-width spans (in case Textract didn't mark as merged)
     for (r0, c0), (rs, cs) in cell_spans.items():
-        if cs >= max_col and rs == 1:
+        if cs >= max_col and rs == 1 and cs > 1:
             # Check if this row has content in the first column and is mostly empty elsewhere
             # (indicating it might be a category row)
-            row_text = grid[r0][c0] if c0 < len(grid[r0]) else ""
-            if row_text and row_text.strip():
-                # Check if other columns in this row are empty or have the same text
-                is_full_width = True
-                for cc in range(1, max_col):
-                    if cc < len(grid[r0]):
-                        cell_text = grid[r0][cc].strip()
-                        if cell_text and cell_text != row_text.strip():
-                            is_full_width = False
-                            break
-                    else:
-                        is_full_width = False
-                        break
-                if is_full_width:
-                    is_category_row[r0] = True
-                    category_types[r0] = row_text.strip()
+            type_text = _compose_category_text(r0)
+            if type_text:
+                is_category_row[r0] = True
+                category_types[r0] = type_text
     
     # Additional check: scan grid directly for rows with spans indicating full-width category rows
     # Check if any cell in a row has a ColumnSpan that equals max_col
@@ -322,40 +327,42 @@ def convert_table_block_to_grid(tblock, id_map, replicate_data=True, header_scan
                 if c < len(spans[r]):
                     rs, cs = spans[r][c]
                     # If this cell spans all columns (cs >= max_col) and only one row (rs == 1)
-                    if cs >= max_col and rs == 1:
-                        # Get the text from this cell
-                        cell_text = grid[r][c].strip() if r < len(grid) and c < len(grid[r]) else ""
-                        if cell_text:
+                    if cs >= max_col and rs == 1 and cs > 1:
+                        type_text = _compose_category_text(r)
+                        if type_text:
                             is_category_row[r] = True
-                            category_types[r] = cell_text
+                            category_types[r] = type_text
                             break
     
-    # --- Step 8: Build body rows with type column, propagating type values top to bottom ---
-    current_type = ""
+    # --- Step 8: Build body rows, optionally adding type column based on detected categories ---
+    has_category_rows = bool(category_types)
+
     body_rows = []
-    
-    # Start from after header rows
-    for r in range(max_row):
-        if is_header_row[r]:
-            continue
-        
-        # If this is a category row, update current type and skip adding it to body_rows
-        if is_category_row[r]:
-            current_type = category_types.get(r, "")
-            continue
-        
-        # This is a data row - add it with the current type
-        row_data = grid[r][:]
-        # Add type as the first column
-        row_data.insert(0, current_type)
-        body_rows.append(row_data)
-    
-    # Add "type" as the first header
-    headers_with_type = ["type"] + headers
-    
+    if has_category_rows:
+        current_type = ""
+        for r in range(max_row):
+            if is_header_row[r]:
+                continue
+            if is_category_row[r]:
+                current_type = category_types.get(r, "")
+                continue
+            row_data = grid[r][:]
+            row_data.insert(0, current_type)
+            body_rows.append(row_data)
+        headers_out = ["type"] + headers
+    else:
+        for r in range(max_row):
+            if is_header_row[r]:
+                continue
+            if is_category_row[r]:
+                # Should not happen without category text, but skip if encountered
+                continue
+            body_rows.append(grid[r][:])
+        headers_out = headers
+
     return {
         "page": page,
-        "headers": headers_with_type,
+        "headers": headers_out,
         "rows": body_rows,
         "spans": spans,
     }
@@ -558,7 +565,7 @@ def convert_grid_to_catalog_products(
     tblock: Dict[str, Any] = None, 
     id_map: Dict[str, Any] = None,
     tindex: int = None,
-    ordering_col_idx: int = None
+    ordering_number_index: int = None
 ) -> Dict[str, Dict[str, Any]]:
     """
     Convert table grid result to catalog products dictionary keyed by ordering number.
@@ -576,7 +583,7 @@ def convert_grid_to_catalog_products(
         tblock: Optional TABLE block from Textract. Required for location information.
         id_map: Optional dictionary mapping block Ids to blocks. Required for location information.
         tindex: Optional index of the table block in the table blocks list. Required for location information.
-        ordering_col_idx: Optional index of the ordering number column in the headers. Required for location information.
+        ordering_number_index: Optional index of the ordering number column in the headers. Required for location information.
     Returns:
         Dictionary mapping ordering numbers to product objects:
         {
@@ -633,13 +640,13 @@ def convert_grid_to_catalog_products(
         print("[convert_grid_to_catalog_products] No headers or rows present. Returning empty dict.")
         return {}
     
-    if ordering_col_idx is None:
-        print(f"[convert_grid_to_catalog_products] WARNING: ordering_col_idx is None. Will skip rows without ordering number.")
+    if ordering_number_index is None:
+        print(f"[convert_grid_to_catalog_products] WARNING: ordering_number_index is None. Will skip rows without ordering number.")
     
     # Identify spec columns (all columns except ordering number)
     spec_column_indices = []
     for idx, header in enumerate(headers):
-        if idx != ordering_col_idx:
+        if idx != ordering_number_index:
             spec_column_indices.append(idx)
     
     # Build a mapping from (row_index, col_index) to cell for location lookup
@@ -669,7 +676,7 @@ def convert_grid_to_catalog_products(
             continue
         
         # Extract ordering number
-        ordering_number = str(row[ordering_col_idx]).strip() if ordering_col_idx < len(row) else ""
+        ordering_number = str(row[ordering_number_index]).strip() if ordering_number_index < len(row) else ""
         
         # Mildly important log: when skipping a row without ordering number
         if not ordering_number:
