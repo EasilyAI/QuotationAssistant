@@ -2,6 +2,9 @@ service: hb-file-processing
 
 frameworkVersion: "3"
 
+plugins:
+  - serverless-offline
+
 custom:
   # Single environment (no -dev / -prod suffixes)
   # Bucket name must be globally unique, so we add the AWS account ID
@@ -85,7 +88,7 @@ functions:
 
   # HTTP API for UI -> get file information after upload
   getFileInfo:
-    handler: process_uploaded_file.get_file_info
+    handler: process_upload_file.get_file_info
     events:
       - httpApi:
           path: /api/files/{fileId}
@@ -97,7 +100,7 @@ functions:
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
   processUploadedFile:
-    handler: process_uploaded_file.process_uploaded_file
+    handler: process_upload_file.process_uploaded_file
     # S3 event configured manually - see setup instructions
     # events:
     #   - s3:

@@ -1,0 +1,13 @@
+{
+  "name": "hb-file-processing",
+  "version": "1.0.0",
+  "description": "Serverless functions for file processing",
+  "scripts": {
+    "invoke:processUploadDemoEvent": "serverless invoke local -f processUploadedFile -p demo-event.json",
+    "offline": "serverless offline"
+  },
+  "devDependencies": {
+    "serverless-offline": "^13.0.0"
+  }
+}
+

@@ -1,0 +1,39 @@
+{
+    "Records": [
+        {
+            "eventVersion": "2.1",
+            "eventSource": "aws:s3",
+            "awsRegion": "us-east-1",
+            "eventTime": "2025-11-13T14:51:34.904Z",
+            "eventName": "ObjectCreated:Put",
+            "userIdentity": {
+                "principalId": "AWS:AROA4STZCBN5LYCBMPNKG:hb-file-processing-dev-getPresignedUrl"
+            },
+            "requestParameters": {
+                "sourceIPAddress": "93.173.181.54"
+            },
+            "responseElements": {
+                "x-amz-request-id": "SEG1EX33AVBHJGG0",
+                "x-amz-id-2": "+YNM/5dMg4rUBxT1rqNZPJB1zSLoLz0YvMLHPQCobRoZalbpd0ukqAKl84pfzxCX6K8oNc/nbrwI+Ytj9lMDPMydRwEXwM3O"
+            },
+            "s3": {
+                "s3SchemaVersion": "1.0",
+                "configurationId": "createNewFile",
+                "bucket": {
+                    "name": "hb-files-raw",
+                    "ownerIdentity": {
+                        "principalId": "A3T44TIKGUSOF0"
+                    },
+                    "arn": "arn:aws:s3:::hb-files-raw"
+                },
+                "object": {
+                    "key": "uploads/MS-01-179.pdf",
+                    "size": 366271,
+                    "eTag": "2fd141c6de0c43a3254778145e9e33cf",
+                    "sequencer": "006915F076DAD1AAA8"
+                }
+            }
+        }
+    ]
+}
+
