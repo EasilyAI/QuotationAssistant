@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
 import { uploadFileToS3, validateFile, pollFileStatus, getFileProducts } from '../services/s3UploadService';
+import { ProductCategory } from '../types';
 
 const FileUpload = () => {
   const navigate = useNavigate();
@@ -11,7 +12,7 @@ const FileUpload = () => {
   const [formData, setFormData] = useState({
     fileType: fileType,
     catalogName: '',
-    productCategory: 'Valve',
+    productCategory: ProductCategory.VALVE,
     catalogSerialNumber: '',
     catalogDescription: '',
     onlineLink: '',
@@ -243,11 +244,11 @@ const FileUpload = () => {
                 value={formData.productCategory}
                 onChange={handleInputChange}
               >
-                <option value="Valve">Valve</option>
-                <option value="Cylinder">Cylinder</option>
-                <option value="Tube">Tube</option>
-                <option value="Seal">Seal</option>
-                <option value="Fitting">Fitting</option>
+                {Object.values(ProductCategory).map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
               </select>
             </div>
 
