@@ -1,3 +1,4 @@
+import { FileType } from '../types/index';
 import { API_CONFIG } from '../config/apiConfig';
 
 /**
@@ -252,18 +253,18 @@ export const validateFile = (file, fileType) => {
     return { valid: false, error: 'No file selected' };
   }
 
-  // Check file size (e.g., max 50MB)
-  const maxSize = 50 * 1024 * 1024; // 50MB
+  // Check file size (e.g., max 20MB)
+  const maxSize = 20 * 1024 * 1024; // 20MB
   if (file.size > maxSize) {
-    return { valid: false, error: 'File size exceeds 50MB limit' };
+    return { valid: false, error: 'File size exceeds 20MB limit' };
   }
 
   // Validate file type based on fileType parameter
-  if (fileType === 'catalog' || fileType === 'sales-drawing') {
+  if (fileType === FileType.Catalog || fileType === FileType.SalesDrawing) {
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       return { valid: false, error: 'Only PDF files are allowed for catalogs and sales drawings' };
     }
-  } else if (fileType === 'price-list') {
+  } else if (fileType === FileType.PriceList) {
     const allowedTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
       'application/vnd.ms-excel', // .xls

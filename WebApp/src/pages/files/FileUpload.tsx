@@ -1,40 +1,117 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
 import { uploadFileToS3, validateFile, pollFileStatus, getFileProducts } from '../../services/s3UploadService';
-import { ProductCategory } from '../../types';
+import { 
+  ProductCategory, 
+  FileType,
+  CatalogFormData,
+  SalesDrawingFormData,
+  PriceListFormData,
+  ProcessingDetails,
+  FileInfo,
+  FileProductsResponse,
+  FileValidationResult,
+  FileUploadResponse
+} from '../../types';
+
+// Helper to map URL param to FileType enum
+const getFileTypeFromParam = (param: string | null): FileType => {
+  if (param === 'catalog') return FileType.Catalog;
+  if (param === 'sales-drawing') return FileType.SalesDrawing;
+  if (param === 'price-list') return FileType.PriceList;
+  return FileType.Catalog;
+};
+
+// Helper to map FileType enum to URL param
+const getParamFromFileType = (fileType: FileType): string => {
+  if (fileType === FileType.Catalog) return 'catalog';
+  if (fileType === FileType.SalesDrawing) return 'sales-drawing';
+  if (fileType === FileType.PriceList) return 'price-list';
+  return 'catalog';
+};
 
 const FileUpload = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const fileType = searchParams.get('type') || 'catalog';
+  const fileTypeParam = searchParams.get('type');
+  const fileType = useMemo(() => getFileTypeFromParam(fileTypeParam), [fileTypeParam]);
 
-  const [formData, setFormData] = useState({
-    fileType: fileType,
-    catalogName: '',
-    productCategory: ProductCategory.VALVE,
-    catalogSerialNumber: '',
-    catalogDescription: '',
-    onlineLink: '',
-    year: '2024',
-    serialNumber: '',
-    description: '',
-    manufacturer: '',
-    orderingNumber: '',
-    notes: ''
+  // Initialize form data based on file type
+  const getInitialFormData = (): CatalogFormData | SalesDrawingFormData | PriceListFormData => {
+    const year = new Date().getFullYear().toString();
+    
+    switch (fileType) {
+      case FileType.Catalog:
+        return {
+          fileType: FileType.Catalog,
+          catalogName: '',
+          productCategory: ProductCategory.VALVE,
+          catalogSerialNumber: '',
+          catalogDescription: '',
+          onlineLink: '',
+          year,
+        };
+      case FileType.SalesDrawing:
+        return {
+          fileType: FileType.SalesDrawing,
+          drawingName: '',
+          orderingNumber: '',
+          manufacturer: '',
+          swaglokLink: '',
+          year,
+          notes: '',
+        };
+      case FileType.PriceList:
+        return {
+          fileType: FileType.PriceList,
+          fileName: '',
+          year,
+          description: '',
+        };
+      default:
+        return {
+          fileType: FileType.Catalog,
+          catalogName: '',
+          productCategory: ProductCategory.VALVE,
+          catalogSerialNumber: '',
+          catalogDescription: '',
+          onlineLink: '',
+          year,
+        };
+    }
+  };
+
+  const [formData, setFormData] = useState<CatalogFormData | SalesDrawingFormData | PriceListFormData>(() => {
+    const year = new Date().getFullYear().toString();
+    return {
+      fileType: FileType.Catalog,
+      catalogName: '',
+      productCategory: ProductCategory.VALVE,
+      catalogSerialNumber: '',
+      catalogDescription: '',
+      onlineLink: '',
+      year,
+    };
   });
+  
+  // Reset form data when file type changes
+  useEffect(() => {
+    setFormData(getInitialFormData());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileType]);
 
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadError, setUploadError] = useState(null);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
-  const [processingStatus, setProcessingStatus] = useState('');
-  const [processingDetails, setProcessingDetails] = useState(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<boolean>(false);
+  const [processingStatus, setProcessingStatus] = useState<string>('');
+  const [processingDetails, setProcessingDetails] = useState<ProcessingDetails | null>(null);
 
-  const handleInputChange = (e) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
@@ -43,12 +120,12 @@ const FileUpload = () => {
   };
 
   const handleFileSelect = (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (file) {
       // Validate file before setting
       const validation = validateFile(file, fileType);
       if (!validation.valid) {
-        setUploadError(validation.error);
+        setUploadError(validation.error || 'Invalid file');
         return;
       }
       setSelectedFile(file);
@@ -57,25 +134,25 @@ const FileUpload = () => {
     }
   };
 
-  const handleDragOver = (e) => {
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(true);
   };
 
-  const handleDragLeave = (e) => {
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
   };
 
-  const handleDrop = (e) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) {
       // Validate file before setting
-      const validation = validateFile(file, fileType);
+      const validation: FileValidationResult = validateFile(file, fileType);
       if (!validation.valid) {
-        setUploadError(validation.error);
+        setUploadError(validation.error || 'Invalid file');
         return;
       }
       setSelectedFile(file);
@@ -95,9 +172,9 @@ const FileUpload = () => {
     }
 
     // Validate file again before upload
-    const validation = validateFile(selectedFile, fileType);
+    const validation: FileValidationResult = validateFile(selectedFile, fileType);
     if (!validation.valid) {
-      setUploadError(validation.error);
+      setUploadError(validation.error || 'Invalid file');
       return;
     }
 
@@ -111,13 +188,15 @@ const FileUpload = () => {
     try {
       // Step 1: Upload file to S3
       console.log('Uploading file to S3...');
-      const { fileKey, fileUrl, fileId } = await uploadFileToS3(
+      const uploadResponse: FileUploadResponse = await uploadFileToS3(
         selectedFile,
         fileType,
-        (progress) => {
+        (progress: number) => {
           setUploadProgress(progress);
         }
       );
+
+      const { fileKey, fileUrl, fileId } = uploadResponse;
 
       setUploadProgress(100);
       setUploadSuccess(true);
@@ -128,13 +207,13 @@ const FileUpload = () => {
       setIsProcessing(true);
       setProcessingStatus('File uploaded, starting processing...');
       
-      const fileInfo = await pollFileStatus(
+      const fileInfo: FileInfo = await pollFileStatus(
         fileId,
-        (status, info) => {
+        (status: string, info: any) => {
           console.log('Status update:', status, info);
           
           // Update processing status message
-          const statusMessages = {
+          const statusMessages: Record<string, string> = {
             'textract_started': 'Starting document analysis...',
             'textract_processing': `Analyzing document. ${info.processingStage || ''}`,
             'textract_completed': 'Document analysis completed',
@@ -164,14 +243,12 @@ const FileUpload = () => {
 
       // Step 3: Get the extracted products
       console.log('Fetching products...');
-      const productsData = await getFileProducts(fileId);
+      const productsData: FileProductsResponse = await getFileProducts(fileId);
       console.log('Products fetched:', productsData);
 
       // Step 4: Navigate to review screen with products based on file type
-      // For catalogs, go to catalog review page
-      const reviewPath = fileType === 'catalog' 
-        ? `/files/review?fileId=${fileId}&type=catalog`
-        : `/files/review?fileId=${fileId}&type=${fileType}`;
+      const paramType = getParamFromFileType(fileType);
+      const reviewPath = `/files/review?fileId=${fileId}&type=${paramType}`;
       
       navigate(reviewPath, {
         state: {
@@ -180,11 +257,11 @@ const FileUpload = () => {
           fileId,
           fileKey,
           fileUrl,
-          fileType,
+          fileType: paramType,
         }
       });
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Upload/Processing error:', error);
       setUploadError(error.message || 'Failed to upload or process file. Please try again.');
       setIsUploading(false);
@@ -193,13 +270,13 @@ const FileUpload = () => {
   };
 
   // Get page title based on file type
-  const getPageTitle = () => {
+  const getPageTitle = (): string => {
     switch (fileType) {
-      case 'catalog':
+      case FileType.Catalog:
         return 'Upload Catalog';
-      case 'sales-drawing':
+      case FileType.SalesDrawing:
         return 'Upload Sales Drawing';
-      case 'price-list':
+      case FileType.PriceList:
         return 'Upload Price List';
       default:
         return 'File Upload';
@@ -207,9 +284,9 @@ const FileUpload = () => {
   };
 
   // Render different form fields based on file type
-  const renderFormFields = () => {
+  const renderFormFields = (): React.ReactElement | null => {
     switch (fileType) {
-      case 'catalog':
+      case FileType.Catalog:
         return (
           <>
             <div className="form-group">
@@ -219,7 +296,7 @@ const FileUpload = () => {
                 name="catalogName"
                 className="form-input"
                 placeholder="Enter catalog name"
-                value={formData.catalogName}
+                value={(formData as CatalogFormData).catalogName}
                 onChange={handleInputChange}
               />
             </div>
@@ -231,7 +308,7 @@ const FileUpload = () => {
                 name="catalogSerialNumber"
                 className="form-input"
                 placeholder="Enter catalog serial number"
-                value={formData.catalogSerialNumber}
+                value={(formData as CatalogFormData).catalogSerialNumber}
                 onChange={handleInputChange}
               />
             </div>
@@ -241,7 +318,7 @@ const FileUpload = () => {
               <select
                 name="productCategory"
                 className="form-select"
-                value={formData.productCategory}
+                value={(formData as CatalogFormData).productCategory}
                 onChange={handleInputChange}
               >
                 {Object.values(ProductCategory).map((category) => (
@@ -259,7 +336,7 @@ const FileUpload = () => {
                 name="onlineLink"
                 className="form-input"
                 placeholder="https://..."
-                value={formData.onlineLink}
+                value={(formData as CatalogFormData).onlineLink}
                 onChange={handleInputChange}
               />
             </div>
@@ -269,7 +346,7 @@ const FileUpload = () => {
               <select
                 name="year"
                 className="form-select"
-                value={formData.year}
+                value={(formData as CatalogFormData).year}
                 onChange={handleInputChange}
               >
                 {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i).map(year => (
@@ -284,25 +361,25 @@ const FileUpload = () => {
                 name="catalogDescription"
                 className="form-textarea"
                 placeholder="Enter catalog description"
-                value={formData.catalogDescription}
+                value={(formData as CatalogFormData).catalogDescription}
                 onChange={handleInputChange}
-                rows="4"
+                rows={4}
               />
             </div>
           </>
         );
 
-      case 'sales-drawing':
+      case FileType.SalesDrawing:
         return (
           <>
             <div className="form-group">
               <label className="form-label">Drawing Name</label>
               <input
                 type="text"
-                name="catalogName"
+                name="drawingName"
                 className="form-input"
                 placeholder="Enter drawing name"
-                value={formData.catalogName}
+                value={(formData as SalesDrawingFormData).drawingName}
                 onChange={handleInputChange}
               />
             </div>
@@ -314,7 +391,7 @@ const FileUpload = () => {
                 name="orderingNumber"
                 className="form-input"
                 placeholder="Enter ordering number"
-                value={formData.orderingNumber}
+                value={(formData as SalesDrawingFormData).orderingNumber}
                 onChange={handleInputChange}
               />
             </div>
@@ -326,7 +403,7 @@ const FileUpload = () => {
                 name="manufacturer"
                 className="form-input"
                 placeholder="Enter manufacturer name"
-                value={formData.manufacturer}
+                value={(formData as SalesDrawingFormData).manufacturer}
                 onChange={handleInputChange}
               />
             </div>
@@ -338,8 +415,8 @@ const FileUpload = () => {
                 name="swaglokLink"
                 className="form-input"
                 placeholder="Enter swaglok link"
-                value={formData.swaglokLink}
-                onChange={(e) => setFormData({ ...formData, swaglokLink: e.target.value })}
+                value={(formData as SalesDrawingFormData).swaglokLink || ''}
+                onChange={handleInputChange}
               />
             </div>
 
@@ -348,7 +425,7 @@ const FileUpload = () => {
               <select
                 name="year"
                 className="form-select"
-                value={formData.year}
+                value={(formData as SalesDrawingFormData).year}
                 onChange={handleInputChange}
               >
                 {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i).map(year => (
@@ -363,25 +440,25 @@ const FileUpload = () => {
                 name="notes"
                 className="form-textarea"
                 placeholder="Enter any additional notes"
-                value={formData.notes}
+                value={(formData as SalesDrawingFormData).notes}
                 onChange={handleInputChange}
-                rows="4"
+                rows={4}
               />
             </div>
           </>
         );
 
-      case 'price-list':
+      case FileType.PriceList:
         return (
           <>
             <div className="form-group">
               <label className="form-label">File Name</label>
               <input
                 type="text"
-                name="catalogName"
+                name="fileName"
                 className="form-input"
                 placeholder="Enter file name"
-                value={formData.catalogName}
+                value={(formData as PriceListFormData).fileName}
                 onChange={handleInputChange}
               />
             </div>
@@ -391,7 +468,7 @@ const FileUpload = () => {
               <select
                 name="year"
                 className="form-select"
-                value={formData.year}
+                value={(formData as PriceListFormData).year}
                 onChange={handleInputChange}
               >
                 {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i).map(year => (
@@ -406,9 +483,9 @@ const FileUpload = () => {
                 name="description"
                 className="form-textarea"
                 placeholder="Enter any additional notes about this price list"
-                value={formData.description}
+                value={(formData as PriceListFormData).description}
                 onChange={handleInputChange}
-                rows="3"
+                rows={3}
               />
             </div>
 
@@ -450,15 +527,19 @@ const FileUpload = () => {
               <select
                 name="fileType"
                 className="form-select"
-                value={formData.fileType}
+                value={getParamFromFileType(fileType)}
                 onChange={(e) => {
-                  setFormData(prev => ({ ...prev, fileType: e.target.value }));
-                  navigate(`/files/upload?type=${e.target.value}`);
+                  const paramType = e.target.value;
+                  navigate(`/files/upload?type=${paramType}`);
                 }}
               >
-                <option value="catalog">Catalog</option>
-                <option value="sales-drawing">Sales Drawing</option>
-                <option value="price-list">Price List</option>
+                {[
+                  { value: FileType.Catalog, param: 'catalog' },
+                  { value: FileType.SalesDrawing, param: 'sales-drawing' },
+                  { value: FileType.PriceList, param: 'price-list' }
+                ].map(({ value: typeValue, param }) => (
+                  <option key={typeValue} value={param}>{typeValue}</option>
+                ))}
               </select>
             </div>
 
@@ -466,7 +547,7 @@ const FileUpload = () => {
           </div>
 
           {/* Right Side - File Drop Zone */}
-          <div className="file-upload-dropzone-container">
+          <div className="file-upload-dropzone-container" style={{ alignSelf: 'flex-start', marginTop: '30px' }}>
             <div
               className={`file-upload-dropzone ${isDragging ? 'dragging' : ''} ${selectedFile ? 'has-file' : ''}`}
               onDragOver={handleDragOver}
@@ -549,7 +630,7 @@ const FileUpload = () => {
                   <input
                     id="file-input"
                     type="file"
-                    accept={fileType === 'price-list' ? '.xlsx,.xls,.csv' : '.pdf'}
+                    accept={fileType === FileType.PriceList ? '.xlsx,.xls,.csv' : '.pdf'}
                     onChange={handleFileSelect}
                     style={{ display: 'none' }}
                   />
