@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import './PriceListReview.css';
 
 const PriceListReview = () => {
   const navigate = useNavigate();
-  const { id: _id } = useParams(); // id available for future use
 
   const [priceListData, setpriceListData] = useState({
     name: "Industrial Valves Price List Q1 2024",

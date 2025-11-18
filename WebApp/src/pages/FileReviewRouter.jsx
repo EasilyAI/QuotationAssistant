@@ -9,7 +9,6 @@ const FileReviewRouter = () => {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const fileType = searchParams.get('type');
-  const fileId = searchParams.get('fileId');
 
   // If we have a file type from URL params, use it (this is the primary path after upload)
   if (fileType) {

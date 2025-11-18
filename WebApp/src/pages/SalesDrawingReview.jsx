@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import './SalesDrawingReview.css';
 
 const SalesDrawingReview = () => {
   const navigate = useNavigate();
-  const { id: _id } = useParams(); // id available for future use
 
   const [drawingData, setDrawingData] = useState({
     drawingName: "Hydraulic Cylinder Assembly",

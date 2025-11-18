@@ -8,7 +8,6 @@ const CatalogReview = () => {
   const location = useLocation();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
-  const fileType = searchParams.get('type') || 'catalog';
   const fileId = searchParams.get('fileId') || id;
 
   const [expandedProduct, setExpandedProduct] = useState(null);
