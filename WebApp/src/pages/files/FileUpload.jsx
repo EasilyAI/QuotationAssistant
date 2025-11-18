@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
-import { uploadFileToS3, validateFile, pollFileStatus, getFileProducts } from '../services/s3UploadService';
-import { ProductCategory } from '../types';
+import { uploadFileToS3, validateFile, pollFileStatus, getFileProducts } from '../../services/s3UploadService';
+import { ProductCategory } from '../../types';
 
 const FileUpload = () => {
   const navigate = useNavigate();

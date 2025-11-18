@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams, useSearchParams, Navigate } from 'react-router-dom';
-import { getUploadById } from '../data/mockUploads';
+import { getUploadById } from '../../data/mockUploads';
 import CatalogReview from './CatalogReview';
 import SalesDrawingReview from './SalesDrawingReview';
 import PriceListReview from './PriceListReview';

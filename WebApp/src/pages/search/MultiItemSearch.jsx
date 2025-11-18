@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mockBatchItems } from '../data/mockBatchItems';
+import { mockBatchItems } from '../../data/mockBatchItems';
 import './MultiItemSearch.css';
 
 const MultiItemSearch = () => {

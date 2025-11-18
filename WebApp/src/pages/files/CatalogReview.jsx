@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
-import { getFileProducts } from '../services/s3UploadService';
+import { getFileProducts } from '../../services/s3UploadService';
 import './CatalogReview.css';
 
 const CatalogReview = () => {

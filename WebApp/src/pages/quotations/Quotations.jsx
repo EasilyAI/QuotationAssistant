@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mockQuotations } from '../data/mockQuotations';
-import { QuotationStatus } from '../types/index';
+import { mockQuotations } from '../../data/mockQuotations';
+import { QuotationStatus } from '../../types/index';
 import './Quotations.css';
 
 const Quotations = () => {

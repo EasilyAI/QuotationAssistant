@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Files.css';
-import { mockUploads } from '../data/mockUploads';
+import { mockUploads } from '../../data/mockUploads';
 
 const Files = () => {
   const navigate = useNavigate();
