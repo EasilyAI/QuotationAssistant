@@ -1,12 +1,15 @@
 // API Configuration
-// TODO: Update these values with your actual API endpoint and S3 bucket details
+// Best Practice: Use environment variables for values that change per environment
+// These values are NOT secrets (they're visible in browser network requests)
+// but should be configurable for different environments (dev, staging, prod)
 
 export const API_CONFIG = {
   // Base URL for your backend API
-  // Example: 'https://api.yourdomain.com' or 'http://localhost:3001'
-  // BASE_URL: process.env.REACT_APP_API_BASE_URL || 'YOUR_API_BASE_URL_HERE',
-  BASE_URL: 'https://3knsgg9rw3.execute-api.us-east-1.amazonaws.com/',
+  // Set via REACT_APP_API_BASE_URL environment variable
+  // Example: REACT_APP_API_BASE_URL=https://api.yourdomain.com
+  BASE_URL: process.env.REACT_APP_API_BASE_URL || 'https://3knsgg9rw3.execute-api.us-east-1.amazonaws.com/',
   
+  // Endpoint paths (not secrets, part of API contract)
   // Endpoint to get presigned URL for S3 upload
   // This endpoint should accept: POST /api/files/presigned-url
   // Body: { fileName: string, fileType: string, contentType: string }
@@ -19,7 +22,9 @@ export const API_CONFIG = {
   FILE_INFO_ENDPOINT: '/api/files',
   
   // S3 Bucket Configuration
-  S3_BUCKET: 'hb-files-raw',
+  // Set via REACT_APP_S3_BUCKET environment variable
+  // Bucket names are public (not secrets) but should be configurable per environment
+  S3_BUCKET: process.env.REACT_APP_S3_BUCKET || 'hb-files-raw',
   S3_REGION: process.env.REACT_APP_S3_REGION || 'us-east-1',
 };
 

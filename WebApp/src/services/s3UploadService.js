@@ -1,17 +1,10 @@
 import { FileType } from '../types/index';
 import { API_CONFIG } from '../config/apiConfig';
 
-/**
- * Service for uploading files directly to S3 using presigned URLs
- */
+/** Service for uploading files directly to S3 using presigned URLs */
 
-/**
- * Request a presigned URL from the backend API
- * @param {string} fileName - Name of the file to upload
- * @param {string} fileType - Type of file (catalog, sales-drawing, price-list)
- * @param {string} contentType - MIME type of the file (e.g., 'application/pdf')
- * @returns {Promise<{uploadUrl: string, fileKey: string}>}
- */
+
+/** Request a presigned URL from the backend API */
 const getPresignedUrl = async (fileName, fileType, contentType) => {
   // Normalize URL to avoid double slashes
   const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
@@ -86,13 +79,7 @@ const uploadToS3 = async (file, uploadUrl, onProgress) => {
   });
 };
 
-/**
- * Upload a file to S3
- * @param {File} file - File to upload
- * @param {string} fileType - Type of file (catalog, sales-drawing, price-list)
- * @param {Function} onProgress - Optional progress callback (progress: number) => void
- * @returns {Promise<{fileKey: string, fileUrl: string, fileId: string}>}
- */
+
 export const uploadFileToS3 = async (file, fileType, onProgress) => {
   try {
     // Step 1: Get presigned URL from backend

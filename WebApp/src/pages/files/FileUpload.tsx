@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
 import { uploadFileToS3, validateFile, pollFileStatus, getFileProducts } from '../../services/s3UploadService';
+import { validateUploadForm } from '../../services/formValidationService';
 import { 
   ProductCategory, 
   FileType,
@@ -172,11 +173,25 @@ const FileUpload = () => {
     }
 
     // Validate file again before upload
-    const validation: FileValidationResult = validateFile(selectedFile, fileType);
-    if (!validation.valid) {
-      setUploadError(validation.error || 'Invalid file');
+    const fileValidation: FileValidationResult = validateFile(selectedFile, fileType);
+    if (!fileValidation.valid) {
+      setUploadError(fileValidation.error || 'Invalid file');
       return;
     }
+
+    // Validate form data
+    const formValidation: FileValidationResult = validateUploadForm(formData, fileType);
+    if (!formValidation.valid) {
+      setUploadError(formValidation.error || 'Please fill in all required fields');
+      return;
+    }
+
+    // TODO: Validate with backend ordering number / file name already exists.
+    // const backEndValidation: FileValidationResult = await validateWithBackend(formData, fileType);
+    // if (!backEndValidation.valid) {
+    //   setUploadError(backEndValidation.error || 'Ordering number / file name already exists');
+    //   return;
+    // }
 
     setIsUploading(true);
     setUploadProgress(0);
@@ -586,16 +601,6 @@ const FileUpload = () => {
                     </div>
                   )}
 
-                  {/* Error Message */}
-                  {uploadError && (
-                    <div className="upload-error-message">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                      {uploadError}
-                    </div>
-                  )}
-
                   {!isUploading && !isProcessing && (
                     <button 
                       className="remove-file-btn"
@@ -637,6 +642,28 @@ const FileUpload = () => {
                 </>
               )}
             </div>
+
+            {/* Error Message - Below Upload Area */}
+            {uploadError && !isProcessing && (
+              <div className="processing-status-container" style={{ 
+                marginTop: '20px',
+                padding: '16px',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                borderRadius: '8px',
+                border: '1px solid rgba(239, 68, 68, 0.3)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0, marginTop: '2px' }}>
+                    <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '14px', fontWeight: '500', color: '#ef4444', wordBreak: 'break-word' }}>
+                      {uploadError}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Processing Status - Below Upload Area */}
             {isProcessing && (
