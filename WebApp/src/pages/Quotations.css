@@ -246,24 +246,49 @@
   white-space: nowrap;
 }
 
-.status-badge.status-searching-items {
-  background: #fef3c7;
-  color: #92400e;
+.status-badge.status-draft {
+  background: #f3f4f6;
+  color: #374151;
 }
 
-.status-badge.status-inventory-check {
+.status-badge.status-in-progress {
   background: #dbeafe;
   color: #1e40af;
 }
 
-.status-badge.status-sent-for-confirmation {
+.status-badge.status-awaiting-approval {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge.status-approved {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.status-order {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.status-quote-rejected {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-badge.status-quote-canceled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.status-badge.status-quote-revision {
   background: #ede9fe;
   color: #5b21b6;
 }
 
-.status-badge.status-done {
-  background: #d1fae5;
-  color: #065f46;
+.status-badge.status-not-applicable {
+  background: #f3f4f6;
+  color: #6b7280;
 }
 
 /* Action Links */
