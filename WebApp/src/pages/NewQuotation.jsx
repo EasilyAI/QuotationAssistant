@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { mockQuotations } from '../data/mockQuotations';
+import { QuotationStatus } from '../types/index';
 import './NewQuotation.css';
 
 const NewQuotation = () => {
@@ -43,7 +44,7 @@ const NewQuotation = () => {
         defaultMargin: 20,
         notes: '',
         createdDate: new Date().toISOString().split('T')[0],
-        status: 'searching items'
+        status: QuotationStatus.DRAFT
       };
     }
   };
@@ -173,7 +174,6 @@ const NewQuotation = () => {
                   value={formData.quotationName}
                   onChange={(e) => handleChange('quotationName', e.target.value)}
                   className={`form-input ${errors.quotationName ? 'error' : ''}`}
-                  placeholder="e.g., Leon Levi 10 valves, Intel December 2025"
                   autoFocus
                 />
                 {errors.quotationName && (
@@ -224,10 +224,9 @@ const NewQuotation = () => {
                   onChange={(e) => handleChange('status', e.target.value)}
                   className="form-select"
                 >
-                  <option value="searching items">Searching Items</option>
-                  <option value="inventory check">Inventory Check</option>
-                  <option value="sent for confirmation">Sent for Confirmation</option>
-                  <option value="done">Done</option>
+                  {Object.values(QuotationStatus).map(status => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
                 </select>
               </div>
             </div>

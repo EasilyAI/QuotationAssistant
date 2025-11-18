@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { mockQuotationItems } from '../data/mockQuotationItems';
+import { QuotationStatus } from '../types/index';
 import './EditQuotation.css';
 
 const EditQuotation = () => {
@@ -36,7 +37,7 @@ const EditQuotation = () => {
     quotationNumber: isNewQuotation ? 'DRAFT' : `#${id}`,
     customer: metadata?.customer || location.state?.customer || 'Acme Corp',
     quotationName: metadata?.quotationName || 'Untitled Quotation',
-    status: metadata?.status || 'searching items',
+    status: metadata?.status || QuotationStatus.DRAFT,
     currency: metadata?.currency || 'USD',
     defaultMargin: metadata?.defaultMargin || 20,
     notes: metadata?.notes || '',
@@ -295,13 +296,6 @@ Your Sales Team`;
     ? quotation.items.filter(item => item.isIncomplete || !item.orderingNumber)
     : quotation.items;
 
-  const statusColors = {
-    'searching items': 'bg-yellow-100 text-yellow-800',
-    'inventory check': 'bg-blue-100 text-blue-800',
-    'sent for confirmation': 'bg-purple-100 text-purple-800',
-    'done': 'bg-green-100 text-green-800'
-  };
-
   return (
     <div className="edit-quotation-page">
       {/* Breadcrumbs */}
@@ -359,12 +353,11 @@ Your Sales Team`;
             <select 
               value={quotation.status} 
               onChange={(e) => handleStatusChange(e.target.value)}
-              className={`status-select ${statusColors[quotation.status]}`}
+              className={`status-select`}
             >
-              <option value="searching items">Searching Items</option>
-              <option value="inventory check">Inventory Check</option>
-              <option value="sent for confirmation">Sent for Confirmation</option>
-              <option value="done">Done</option>
+            {Object.values(QuotationStatus).map(status => (
+              <option key={status} value={status}>{status}</option>
+            ))}
             </select>
             {hasUnsavedChanges && <span className="unsaved-indicator">Unsaved changes</span>}
             <button onClick={handleSave} className="btn-save">

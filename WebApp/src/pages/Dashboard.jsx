@@ -25,7 +25,7 @@ const Dashboard = () => {
   };
 
   const handleUploadFile = () => {
-    navigate('/multi-search');
+    navigate('/files/upload');
   };
 
   const handleEditQuotation = (id) => {

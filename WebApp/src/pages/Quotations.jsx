@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mockQuotations } from '../data/mockQuotations';
+import { QuotationStatus } from '../types/index';
 import './Quotations.css';
 
 const Quotations = () => {
@@ -9,12 +10,7 @@ const Quotations = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const statusLabels = {
-    'searching items': 'Searching Items',
-    'inventory check': 'Inventory Check',
-    'sent for confirmation': 'Sent for Confirmation',
-    'done': 'Done'
-  };
+  const statusLabels = Object.values(QuotationStatus).map(status => status);
 
   const filteredQuotations = mockQuotations.filter(q => {
     const matchesStatus = filterStatus === 'all' || q.status === filterStatus;
@@ -23,14 +19,8 @@ const Quotations = () => {
                          q.quotationNumber.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesStatus && matchesSearch;
   });
-
-  const statusCounts = {
-    all: mockQuotations.length,
-    'searching items': mockQuotations.filter(q => q.status === 'searching items').length,
-    'inventory check': mockQuotations.filter(q => q.status === 'inventory check').length,
-    'sent for confirmation': mockQuotations.filter(q => q.status === 'sent for confirmation').length,
-    'done': mockQuotations.filter(q => q.status === 'done').length
-  };
+  
+  const statusCounts = { all: mockQuotations.length, ...Object.values(QuotationStatus).reduce((acc, status) => ({ ...acc, [status]: mockQuotations.filter(q => q.status === status).length }), {}) };
 
   const handleCreateNew = () => {
     navigate('/quotations/new');
@@ -89,28 +79,34 @@ const Quotations = () => {
               All ({statusCounts.all})
             </button>
             <button
-              className={`tab ${filterStatus === 'searching items' ? 'active' : ''}`}
-              onClick={() => setFilterStatus('searching items')}
+              className={`tab ${filterStatus === QuotationStatus.DRAFT ? 'active' : ''}`}
+              onClick={() => setFilterStatus(QuotationStatus.DRAFT)}
             >
-              Searching ({statusCounts['searching items']})
+              Draft ({statusCounts[QuotationStatus.DRAFT]})
             </button>
             <button
-              className={`tab ${filterStatus === 'inventory check' ? 'active' : ''}`}
-              onClick={() => setFilterStatus('inventory check')}
+              className={`tab ${filterStatus === QuotationStatus.IN_PROGRESS ? 'active' : ''}`}
+              onClick={() => setFilterStatus(QuotationStatus.IN_PROGRESS)}
             >
-              Inventory ({statusCounts['inventory check']})
+              In Progress ({statusCounts[QuotationStatus.IN_PROGRESS]})
             </button>
             <button
-              className={`tab ${filterStatus === 'sent for confirmation' ? 'active' : ''}`}
-              onClick={() => setFilterStatus('sent for confirmation')}
+              className={`tab ${filterStatus === QuotationStatus.AWAITING_APPROVAL ? 'active' : ''}`}
+              onClick={() => setFilterStatus(QuotationStatus.AWAITING_APPROVAL)}
             >
-              Confirmation ({statusCounts['sent for confirmation']})
+              Awaiting Approval ({statusCounts[QuotationStatus.AWAITING_APPROVAL]})
             </button>
             <button
-              className={`tab ${filterStatus === 'done' ? 'active' : ''}`}
-              onClick={() => setFilterStatus('done')}
+              className={`tab ${filterStatus === QuotationStatus.APPROVED ? 'active' : ''}`}
+              onClick={() => setFilterStatus(QuotationStatus.APPROVED)}
             >
-              Done ({statusCounts.done})
+              Approved ({statusCounts[QuotationStatus.APPROVED]})
+            </button>
+            <button
+              className={`tab ${filterStatus === QuotationStatus.ORDER ? 'active' : ''}`}
+              onClick={() => setFilterStatus(QuotationStatus.ORDER)}
+            >
+              Order ({statusCounts[QuotationStatus.ORDER]})
             </button>
           </div>
         </div>
@@ -156,8 +152,8 @@ const Quotations = () => {
                       <td className="col-items text-secondary">{quotation.itemCount}</td>
                       <td className="col-value">${quotation.totalValue.toFixed(2)}</td>
                       <td className="col-status">
-                        <div className={`status-badge status-${quotation.status.replace(/ /g, '-')}`}>
-                          {statusLabels[quotation.status]}
+                        <div className={`status-badge status-${quotation.status.replace(/ /g, '-').toLowerCase()}`}>
+                          {statusLabels[quotation.status] || quotation.status}
                         </div>
                       </td>
                       <td className="col-created text-secondary">{quotation.createdDate}</td>

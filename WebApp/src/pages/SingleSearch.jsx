@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AddToQuotationDialog from '../components/AddToQuotationDialog';
 import { getSearchResultsByType } from '../data/mockSearchResults';
+import { ProductCategory } from '../types/index';
 import './SingleSearch.css';
 
 const SingleSearch = () => {
@@ -16,7 +17,7 @@ const SingleSearch = () => {
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [showCountDropdown, setShowCountDropdown] = useState(false);
 
-  const productTypes = ['All Types', 'Valve', 'Tube', 'Cylinder', 'Fitting', 'Regulator', 'Seal', 'Gasket', 'Coupling', 'Hose'];
+  const productTypes = Object.values(ProductCategory);
 
   // Get search results from centralized data
   const allSearchResults = getSearchResultsByType(productType);
