@@ -17,3 +17,7 @@ extractCatalogInfo/.serverless/
 WebApp/.DS_Store
 
 wip/
+
+# Build outputs
+**/build/
+webApp/build/
