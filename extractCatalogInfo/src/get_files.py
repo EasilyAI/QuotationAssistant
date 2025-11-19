@@ -39,6 +39,7 @@ def get_files(event, context):
         "body": json.dumps(files),
         "headers": get_cors_headers(),
     }
+    
 def get_file_info(event, context):
     """
     Get file processing information from DynamoDB.
@@ -48,12 +49,64 @@ def get_file_info(event, context):
         dict: File information from DynamoDB
     Returns status, processing stage, and metadata about the file processing.
     """
+    print(f"[get_file_info] Starting request processing")
+    
     # Handle OPTIONS preflight request
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        print(f"[get_file_info] Handling OPTIONS preflight request")
         return {
             "statusCode": 200,
             "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    # Extract fileId from path parameters
+    # For HTTP API v2, path parameters are in event["pathParameters"]
+    path_params = event.get("pathParameters") or {}
+    file_id = path_params.get("fileId")
+    print(f"[get_file_info] Extracted fileId: {file_id}")
+    
+    if not file_id:
+        print(f"[get_file_info] ERROR: fileId is required but not provided")
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Get file information from DynamoDB
+    table = dynamodb.Table(FILES_TABLE)
+    try:
+        print(f"[get_file_info] Querying table {FILES_TABLE} for fileId: {file_id}")
+        response = table.get_item(Key={"fileId": file_id})
+        
+        if "Item" not in response:
+            print(f"[get_file_info] File {file_id} not found")
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "File not found"}),
+                "headers": get_cors_headers(),
+            }
+        
+        file_info = response["Item"]
+        
+        # Convert Decimal types to int/float for JSON serialization
+        file_info = convert_decimals_to_native(file_info)
+        
+        print(f"[get_file_info] Successfully retrieved file info for fileId: {file_id}")
+        return {
+            "statusCode": 200,
+            "body": json.dumps(file_info),
+            "headers": get_cors_headers(),
+        }
+    except Exception as e:
+        print(f"[get_file_info] ERROR: Failed to get file info: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to get file information"}),
             "headers": get_cors_headers(),
         }
 
@@ -117,51 +170,6 @@ def get_file_download_url(event, context):
         "body": json.dumps({"url": url}),
         "headers": get_cors_headers(),
     }
-
-
-    
-    # Extract fileId from path parameters
-    # For HTTP API v2, path parameters are in event["pathParameters"]
-    path_params = event.get("pathParameters") or {}
-    file_id = path_params.get("fileId")
-    
-    if not file_id:
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "fileId is required"}),
-            "headers": get_cors_headers(),
-        }
-    
-    # Get file information from DynamoDB
-    table = dynamodb.Table(FILES_TABLE)
-    try:
-        response = table.get_item(Key={"fileId": file_id})
-        
-        if "Item" not in response:
-            return {
-                "statusCode": 404,
-                "body": json.dumps({"error": "File not found"}),
-                "headers": get_cors_headers(),
-            }
-        
-        file_info = response["Item"]
-        
-        # Convert Decimal types to int/float for JSON serialization
-        file_info = json.loads(json.dumps(file_info, default=str))
-        
-        return {
-            "statusCode": 200,
-            "body": json.dumps(file_info),
-            "headers": get_cors_headers(),
-        }
-    except Exception as e:
-        print(f"[get_file_info] ERROR: Failed to get file info: {e}")
-        return {
-            "statusCode": 500,
-            "body": json.dumps({"error": "Failed to get file information"}),
-            "headers": get_cors_headers(),
-        }
-
 
 
 def get_catalog_products(event, context):

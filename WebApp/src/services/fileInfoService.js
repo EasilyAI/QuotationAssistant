@@ -161,7 +161,7 @@ export const pollFileStatus = async (fileId, onStatusUpdate, maxAttempts = 60, i
       }
       
       // Check if processing is complete
-      if (status === 'completed') {
+      if (status === 'pending_review') {
         console.log('[pollFileStatus] Processing completed successfully');
         return fileInfo;
       }
