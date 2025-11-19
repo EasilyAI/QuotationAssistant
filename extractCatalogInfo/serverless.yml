@@ -10,7 +10,7 @@ custom:
   # Bucket name must be globally unique, so we add the AWS account ID
   uploadBucket: hb-files-raw
   filesTable: hb-files
-  tempProductsTable: hb-temp-products
+  catalogProductsTable: hb-catalog-products
 
 provider:
   name: aws
@@ -49,7 +49,7 @@ provider:
   environment:
     UPLOAD_BUCKET: ${self:custom.uploadBucket}
     FILES_TABLE: ${self:custom.filesTable}
-    TEMP_PRODUCTS_TABLE: ${self:custom.tempProductsTable}
+    CATALOG_PRODUCTS_TABLE: ${self:custom.catalogProductsTable}
 
   iamRoleStatements:
     # S3 access for generating presigned URLs and accessing uploaded files
@@ -72,7 +72,7 @@ provider:
         - dynamodb:Scan
       Resource:
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.filesTable}
-        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tempProductsTable}
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.catalogProductsTable}
 
     # Textract permissions (for PDFs)
     - Effect: Allow
@@ -84,7 +84,7 @@ provider:
 functions:
   # HTTP API for UI -> get presigned URL to upload file to S3
   getPresignedUrl:
-    handler: get_presigned_url.get_presigned_url
+    handler: src/get_presigned_url.get_presigned_url
     events:
       - httpApi:
           path: /api/files/presigned-url
@@ -92,7 +92,7 @@ functions:
 
   # HTTP API for UI -> get file information after upload
   getFileInfo:
-    handler: process_upload_file.get_file_info
+    handler: src/get_files.get_file_info
     events:
       - httpApi:
           path: /api/files/{fileId}
@@ -100,7 +100,7 @@ functions:
 
   # HTTP API for UI -> get products extracted from a file
   getFileProducts:
-    handler: process_upload_file.get_file_products
+    handler: src/get_files.get_catalog_products
     events:
       - httpApi:
           path: /api/files/{fileId}/products
@@ -108,7 +108,7 @@ functions:
 
   # HTTP API for UI -> check if a file already exists
   checkFileExists:
-    handler: process_upload_file.check_file_exists
+    handler: src/get_files.check_file_exists
     events:
       - httpApi:
           path: /api/files/check-file-exists
@@ -117,7 +117,7 @@ functions:
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
   processUploadedFile:
-    handler: process_upload_file.process_uploaded_file
+    handler: src/process_upload_file.process_uploaded_file
     timeout: 45  # 5 minutes for Textract processing
     # S3 event configured manually - see setup instructions
     # events:
@@ -158,16 +158,14 @@ resources:
           - AttributeName: fileId
             KeyType: HASH
 
-    # TempProductsTable - Temporarily commented out to remove from CloudFormation
-    # Will be recreated manually, then uncommented
-    # TempProductsTable:
-    #   Type: AWS::DynamoDB::Table
-    #   Properties:
-    #     TableName: ${self:custom.tempProductsTable}
-    #     BillingMode: PAY_PER_REQUEST
-    #     AttributeDefinitions:
-    #       - AttributeName: fileId
-    #         AttributeType: S
-    #     KeySchema:
-    #       - AttributeName: fileId
-    #         KeyType: HASH
+    CatalogProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.catalogProductsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: fileId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: fileId
+            KeyType: HASH

@@ -5,22 +5,14 @@ import time
 
 import boto3
 
+from utils.corsHeaders import get_cors_headers
+
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 
 BUCKET = "hb-files-raw"
 # BUCKET = os.environ["UPLOAD_BUCKET"]
-FILES_TABLE = os.environ["FILES_TABLE"]
-
-# CORS headers helper
-def get_cors_headers():
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",  # TODO: Replace with specific origin in production (e.g., "http://localhost:3000")
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-        "Access-Control-Max-Age": "3600",
-    }
+FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
 
 def get_presigned_url(event, context):
     print(f"[get_presigned_url] Starting request processing")
