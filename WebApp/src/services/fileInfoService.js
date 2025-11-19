@@ -217,15 +217,15 @@ const formatCreatedAt = (timestamp) => {
 /**
  * Build an error message for when a file already exists
  * @param {Object} file - File information object
- * @param {string} BusinessFileType - Type of file (BusinessFileType enum)
+ * @param {string} fileType - Type of file (BusinessFileType enum)
  * @returns {string} Formatted error message
  */
-const buildFileExistsMessage = (file, BusinessFileType) => {
+const buildFileExistsMessage = (file, fileType) => {
   const fields = {
     'File Name': file.fileName,
     'Year': file.year,
-    'Catalog Serial Number': BusinessFileType === BusinessFileType.Catalog ? file.catalogSerialNumber : null,
-    'Ordering Number': BusinessFileType === BusinessFileType.SalesDrawing ? file.orderingNumber : null,
+    'Catalog Serial Number': fileType === BusinessFileType.Catalog ? file.catalogSerialNumber : null,
+    'Ordering Number': fileType === BusinessFileType.SalesDrawing ? file.orderingNumber : null,
     'Status': file.status,
     'Created': formatCreatedAt(file.createdAt)
   };
@@ -241,10 +241,10 @@ const buildFileExistsMessage = (file, BusinessFileType) => {
 /**
  * Check if a file already exists in S3 based on form data
  * @param {Object} formData - Form data containing file information
- * @param {string} BusinessFileType - Type of file (BusinessFileType enum)
+ * @param {string} fileType - Type of file (BusinessFileType enum)
  * @returns {Promise<{exists: boolean, file?: Object}>} Object with exists flag and file details if exists
  */
-export const checkFileExistsInS3 = async (formData, BusinessFileType) => {
+export const checkFileExistsInS3 = async (formData, fileType) => {
   try {
     // Normalize URL to avoid double slashes
     const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
@@ -256,16 +256,16 @@ export const checkFileExistsInS3 = async (formData, BusinessFileType) => {
     
     // Build request body based on file type
     const requestBody = {
-      BusinessFileType,
+      BusinessFileType: fileType,
     };
 
     requestBody.fileName = formData.fileName;
     requestBody.year = formData.year;
 
     // Add file type specific identifiers
-    if (BusinessFileType === BusinessFileType.Catalog) {
+    if (fileType === BusinessFileType.Catalog) {
       requestBody.catalogSerialNumber = formData.catalogSerialNumber;
-    } else if (BusinessFileType === BusinessFileType.SalesDrawing) {
+    } else if (fileType === BusinessFileType.SalesDrawing) {
       requestBody.orderingNumber = formData.orderingNumber;
     }
 
@@ -305,14 +305,14 @@ export const checkFileExistsInS3 = async (formData, BusinessFileType) => {
 /**
  * Validate that a file does not already exist in S3
  * @param {Object} formData - Form data containing file information
- * @param {string} BusinessFileType - Type of file (BusinessFileType enum)
+ * @param {string} fileType - Type of file (BusinessFileType enum)
  * @returns {Promise<{valid: boolean, error?: string}>} Validation result with error message if file exists
  */
-export const validateFileDoesNotExist = async (formData, BusinessFileType) => {
-  const fileCheckResult = await checkFileExistsInS3(formData, BusinessFileType);
+export const validateFileDoesNotExist = async (formData, fileType) => {
+  const fileCheckResult = await checkFileExistsInS3(formData, fileType);
   
   if (fileCheckResult.exists && fileCheckResult.file) {
-    const errorMessage = buildFileExistsMessage(fileCheckResult.file, BusinessFileType);
+    const errorMessage = buildFileExistsMessage(fileCheckResult.file, fileType);
     return {
       valid: false,
       error: errorMessage
