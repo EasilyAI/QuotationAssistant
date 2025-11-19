@@ -6,7 +6,7 @@ import time
 import boto3
 
 from utils.corsHeaders import get_cors_headers
-from utils.helpers import convert_decimals_to_native
+from utils.helpers import convert_decimals_to_native, convert_floats_to_decimal
 
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
@@ -244,6 +244,106 @@ def get_catalog_products(event, context):
             "headers": get_cors_headers(),
         }
 
+
+def update_catalog_products(event, context):
+    """
+    Replace catalog products for a file after review.
+    """
+    print(f"[update_catalog_products] Starting request")
+
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        print(f"[update_catalog_products] Handling OPTIONS preflight request")
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+
+    path_params = event.get("pathParameters") or {}
+    file_id = path_params.get("fileId")
+    print(f"[update_catalog_products] Extracted fileId: {file_id}")
+
+    if not file_id:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        print("[update_catalog_products] ERROR: Invalid JSON body")
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON body"}),
+            "headers": get_cors_headers(),
+        }
+
+    products = body.get("products")
+    if not isinstance(products, list):
+        print("[update_catalog_products] ERROR: `products` payload missing or invalid")
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "`products` array is required"}),
+            "headers": get_cors_headers(),
+        }
+
+    products_count = len(products)
+    timestamp = int(time.time() * 1000)
+    print(f"[update_catalog_products] Saving {products_count} products for file {file_id}")
+
+    table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
+    try:
+        sanitized_products = convert_floats_to_decimal(products)
+        response = table.update_item(
+            Key={"fileId": file_id},
+            UpdateExpression="SET #products = :products, #productsCount = :count, #updatedAt = :updatedAt",
+            ExpressionAttributeNames={
+                "#products": "products",
+                "#productsCount": "productsCount",
+                "#updatedAt": "updatedAt",
+            },
+            ExpressionAttributeValues={
+                ":products": sanitized_products,
+                ":count": products_count,
+                ":updatedAt": timestamp,
+            },
+            ConditionExpression="attribute_exists(fileId)",
+            ReturnValues="ALL_NEW",
+        )
+
+        updated_item = response.get("Attributes", {})
+        updated_item_native = convert_decimals_to_native(updated_item)
+        print(f"[update_catalog_products] Successfully updated products for file {file_id}")
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "fileId": file_id,
+                    "products": updated_item_native.get("products", []),
+                    "count": updated_item_native.get("productsCount", products_count),
+                    "updatedAt": updated_item_native.get("updatedAt", timestamp),
+                }
+            ),
+            "headers": get_cors_headers(),
+        }
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        print(f"[update_catalog_products] ERROR: fileId {file_id} not found")
+        return {
+            "statusCode": 404,
+            "body": json.dumps({"error": "File not found"}),
+            "headers": get_cors_headers(),
+        }
+    except Exception as error:
+        print(f"[update_catalog_products] ERROR: Failed to update products: {error}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to update products"}),
+            "headers": get_cors_headers(),
+        }
 
 
 def check_file_exists(event, context):

@@ -245,10 +245,6 @@ const Files = () => {
     navigate('/files/upload');
   };
 
-  const handleKeep = (id) => {
-    console.log('Keep upload:', id);
-  };
-
   const handleEdit = (id) => {
     navigate(`/files/review/${id}`);
   };
@@ -372,8 +368,6 @@ const Files = () => {
                     </div>
                     <div className="files-table-cell actions">
                       <div className="action-links-inline">
-                        <button className="action-link" onClick={() => handleKeep(upload.fileId)}>Keep</button>
-                        <span className="action-separator">|</span>
                         <button className="action-link" onClick={() => handleEdit(upload.fileId)}>Edit</button>
                         <span className="action-separator">|</span>
                         <button className="action-link" onClick={() => handleDelete(upload.fileId)}>Delete</button>

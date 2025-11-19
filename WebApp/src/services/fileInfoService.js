@@ -109,6 +109,37 @@ export const getFileProducts = async (fileId) => {
 };
 
 /**
+ * Persist reviewed catalog products for a file
+ * @param {string} fileId
+ * @param {Array<object>} products
+ */
+export const updateFileProducts = async (fileId, products) => {
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
+    ? API_CONFIG.BASE_URL.slice(0, -1)
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/products`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      // TODO: Add authentication header if needed
+      // 'Authorization': `Bearer ${getAuthToken()}`,
+    },
+    body: JSON.stringify({ products }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to update products' }));
+    throw new Error(error.message || `Failed to update products: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
  * Poll file status until processing is complete
  * @param {string} fileId - File ID to poll
  * @param {Function} onStatusUpdate - Callback for status updates (status, fileInfo) => void

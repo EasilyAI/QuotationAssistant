@@ -90,6 +90,14 @@ functions:
           path: /api/files/presigned-url
           method: post
 
+  # HTTP API for UI -> generate presigned download URL (client supplies S3 key)
+  getFileDownloadUrl:
+    handler: src/get_files.get_file_download_url
+    events:
+      - httpApi:
+          path: /api/files/download-url
+          method: post
+          
   # HTTP API for UI -> get file information after upload
   getFileInfo:
     handler: src/get_files.get_file_info
@@ -98,13 +106,6 @@ functions:
           path: /api/files/{fileId}
           method: get
 
-  # HTTP API for UI -> generate presigned download URL (client supplies S3 key)
-  getFileDownloadUrl:
-    handler: src/get_files.get_file_download_url
-    events:
-      - httpApi:
-          path: /api/files/download-url
-          method: post
 
 
   # HTTP API for UI -> get all files
@@ -122,6 +123,14 @@ functions:
       - httpApi:
           path: /api/files/{fileId}/products
           method: get
+
+  # HTTP API for UI -> update products after review
+  updateFileProducts:
+    handler: src/get_files.update_catalog_products
+    events:
+      - httpApi:
+          path: /api/files/{fileId}/products
+          method: put
 
   # HTTP API for UI -> check if a file already exists
   checkFileExists:

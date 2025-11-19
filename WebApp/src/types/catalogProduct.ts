@@ -21,6 +21,8 @@ export interface CatalogProduct {
   specs?: Record<string, string>;
   location?: ProductLocation;
   status?: CatalogProductStatus;
+  description?: string;
+  manualInput?: string;
   /**
    * Index of the table that produced this product within the source file.
    * Useful when mapping back to original extraction data.

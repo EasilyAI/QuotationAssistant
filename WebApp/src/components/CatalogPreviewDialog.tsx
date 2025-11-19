@@ -20,6 +20,7 @@ type CatalogPreviewDialogProps = {
   fileUrl?: string;
   product?: CatalogProduct;
   title?: string;
+  highlightTerm?: string;
 };
 
 const DEFAULT_PAGE = 1;
@@ -45,6 +46,8 @@ const buildS3Url = (key?: string): string => {
   return `https://${API_CONFIG.S3_BUCKET}.s3.${API_CONFIG.S3_REGION}.amazonaws.com/${encodedKey}`;
 };
 
+const HIGHLIGHT_SPAN_SELECTOR = '.react-pdf__Page__textContent span';
+
 const CatalogPreviewDialog = ({
   isOpen,
   onClose,
@@ -52,6 +55,7 @@ const CatalogPreviewDialog = ({
   fileUrl,
   product,
   title,
+  highlightTerm,
 }: CatalogPreviewDialogProps) => {
   const [numPages, setNumPages] = useState<number>();
   const [currentPage, setCurrentPage] = useState<number>(DEFAULT_PAGE);
@@ -60,10 +64,19 @@ const CatalogPreviewDialog = ({
   const [viewMode, setViewMode] = useState<'single' | 'continuous'>('single');
   const [pageWidth, setPageWidth] = useState<number>();
   const contentRef = useRef<HTMLDivElement>(null);
+  const highlightAnchorRef = useRef<HTMLDivElement | null>(null);
+  const hasCenteredRef = useRef(false);
+  const highlightTimeoutRef = useRef<number | null>(null);
+  const hasAutoScrolledRef = useRef(false);
 
   const previewUrl = useMemo(() => fileUrl ?? buildS3Url(catalogKey), [catalogKey, fileUrl]);
   const hasProductLocation = Boolean(product?.location?.page);
   const boundingBox = product?.location?.boundingBox;
+  const normalizedHighlightTerm = highlightTerm?.trim().toLowerCase();
+  const highlightBox = boundingBox;
+  const highlightBoxKey = highlightBox
+    ? `${highlightBox.left}-${highlightBox.top}-${highlightBox.width}-${highlightBox.height}`
+    : 'none';
   const continuousPages = useMemo(
     () => (numPages ? Array.from({ length: numPages }, (_, index) => index + 1) : []),
     [numPages],
@@ -161,6 +174,90 @@ const CatalogPreviewDialog = ({
     };
   }, [isOpen]);
 
+  const setHighlightAnchor = useCallback((node: HTMLDivElement | null) => {
+    highlightAnchorRef.current = node;
+  }, []);
+
+  const highlightMatches = useCallback(() => {
+    if (!contentRef.current) {
+      return;
+    }
+
+    const spans = contentRef.current.querySelectorAll<HTMLSpanElement>(HIGHLIGHT_SPAN_SELECTOR);
+    if (!spans.length) {
+      return;
+    }
+
+    if (!normalizedHighlightTerm) {
+      spans.forEach((span) => span.classList.remove('catalog-preview-text-highlight'));
+      return;
+    }
+
+    let firstMatch: HTMLElement | null = null;
+    spans.forEach((span) => {
+      const text = span.textContent?.toLowerCase() ?? '';
+      if (text.includes(normalizedHighlightTerm)) {
+        span.classList.add('catalog-preview-text-highlight');
+        if (!firstMatch) {
+          firstMatch = span;
+        }
+      } else {
+        span.classList.remove('catalog-preview-text-highlight');
+      }
+    });
+
+    if (firstMatch && !hasAutoScrolledRef.current) {
+      firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      hasAutoScrolledRef.current = true;
+    }
+  }, [normalizedHighlightTerm]);
+
+  const scheduleHighlight = useCallback(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      highlightMatches();
+    }, 60);
+  }, [highlightMatches, isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    hasCenteredRef.current = false;
+    highlightAnchorRef.current = null;
+    hasAutoScrolledRef.current = false;
+  }, [product?.id, product?.location?.page, highlightBoxKey, normalizedHighlightTerm, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || normalizedHighlightTerm) {
+      return;
+    }
+    const anchor = highlightAnchorRef.current;
+    if (!anchor || hasCenteredRef.current) {
+      return;
+    }
+    anchor.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    hasCenteredRef.current = true;
+  }, [isOpen, currentPage, viewMode, zoom, previewUrl, highlightBoxKey, normalizedHighlightTerm]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      highlightMatches();
+      return;
+    }
+    scheduleHighlight();
+  }, [highlightMatches, scheduleHighlight, isOpen, normalizedHighlightTerm, currentPage, viewMode, zoom, previewUrl]);
+
   if (!isOpen) {
     return null;
   }
@@ -253,10 +350,27 @@ const CatalogPreviewDialog = ({
                   loading={<p className="catalog-preview-message">Loading catalog…</p>}
                 >
                   <div className={`catalog-preview-document catalog-preview-document--${viewMode}`}>
-                    {viewMode === 'single' && renderPage(currentPage, pageWidth, zoom, boundingBox, product)}
+                    {viewMode === 'single' &&
+                      renderPage(
+                        currentPage,
+                        pageWidth,
+                        zoom,
+                        highlightBox,
+                        product,
+                        setHighlightAnchor,
+                        scheduleHighlight,
+                      )}
                     {viewMode === 'continuous' &&
                       continuousPages.map((pageNumber) =>
-                        renderPage(pageNumber, pageWidth, zoom, boundingBox, product),
+                        renderPage(
+                          pageNumber,
+                          pageWidth,
+                          zoom,
+                          highlightBox,
+                          product,
+                          setHighlightAnchor,
+                          scheduleHighlight,
+                        ),
                       )}
                   </div>
                 </Document>
@@ -275,6 +389,8 @@ function renderPage(
   zoom: number,
   boundingBox: BoundingBox | undefined,
   product?: CatalogProduct,
+  highlightRefSetter?: (node: HTMLDivElement | null) => void,
+  onTextLayerRender?: () => void,
 ) {
   const highlight = product?.location?.page === pageNumber ? boundingBox : undefined;
   const pageSizeProps: { width?: number; scale?: number } = pageWidth
@@ -288,10 +404,12 @@ function renderPage(
           pageNumber={pageNumber}
           renderTextLayer
           renderAnnotationLayer
+          onRenderTextLayerSuccess={onTextLayerRender}
           {...pageSizeProps}
         />
         {highlight && (
           <div
+            ref={highlightRefSetter}
             className="catalog-preview-highlight"
             style={{
               left: `${highlight.left * 100}%`,
