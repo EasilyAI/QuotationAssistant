@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Files.css';
-import { getFiles, getFileDownloadUrl } from '../../services/fileInfoService';
+import { getFiles, getFileDownloadUrl, deleteFile } from '../../services/fileInfoService';
 import {
   DBFile,
   FileStatus,
@@ -159,6 +159,8 @@ const Files = () => {
   const [previewFile, setPreviewFile] = useState<DBFile | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [fileToDelete, setFileToDelete] = useState<DBFile | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const fetchFiles = async () => {
@@ -248,8 +250,43 @@ const Files = () => {
     navigate(`/files/review/${id}`);
   };
 
-  const handleDelete = (id) => {
-    console.log('Delete upload:', id);
+  const handleDelete = (file: DBFile) => {
+    // Check if file is completed - prevent deletion
+    if (file.status === FileStatus.COMPLETED) {
+      alert('Cannot delete completed files.');
+      return;
+    }
+    
+    // Show confirmation dialog
+    setFileToDelete(file);
+  };
+
+  const confirmDelete = async () => {
+    if (!fileToDelete) return;
+
+    // Double-check status before deletion
+    if (fileToDelete.status === FileStatus.COMPLETED) {
+      alert('Cannot delete completed files.');
+      setFileToDelete(null);
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await deleteFile(fileToDelete.fileId);
+      // Remove file from local state
+      setFiles(prevFiles => prevFiles.filter(file => file.fileId !== fileToDelete.fileId));
+      setFileToDelete(null);
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      alert(error instanceof Error ? error.message : 'Failed to delete file. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const cancelDelete = () => {
+    setFileToDelete(null);
   };
 
   const previewCatalogKey = useMemo(
@@ -316,6 +353,7 @@ const Files = () => {
               <div className="files-table-header-cell business-type">Business File Type</div>
               <div className="files-table-header-cell product-category">Product Category</div>
               <div className="files-table-header-cell created-at">Created at</div>
+              <div className="files-table-header-cell updated-at">Last Updated</div>
               <div className="files-table-header-cell status">Status</div>
               <div className="files-table-header-cell progress">Progress</div>
               <div className="files-table-header-cell actions">Actions</div>
@@ -342,31 +380,32 @@ const Files = () => {
                     <div className="files-table-cell created-at">
                       {formatDate(upload.createdAtIso, upload.createdAt)}
                     </div>
+                    <div className="files-table-cell updated-at">
+                      {formatDate(upload.updatedAtIso, upload.updatedAt)}
+                    </div>
                     <div className="files-table-cell status">
                       <div className="status-tag">
                         {formatStatusLabel(upload.status)}
                       </div>
                     </div>
                     <div className="files-table-cell progress">
-                      {upload.status !== FileStatus.COMPLETED && upload.status !== FileStatus.FAILED && (
-                        <div className="progress-container">
-                          <div className="progress-bar">
-                            <div 
-                              className="progress-fill" 
-                              style={{ width: `${getProgress(upload)}%` }}
-                            />
-                          </div>
-                          <span className="progress-text">
-                            {getProgress(upload)}%
-                          </span>
+                      <div className="progress-container">
+                        <div className="progress-bar">
+                          <div 
+                            className="progress-fill" 
+                            style={{ width: `${getProgress(upload)}%` }}
+                          />
                         </div>
-                      )}
+                        <span className="progress-text">
+                          {getProgress(upload)}%
+                        </span>
+                      </div>
                     </div>
                     <div className="files-table-cell actions">
                       <div className="action-links-inline">
                         <button className="action-link" onClick={() => handleEdit(upload.fileId)}>Edit</button>
                         <span className="action-separator">|</span>
-                        <button className="action-link" onClick={() => handleDelete(upload.fileId)}>Delete</button>
+                        <button className="action-link" onClick={() => handleDelete(upload)}>Delete</button>
                       </div>
                     </div>
                   </div>
@@ -535,6 +574,35 @@ const Files = () => {
         fileUrl={previewUrl ?? undefined}
         title={previewFile ? formatFileName(previewFile) : undefined}
       />
+      
+      {/* Delete Confirmation Dialog */}
+      {fileToDelete && (
+        <div className="delete-dialog-backdrop">
+          <div className="delete-dialog">
+            <h3>Delete File</h3>
+            <p>Are you sure you want to delete "{formatFileName(fileToDelete)}"?</p>
+            <p className="delete-warning">This action cannot be undone. The file and all associated data will be permanently deleted.</p>
+            <div className="delete-dialog-actions">
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={cancelDelete}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-danger"
+                type="button"
+                onClick={confirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

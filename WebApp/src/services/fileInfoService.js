@@ -322,3 +322,33 @@ export const validateFileDoesNotExist = async (formData, fileType) => {
   return { valid: true };
 };
 
+/**
+ * Delete a file and all associated data (S3 objects, database records)
+ * @param {string} fileId - File ID to delete
+ * @returns {Promise<Object>} Deletion result
+ */
+export const deleteFile = async (fileId) => {
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
+    ? API_CONFIG.BASE_URL.slice(0, -1)
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      // TODO: Add authentication header if needed
+      // 'Authorization': `Bearer ${getAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to delete file' }));
+    throw new Error(error.message || error.error || `Failed to delete file: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
