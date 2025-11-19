@@ -80,9 +80,28 @@ const Sidebar = () => {
         <div className="sidebar-top">
           <div className="sidebar-header">
             <img 
-              src="/images/Hirshberg - logo.png" 
+              src="/images/Hirshberg-logo.png"
               alt="Hirshberg Group Logo" 
               className="sidebar-logo"
+              onError={(e) => {
+                const attemptedPath = e.target.src;
+                console.error('Failed to load sidebar logo. Attempted path:', attemptedPath);
+                
+                // Try alternative paths
+                const alternatives = [
+                  `${process.env.PUBLIC_URL || ''}/images/Hirshberg-logo.png`,
+                  `${window.location.origin}/images/Hirshberg-logo.png`
+                ];
+                
+                const currentAttempt = alternatives.find(alt => !attemptedPath.includes(alt.split('/').pop()));
+                if (currentAttempt && e.target.dataset.attempts !== '3') {
+                  e.target.dataset.attempts = (parseInt(e.target.dataset.attempts || '0') + 1).toString();
+                  e.target.src = currentAttempt;
+                } else {
+                  console.error('All image paths failed. Image will be hidden.');
+                  e.target.style.display = 'none';
+                }
+              }}
             />
             <h4 className="sidebar-title">Quotation Assistant</h4>
           </div>

@@ -315,7 +315,7 @@ const CatalogReview = () => {
     }
   }, [buildPersistableProducts, fileId, products]);
 
-  const handleSave = (productId: number) => {
+  const handleMarkAsReviewed = (productId: number) => {
     updateProduct(productId, (product) => ({
       ...product,
       isReviewed: true,
@@ -324,6 +324,39 @@ const CatalogReview = () => {
     }));
     setTimeout(() => setExpandedProduct(null), 400);
   };
+
+  const handleMarkAsUnreviewed = (productId: number) => {
+    updateProduct(productId, (product) => ({
+      ...product,
+      isReviewed: false,
+      isSaved: false,
+      status: CatalogProductStatus.PendingReview,
+    }));
+  };
+
+  const handleMarkAllAsReviewed = useCallback(() => {
+    setProducts((prev) =>
+      prev.map((product) => ({
+        ...product,
+        isReviewed: true,
+        isSaved: true,
+        status: CatalogProductStatus.Reviewed,
+      })),
+    );
+    setSaveSuccess(null);
+  }, []);
+
+  const handleMarkAllAsUnreviewed = useCallback(() => {
+    setProducts((prev) =>
+      prev.map((product) => ({
+        ...product,
+        isReviewed: false,
+        isSaved: false,
+        status: CatalogProductStatus.PendingReview,
+      })),
+    );
+    setSaveSuccess(null);
+  }, []);
 
   const handleRemove = (productId: number) => {
     if (!window.confirm('Are you sure you want to remove this product?')) {
@@ -654,24 +687,60 @@ const CatalogReview = () => {
               Pending: <strong>{products.length - reviewedCount}</strong>
             </span>
           </div>
-          <div className="filter-controls">
-            <label className="filter-checkbox">
-              <input
-                type="checkbox"
-                checked={showUnreviewedOnly}
-                onChange={(event) => setShowUnreviewedOnly(event.target.checked)}
-              />
-              <span>Show unreviewed only</span>
-            </label>
-          </div>
-          <div
-            className={`save-status-chip ${
-              hasUnsavedChanges ? 'unsaved' : 'saved'
-            }`}
-          >
-            {hasUnsavedChanges ? 'Unsaved changes' : 'All changes saved'}
+          <div className="stats-right-section">
+            <div className="stats-actions">
+              <button
+                className="stats-action-btn mark-all-reviewed-btn"
+                type="button"
+                onClick={handleMarkAllAsReviewed}
+                title="Mark all products as reviewed"
+              >
+                Mark All Reviewed
+              </button>
+              <button
+                className="stats-action-btn mark-all-unreviewed-btn"
+                type="button"
+                onClick={handleMarkAllAsUnreviewed}
+                title="Mark all products as unreviewed"
+              >
+                Mark All Unreviewed
+              </button>
+            </div>
+            <div className="filter-controls">
+              <label className="filter-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showUnreviewedOnly}
+                  onChange={(event) => setShowUnreviewedOnly(event.target.checked)}
+                />
+                <span>Show unreviewed only</span>
+              </label>
+            </div>
           </div>
         </div>
+
+        {hasUnsavedChanges && (
+          <div className="unsaved-changes-banner">
+            <div className="unsaved-changes-content">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span>You have unsaved changes</span>
+            </div>
+          </div>
+        )}
 
         {(saveError || saveSuccess) && (
           <div className={`save-feedback ${saveError ? 'error' : 'success'}`}>
@@ -719,7 +788,7 @@ const CatalogReview = () => {
                       <div className="review-cell status-col">
                         {product.isReviewed ? (
                           product.isSaved ? (
-                            <span className="save-indicator">✓ Saved</span>
+                            <span className="save-indicator">✓ Reviewed</span>
                           ) : (
                             <span className="reviewed-indicator">Reviewed</span>
                           )
@@ -754,103 +823,132 @@ const CatalogReview = () => {
                         >
                           {isExpanded ? 'Collapse' : 'Edit'}
                         </button>
+                        {product.isReviewed && product.isSaved ? (
+                          <button
+                            className="action-btn-small unreviewed-btn"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleMarkAsUnreviewed(product.id);
+                            }}
+                            title="Mark as unreviewed"
+                          >
+                            Unreviewed
+                          </button>
+                        ) : (
+                          <button
+                            className="action-btn-small reviewed-btn"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleMarkAsReviewed(product.id);
+                            }}
+                            title="Mark as reviewed"
+                          >
+                            Reviewed
+                          </button>
+                        )}
                       </div>
                     </div>
 
                     {isExpanded && (
                       <div className="row-expanded">
                         <div className="expanded-content">
-                          <div className="expanded-field">
-                            <label className="expanded-label">Ordering Number</label>
-                            <input
-                              type="text"
-                              className="expanded-input"
-                              value={product.orderingNumber}
-                              onChange={(event) =>
-                                handleFieldChange(product.id, 'orderingNumber', event.target.value)
-                              }
-                            />
-                          </div>
+                          <div className="expanded-column-left">
+                            <div className="expanded-field">
+                              <label className="expanded-label">Ordering Number</label>
+                              <input
+                                type="text"
+                                className="expanded-input"
+                                value={product.orderingNumber}
+                                onChange={(event) =>
+                                  handleFieldChange(product.id, 'orderingNumber', event.target.value)
+                                }
+                              />
+                            </div>
 
-                          <div className="expanded-field">
-                            <label className="expanded-label">Description</label>
-                            <textarea
-                              className="expanded-textarea"
-                              rows={2}
-                              value={product.description}
-                              onChange={(event) =>
-                                handleFieldChange(product.id, 'description', event.target.value)
-                              }
-                            />
-                          </div>
+                            <div className="expanded-field">
+                              <label className="expanded-label">Description</label>
+                              <textarea
+                                className="expanded-textarea"
+                                rows={3}
+                                value={product.description}
+                                onChange={(event) =>
+                                  handleFieldChange(product.id, 'description', event.target.value)
+                                }
+                              />
+                            </div>
 
-                          <div className="expanded-field">
-                            <label className="expanded-label">Specifications</label>
-                            <div className="spec-list">
-                              {product.specsList.map((spec, idx) => (
-                                <div key={`${product.id}-spec-${idx}`} className="spec-item">
-                                  <input
-                                    type="text"
-                                    className="spec-key-input"
-                                    placeholder="Key"
-                                    value={spec.key}
-                                    onChange={(event) =>
-                                      handleSpecChange(product.id, idx, 'key', event.target.value)
-                                    }
-                                  />
-                                  <span className="spec-separator">:</span>
-                                  <input
-                                    type="text"
-                                    className="spec-value-input"
-                                    placeholder="Value"
-                                    value={spec.value}
-                                    onChange={(event) =>
-                                      handleSpecChange(product.id, idx, 'value', event.target.value)
-                                    }
-                                  />
-                                  <button
-                                    className="remove-spec-btn"
-                                    type="button"
-                                    onClick={() => handleRemoveSpec(product.id, idx)}
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ))}
-                              <button className="add-spec-btn" type="button" onClick={() => handleAddSpec(product.id)}>
-                                + Add Spec
-                              </button>
+                            <div className="expanded-field">
+                              <label className="expanded-label">Manual Input / Notes</label>
+                              <textarea
+                                className="expanded-textarea"
+                                rows={8}
+                                placeholder="Add notes or additional information..."
+                                value={product.manualInput}
+                                onChange={(event) =>
+                                  handleFieldChange(product.id, 'manualInput', event.target.value)
+                                }
+                              />
                             </div>
                           </div>
 
-                          <div className="expanded-field">
-                            <label className="expanded-label">Manual Input / Notes</label>
-                            <textarea
-                              className="expanded-textarea"
-                              rows={2}
-                              placeholder="Add notes or additional information..."
-                              value={product.manualInput}
-                              onChange={(event) =>
-                                handleFieldChange(product.id, 'manualInput', event.target.value)
-                              }
-                            />
-                          </div>
+                          <div className="expanded-column-right">
+                            <div className="expanded-field">
+                              <label className="expanded-label">Specifications</label>
+                              <div className="spec-list">
+                                {product.specsList.map((spec, idx) => (
+                                  <div key={`${product.id}-spec-${idx}`} className="spec-item">
+                                    <input
+                                      type="text"
+                                      className="spec-key-input"
+                                      placeholder="Key"
+                                      value={spec.key}
+                                      onChange={(event) =>
+                                        handleSpecChange(product.id, idx, 'key', event.target.value)
+                                      }
+                                    />
+                                    <span className="spec-separator">:</span>
+                                    <input
+                                      type="text"
+                                      className="spec-value-input"
+                                      placeholder="Value"
+                                      value={spec.value}
+                                      onChange={(event) =>
+                                        handleSpecChange(product.id, idx, 'value', event.target.value)
+                                      }
+                                    />
+                                    <button
+                                      className="remove-spec-btn"
+                                      type="button"
+                                      onClick={() => handleRemoveSpec(product.id, idx)}
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ))}
+                                <button className="add-spec-btn" type="button" onClick={() => handleAddSpec(product.id)}>
+                                  + Add Spec
+                                </button>
+                              </div>
+                            </div>
 
-                          <div className="expanded-actions">
-                            <button
-                              className="btn-primary save-product-btn"
-                              type="button"
-                              onClick={() => handleSave(product.id)}
-                            >
-                              Save Product
-                            </button>
-                            <button
-                              className="btn-secondary"
-                              type="button"
-                              onClick={() => handleRemove(product.id)}
-                            >
-                              Remove
-                            </button>
+                            <div className="expanded-actions">
+                              <button
+                                className="btn-primary save-product-btn"
+                                type="button"
+                                onClick={() => handleMarkAsReviewed(product.id)}
+                              >
+                                Mark as Reviewed
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                type="button"
+                                onClick={() => handleRemove(product.id)}
+                              >
+                                Remove
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
