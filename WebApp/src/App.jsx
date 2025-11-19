@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import MainLayout from './layouts/MainLayout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -18,42 +18,42 @@ import Settings from './pages/Settings';
 import ProductPage from './pages/ProductPage';
 import './styles/globals.css';
 
+const router = createBrowserRouter([
+  {
+    path: '/login',
+    element: <Login />,
+  },
+  {
+    path: '/',
+    element: <MainLayout />,
+    children: [
+      { index: true, element: <Navigate to="/dashboard" replace /> },
+      { path: 'dashboard', element: <Dashboard /> },
+      { path: 'files', element: <Files /> },
+      { path: 'files/upload', element: <FileUpload /> },
+      { path: 'files/review', element: <FileReviewRouter /> },
+      { path: 'files/review/:id', element: <FileReviewRouter /> },
+      { path: 'files/review/catalog/:id', element: <CatalogReview /> },
+      { path: 'files/review/sales-drawing/:id', element: <SalesDrawingReview /> },
+      { path: 'files/review/price-list/:id', element: <PriceListReview /> },
+      { path: 'search', element: <SingleSearch /> },
+      { path: 'multi-search', element: <MultiItemSearch /> },
+      { path: 'quotations', element: <Quotations /> },
+      { path: 'quotations/new', element: <NewQuotation /> },
+      { path: 'quotations/metadata/:id', element: <NewQuotation /> },
+      { path: 'quotations/edit/:id', element: <EditQuotation /> },
+      { path: 'settings', element: <Settings /> },
+      { path: 'product/:orderingNo', element: <ProductPage /> },
+    ],
+  },
+  {
+    path: '*',
+    element: <Navigate to="/dashboard" replace />,
+  },
+]);
+
 function App() {
-  return (
-    <Router>
-      <Routes>
-        {/* Login Route (no layout) */}
-        <Route path="/login" element={<Login />} />
-        
-        {/* Main App Routes (with sidebar layout) */}
-        <Route path="/" element={<MainLayout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          
-          {/* Files Routes */}
-          <Route path="files" element={<Files />} />
-          <Route path="files/upload" element={<FileUpload />} />
-          <Route path="files/review" element={<FileReviewRouter />} />
-          <Route path="files/review/:id" element={<FileReviewRouter />} />
-          <Route path="files/review/catalog/:id" element={<CatalogReview />} />
-          <Route path="files/review/sales-drawing/:id" element={<SalesDrawingReview />} />
-          <Route path="files/review/price-list/:id" element={<PriceListReview />} />
-          
-          <Route path="search" element={<SingleSearch />} />
-          <Route path="multi-search" element={<MultiItemSearch />} />
-          <Route path="quotations" element={<Quotations />} />
-          <Route path="quotations/new" element={<NewQuotation />} />
-          <Route path="quotations/metadata/:id" element={<NewQuotation />} />
-          <Route path="quotations/edit/:id" element={<EditQuotation />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="product/:orderingNo" element={<ProductPage />} />
-        </Route>
-        
-        {/* Catch all - redirect to dashboard */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
-    </Router>
-  );
+  return <RouterProvider router={router} />;
 }
 
 export default App;

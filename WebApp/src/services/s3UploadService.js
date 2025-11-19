@@ -5,7 +5,7 @@ import { API_CONFIG } from '../config/apiConfig';
 
 
 /** Request a presigned URL from the backend API */
-const getPresignedUrl = async (fileName, BusinessFileType, contentType, formData = null) => {
+const getPresignedUrl = async (fileName, fileType, contentType, formData = null) => {
   // Normalize URL to avoid double slashes
   const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
     ? API_CONFIG.BASE_URL.slice(0, -1) 
@@ -16,7 +16,7 @@ const getPresignedUrl = async (fileName, BusinessFileType, contentType, formData
   
   const requestBody = {
     fileName,
-    BusinessFileType,
+    BusinessFileType: fileType,
     contentType,
   };
   
@@ -81,12 +81,12 @@ const uploadToS3 = async (file, uploadUrl, onProgress) => {
 };
 
 
-export const uploadFileToS3 = async (formData, file, BusinessFileType, onProgress) => {
+export const uploadFileToS3 = async (formData, file, fileType, onProgress) => {
   try {
     // Step 1: Get presigned URL from backend (include form data)
     const { uploadUrl, fileKey, fileId } = await getPresignedUrl(
       file.name,
-      BusinessFileType,
+      fileType,
       file.type,
       formData  // Pass form data to be stored in DynamoDB
     );
@@ -113,10 +113,10 @@ export const uploadFileToS3 = async (formData, file, BusinessFileType, onProgres
 /**
  * Validate file before upload
  * @param {File} file - File to validate
- * @param {string} BusinessFileType - Type of file
+ * @param {string} fileType - Type of file
  * @returns {Object} { valid: boolean, error?: string }
  */
-export const validateFile = (file, BusinessFileType) => {
+export const validateFile = (file, fileType) => {
   // Check if file is provided
   if (!file) {
     return { valid: false, error: 'No file selected' };
@@ -128,12 +128,12 @@ export const validateFile = (file, BusinessFileType) => {
     return { valid: false, error: 'File size exceeds 20MB limit' };
   }
 
-  // Validate file type based on BusinessFileType parameter
-  if (BusinessFileType === BusinessFileType.Catalog || BusinessFileType === BusinessFileType.SalesDrawing) {
+  // Validate file type based on fileType parameter
+  if (fileType === BusinessFileType.Catalog || fileType === BusinessFileType.SalesDrawing) {
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       return { valid: false, error: 'Only PDF files are allowed for catalogs and sales drawings' };
     }
-  } else if (BusinessFileType === BusinessFileType.PriceList) {
+  } else if (fileType === BusinessFileType.PriceList) {
     const allowedTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
       'application/vnd.ms-excel', // .xls

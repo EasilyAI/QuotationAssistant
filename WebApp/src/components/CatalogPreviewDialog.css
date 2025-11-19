@@ -179,6 +179,13 @@
   border-radius: 4px;
 }
 
+.catalog-preview-text-highlight {
+  background: rgba(250, 204, 21, 0.9);
+  color: #1f2937;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
 @media (max-width: 768px) {
   .catalog-preview-overlay {
     padding: 0.75rem;

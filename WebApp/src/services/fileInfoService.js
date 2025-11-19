@@ -109,6 +109,37 @@ export const getFileProducts = async (fileId) => {
 };
 
 /**
+ * Persist reviewed catalog products for a file
+ * @param {string} fileId
+ * @param {Array<object>} products
+ */
+export const updateFileProducts = async (fileId, products) => {
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
+    ? API_CONFIG.BASE_URL.slice(0, -1)
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/products`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      // TODO: Add authentication header if needed
+      // 'Authorization': `Bearer ${getAuthToken()}`,
+    },
+    body: JSON.stringify({ products }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to update products' }));
+    throw new Error(error.message || `Failed to update products: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
  * Poll file status until processing is complete
  * @param {string} fileId - File ID to poll
  * @param {Function} onStatusUpdate - Callback for status updates (status, fileInfo) => void
@@ -186,15 +217,15 @@ const formatCreatedAt = (timestamp) => {
 /**
  * Build an error message for when a file already exists
  * @param {Object} file - File information object
- * @param {string} BusinessFileType - Type of file (BusinessFileType enum)
+ * @param {string} fileType - Type of file (BusinessFileType enum)
  * @returns {string} Formatted error message
  */
-const buildFileExistsMessage = (file, BusinessFileType) => {
+const buildFileExistsMessage = (file, fileType) => {
   const fields = {
     'File Name': file.fileName,
     'Year': file.year,
-    'Catalog Serial Number': BusinessFileType === BusinessFileType.Catalog ? file.catalogSerialNumber : null,
-    'Ordering Number': BusinessFileType === BusinessFileType.SalesDrawing ? file.orderingNumber : null,
+    'Catalog Serial Number': fileType === BusinessFileType.Catalog ? file.catalogSerialNumber : null,
+    'Ordering Number': fileType === BusinessFileType.SalesDrawing ? file.orderingNumber : null,
     'Status': file.status,
     'Created': formatCreatedAt(file.createdAt)
   };
@@ -210,10 +241,10 @@ const buildFileExistsMessage = (file, BusinessFileType) => {
 /**
  * Check if a file already exists in S3 based on form data
  * @param {Object} formData - Form data containing file information
- * @param {string} BusinessFileType - Type of file (BusinessFileType enum)
+ * @param {string} fileType - Type of file (BusinessFileType enum)
  * @returns {Promise<{exists: boolean, file?: Object}>} Object with exists flag and file details if exists
  */
-export const checkFileExistsInS3 = async (formData, BusinessFileType) => {
+export const checkFileExistsInS3 = async (formData, fileType) => {
   try {
     // Normalize URL to avoid double slashes
     const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
@@ -225,16 +256,16 @@ export const checkFileExistsInS3 = async (formData, BusinessFileType) => {
     
     // Build request body based on file type
     const requestBody = {
-      BusinessFileType,
+      BusinessFileType: fileType,
     };
 
     requestBody.fileName = formData.fileName;
     requestBody.year = formData.year;
 
     // Add file type specific identifiers
-    if (BusinessFileType === BusinessFileType.Catalog) {
+    if (fileType === BusinessFileType.Catalog) {
       requestBody.catalogSerialNumber = formData.catalogSerialNumber;
-    } else if (BusinessFileType === BusinessFileType.SalesDrawing) {
+    } else if (fileType === BusinessFileType.SalesDrawing) {
       requestBody.orderingNumber = formData.orderingNumber;
     }
 
@@ -274,14 +305,14 @@ export const checkFileExistsInS3 = async (formData, BusinessFileType) => {
 /**
  * Validate that a file does not already exist in S3
  * @param {Object} formData - Form data containing file information
- * @param {string} BusinessFileType - Type of file (BusinessFileType enum)
+ * @param {string} fileType - Type of file (BusinessFileType enum)
  * @returns {Promise<{valid: boolean, error?: string}>} Validation result with error message if file exists
  */
-export const validateFileDoesNotExist = async (formData, BusinessFileType) => {
-  const fileCheckResult = await checkFileExistsInS3(formData, BusinessFileType);
+export const validateFileDoesNotExist = async (formData, fileType) => {
+  const fileCheckResult = await checkFileExistsInS3(formData, fileType);
   
   if (fileCheckResult.exists && fileCheckResult.file) {
-    const errorMessage = buildFileExistsMessage(fileCheckResult.file, BusinessFileType);
+    const errorMessage = buildFileExistsMessage(fileCheckResult.file, fileType);
     return {
       valid: false,
       error: errorMessage

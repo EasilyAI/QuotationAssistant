@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Files.css';
 import { getFiles, getFileDownloadUrl } from '../../services/fileInfoService';
@@ -159,7 +159,6 @@ const Files = () => {
   const [previewFile, setPreviewFile] = useState<DBFile | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   useEffect(() => {
     const fetchFiles = async () => {
@@ -191,7 +190,7 @@ const Files = () => {
     [files]
   );
 
-  const filterUploads = (uploads: DBFile[]) => {
+  const filterUploads = useCallback((uploads: DBFile[]) => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     return uploads.filter(upload => {
       const fileName = formatFileName(upload);
@@ -206,11 +205,11 @@ const Files = () => {
       const matchesYear = !selectedYear || createdAtYear === selectedYear;
       return matchesSearch && matchesCategory && matchesYear;
     });
-  };
+  }, [searchQuery, selectedCategory, selectedYear]);
 
   const filteredCompletedUploads = useMemo(
     () => filterUploads(completedUploads),
-    [completedUploads, searchQuery, selectedCategory, selectedYear]
+    [completedUploads, filterUploads]
   );
 
   const paginatedInProgress = useMemo(
@@ -245,10 +244,6 @@ const Files = () => {
     navigate('/files/upload');
   };
 
-  const handleKeep = (id) => {
-    console.log('Keep upload:', id);
-  };
-
   const handleEdit = (id) => {
     navigate(`/files/review/${id}`);
   };
@@ -276,7 +271,6 @@ const Files = () => {
     }
 
     try {
-      setIsLoadingPreview(true);
       const response = await getFileDownloadUrl(key);
       if (!response?.url) {
         throw new Error('Missing presigned URL');
@@ -287,8 +281,6 @@ const Files = () => {
     } catch (error) {
       console.error('Failed to get preview URL', error);
       alert('Unable to open the preview right now. Please try again later.');
-    } finally {
-      setIsLoadingPreview(false);
     }
   };
 
@@ -372,8 +364,6 @@ const Files = () => {
                     </div>
                     <div className="files-table-cell actions">
                       <div className="action-links-inline">
-                        <button className="action-link" onClick={() => handleKeep(upload.fileId)}>Keep</button>
-                        <span className="action-separator">|</span>
                         <button className="action-link" onClick={() => handleEdit(upload.fileId)}>Edit</button>
                         <span className="action-separator">|</span>
                         <button className="action-link" onClick={() => handleDelete(upload.fileId)}>Delete</button>
