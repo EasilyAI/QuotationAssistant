@@ -83,9 +83,12 @@ const uploadToS3 = async (file, uploadUrl, onProgress) => {
 
 export const uploadFileToS3 = async (formData, file, fileType, onProgress) => {
   try {
+    // Normalize filename to lowercase to avoid case-sensitive duplicates
+    const normalizedFileName = file.name.toLowerCase();
+    
     // Step 1: Get presigned URL from backend (include form data)
     const { uploadUrl, fileKey, fileId } = await getPresignedUrl(
-      file.name,
+      normalizedFileName,
       fileType,
       file.type,
       formData  // Pass form data to be stored in DynamoDB

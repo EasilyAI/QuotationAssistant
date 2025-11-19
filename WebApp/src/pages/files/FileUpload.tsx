@@ -103,12 +103,36 @@ const FileUpload = () => {
   const [uploadSuccess, setUploadSuccess] = useState<boolean>(false);
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const [processingDetails, setProcessingDetails] = useState<ProcessingDetails | null>(null);
+  const [showCompletionModal, setShowCompletionModal] = useState<boolean>(false);
+  const [completionData, setCompletionData] = useState<{
+    fileInfo: FileInfo;
+    productsData: FileProductsResponse;
+    fileId: string;
+    fileKey: string;
+    fileUrl: string;
+    paramType: string;
+  } | null>(null);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
+    
+    // Map field names to formData field names and normalize filename to lowercase
+    let fieldName = name;
+    let fieldValue = value;
+    
+    // Map catalogName and drawingName to fileName
+    if (name === 'catalogName' || name === 'drawingName') {
+      fieldName = 'fileName';
+    }
+    
+    // Normalize filename to lowercase
+    if (fieldName === 'fileName') {
+      fieldValue = value.toLowerCase();
+    }
+    
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [fieldName]: fieldValue
     }));
   };
 
@@ -125,14 +149,12 @@ const FileUpload = () => {
       setUploadError(null);
       setUploadSuccess(false);
       
-      // Auto-populate file name if not already set
+      // Auto-populate file name if not already set (normalize to lowercase)
       setFormData(prev => {
         if (!prev.fileName) {
-          // Extract filename without extension
-          const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
           return {
             ...prev,
-            fileName: fileNameWithoutExt
+            fileName: file.name.toLowerCase()
           };
         }
         return prev;
@@ -165,14 +187,12 @@ const FileUpload = () => {
       setUploadError(null);
       setUploadSuccess(false);
       
-      // Auto-populate file name if not already set
+      // Auto-populate file name if not already set (normalize to lowercase)
       setFormData(prev => {
         if (!prev.fileName) {
-          // Extract filename without extension
-          const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
           return {
             ...prev,
-            fileName: fileNameWithoutExt
+            fileName: file.name.toLowerCase()
           };
         }
         return prev;
@@ -219,8 +239,15 @@ const FileUpload = () => {
     setProcessingDetails(null);
 
     try {
+      // Normalize filename to lowercase before validation and upload
+      const normalizedFormData = {
+        ...formData,
+        fileName: formData.fileName.toLowerCase()
+      };
+      setFormData(normalizedFormData);
+
       // Step 0: Check if file already exists in S3
-      const fileValidation = await validateFileDoesNotExist(formData, fileType);
+      const fileValidation = await validateFileDoesNotExist(normalizedFormData, fileType);
       if (!fileValidation.valid) {
         setUploadError(fileValidation.error || 'File already exists');
         setIsUploading(false);
@@ -230,7 +257,7 @@ const FileUpload = () => {
       // Step 1: Upload file to S3
       console.log('Uploading file to S3...');
       const uploadResponse: FileUploadResponse = await uploadFileToS3(
-        formData,
+        normalizedFormData,
         selectedFile,
         fileType,
         (progress: number) => {
@@ -288,20 +315,17 @@ const FileUpload = () => {
       const productsData: FileProductsResponse = await getFileProducts(fileId);
       console.log('Products fetched:', productsData);
 
-      // Step 4: Navigate to review screen with products based on file type
+      // Step 4: Show completion modal instead of navigating immediately
       const paramType = getParamFromFileType(fileType);
-      const reviewPath = `/files/review?fileId=${fileId}&type=${paramType}`;
-      
-      navigate(reviewPath, {
-        state: {
-          fileInfo,
-          products: productsData.products,
-          fileId,
-          fileKey,
-          fileUrl,
-          fileType: paramType,
-        }
+      setCompletionData({
+        fileInfo,
+        productsData,
+        fileId,
+        fileKey,
+        fileUrl,
+        paramType,
       });
+      setShowCompletionModal(true);
       
     } catch (error: any) {
       console.error('Upload/Processing error:', error);
@@ -323,6 +347,118 @@ const FileUpload = () => {
       default:
         return 'File Upload';
     }
+  };
+
+  // Handle review now - navigate to review page
+  const handleReviewNow = () => {
+    if (!completionData) return;
+    
+    const { fileInfo, productsData, fileId, fileKey, fileUrl, paramType } = completionData;
+    const reviewPath = `/files/review?fileId=${fileId}&type=${paramType}`;
+    
+    navigate(reviewPath, {
+      state: {
+        fileInfo,
+        products: productsData.products,
+        fileId,
+        fileKey,
+        fileUrl,
+        fileType: paramType,
+      }
+    });
+  };
+
+  // Handle save for later - close modal and reset
+  const handleSaveForLater = () => {
+    setShowCompletionModal(false);
+    setCompletionData(null);
+    // Reset form and file selection
+    setSelectedFile(null);
+    setUploadError(null);
+    setUploadSuccess(false);
+    setUploadProgress(0);
+    setProcessingStatus('');
+    setProcessingDetails(null);
+    // Reset form data
+    setFormData(getInitialFormData());
+  };
+
+  // Render completion modal
+  const renderCompletionModal = (): React.ReactElement | null => {
+    if (!showCompletionModal || !completionData) return null;
+
+    const { fileInfo, productsData } = completionData;
+    const productsCount = productsData.count || fileInfo.productsCount || 0;
+    const pagesCount = fileInfo.pagesCount || processingDetails?.pages || 0;
+    const tablesCount = fileInfo.tablesCount || processingDetails?.tables || 0;
+    const tablesWithProducts = fileInfo.tablesWithProducts || processingDetails?.tablesWithProducts || 0;
+
+    return (
+      <div className="completion-modal-overlay" onClick={handleSaveForLater}>
+        <div className="completion-modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="completion-modal-header">
+            <div className="completion-modal-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" stroke="#22c55e" strokeWidth="2" fill="none"/>
+                <path d="M8 12L11 15L16 9" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <h2 className="completion-modal-title">Processing Complete!</h2>
+            <p className="completion-modal-subtitle">
+              Your file has been successfully processed and products have been saved.
+            </p>
+          </div>
+
+          <div className="completion-modal-body">
+            <div className="completion-stats">
+              <div className="completion-stat-item highlight">
+                <div className="completion-stat-value">{productsCount}</div>
+                <div className="completion-stat-label">Products Found</div>
+              </div>
+              {pagesCount > 0 && (
+                <div className="completion-stat-item">
+                  <div className="completion-stat-value">{pagesCount}</div>
+                  <div className="completion-stat-label">Pages Processed</div>
+                </div>
+              )}
+              {tablesCount > 0 && (
+                <div className="completion-stat-item">
+                  <div className="completion-stat-value">{tablesCount}</div>
+                  <div className="completion-stat-label">Tables Extracted</div>
+                </div>
+              )}
+              {tablesWithProducts > 0 && (
+                <div className="completion-stat-item">
+                  <div className="completion-stat-value">{tablesWithProducts}</div>
+                  <div className="completion-stat-label">Tables with Products</div>
+                </div>
+              )}
+            </div>
+
+            <div className="completion-info">
+              <p className="completion-info-text">
+                All products have been saved to the catalog. You can review them now or continue later.
+              </p>
+            </div>
+          </div>
+
+          <div className="completion-modal-actions">
+            <button 
+              className="btn-secondary completion-modal-btn"
+              onClick={handleSaveForLater}
+            >
+              Save for Later
+            </button>
+            <button 
+              className="btn-primary completion-modal-btn"
+              onClick={handleReviewNow}
+            >
+              Review Now
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   // Render different form fields based on file type
@@ -555,6 +691,7 @@ const FileUpload = () => {
 
   return (
     <div className="file-upload-page">
+      {renderCompletionModal()}
       <div className="file-upload-container">
         {/* Header */}
         <div className="file-upload-header">

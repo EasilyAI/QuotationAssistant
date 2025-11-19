@@ -434,7 +434,7 @@ def process_uploaded_file(event, context):
         # Step 12: Final status update - Completed
         update_file_status(
             file_id=file_id,
-            status="completed",
+            status="pending_review",
             processingStage="Processing completed successfully",
             pagesCount=pages_count,
             tablesCount=tables_count,

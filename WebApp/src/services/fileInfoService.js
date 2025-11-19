@@ -259,7 +259,8 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
       BusinessFileType: fileType,
     };
 
-    requestBody.fileName = formData.fileName;
+    // Normalize filename to lowercase to avoid case-sensitive duplicates
+    requestBody.fileName = formData.fileName ? formData.fileName.toLowerCase() : formData.fileName;
     requestBody.year = formData.year;
 
     // Add file type specific identifiers

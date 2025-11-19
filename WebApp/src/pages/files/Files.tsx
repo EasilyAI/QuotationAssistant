@@ -12,6 +12,9 @@ import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
 const IN_PROGRESS_PAGE_SIZE = 5;
 const COMPLETED_PAGE_SIZE = 10;
 
+type SortColumn = 'progress' | 'createdAt' | 'updatedAt' | null;
+type SortDirection = 'asc' | 'desc';
+
 type FilesApiResponse = {
   files?: DBFile[];
 } | DBFile[];
@@ -133,6 +136,48 @@ const getProductCategoryLabel = (file: DBFile): string => {
   return derived || '—';
 };
 
+const sortFiles = (files: DBFile[], column: SortColumn, direction: SortDirection): DBFile[] => {
+  if (!column) return files;
+
+  const sorted = [...files].sort((a, b) => {
+    let aValue: number | string | undefined;
+    let bValue: number | string | undefined;
+
+    switch (column) {
+      case 'progress':
+        aValue = getProgress(a);
+        bValue = getProgress(b);
+        break;
+      case 'createdAt':
+        aValue = a.createdAtIso ? new Date(a.createdAtIso).getTime() : (a.createdAt || 0);
+        bValue = b.createdAtIso ? new Date(b.createdAtIso).getTime() : (b.createdAt || 0);
+        break;
+      case 'updatedAt':
+        aValue = a.updatedAtIso ? new Date(a.updatedAtIso).getTime() : (a.updatedAt || 0);
+        bValue = b.updatedAtIso ? new Date(b.updatedAtIso).getTime() : (b.updatedAt || 0);
+        break;
+      default:
+        return 0;
+    }
+
+    if (aValue === undefined && bValue === undefined) return 0;
+    if (aValue === undefined) return 1;
+    if (bValue === undefined) return -1;
+
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      return direction === 'asc' ? aValue - bValue : bValue - aValue;
+    }
+
+    const aStr = String(aValue);
+    const bStr = String(bValue);
+    return direction === 'asc' 
+      ? aStr.localeCompare(bStr)
+      : bStr.localeCompare(aStr);
+  });
+
+  return sorted;
+};
+
 const paginate = <T,>(items: T[], page: number, pageSize: number) => {
   const totalItems = items.length;
   const totalPages = totalItems === 0 ? 1 : Math.ceil(totalItems / pageSize);
@@ -161,6 +206,8 @@ const Files = () => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<DBFile | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   useEffect(() => {
     const fetchFiles = async () => {
@@ -177,19 +224,23 @@ const Files = () => {
   }, []);
 
   const inProgressUploads = useMemo(
-    () =>
-      files.filter(
+    () => {
+      const filtered = files.filter(
         (file) => file.status !== FileStatus.COMPLETED && file.status !== FileStatus.FAILED
-      ),
-    [files]
+      );
+      return sortFiles(filtered, sortColumn, sortDirection);
+    },
+    [files, sortColumn, sortDirection]
   );
 
   const completedUploads = useMemo(
-    () =>
-      files.filter(
+    () => {
+      const filtered = files.filter(
         (file) => file.status === FileStatus.COMPLETED || file.status === FileStatus.FAILED
-      ),
-    [files]
+      );
+      return sortFiles(filtered, sortColumn, sortDirection);
+    },
+    [files, sortColumn, sortDirection]
   );
 
   const filterUploads = useCallback((uploads: DBFile[]) => {
@@ -241,6 +292,11 @@ const Files = () => {
   useEffect(() => {
     setCompletedPage(1);
   }, [searchQuery, selectedCategory, selectedYear]);
+
+  useEffect(() => {
+    setInProgressPage(1);
+    setCompletedPage(1);
+  }, [sortColumn, sortDirection]);
 
   const handleUploadNew = () => {
     navigate('/files/upload');
@@ -325,6 +381,41 @@ const Files = () => {
     console.log('Download file:', id);
   };
 
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      // Toggle direction if clicking the same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new column and default to ascending
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const SortIcon = ({ column }: { column: SortColumn }) => {
+    if (sortColumn !== column) {
+      return (
+        <span className="sort-icon">
+          <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 6L8 2L12 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M4 10L8 14L12 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.3"/>
+          </svg>
+        </span>
+      );
+    }
+    return (
+      <span className={`sort-icon active`}>
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          {sortDirection === 'asc' ? (
+            <path d="M4 6L8 2L12 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          ) : (
+            <path d="M4 10L8 14L12 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          )}
+        </svg>
+      </span>
+    );
+  };
+
   return (
     <div className="files-page">
       {/* Header */}
@@ -352,10 +443,34 @@ const Files = () => {
               <div className="files-table-header-cell file-name">File Name</div>
               <div className="files-table-header-cell business-type">Business File Type</div>
               <div className="files-table-header-cell product-category">Product Category</div>
-              <div className="files-table-header-cell created-at">Created at</div>
-              <div className="files-table-header-cell updated-at">Last Updated</div>
+              <div 
+                className="files-table-header-cell created-at sortable" 
+                onClick={() => handleSort('createdAt')}
+              >
+                <div className="sortable-header-content">
+                  <span>Created at</span>
+                  <SortIcon column="createdAt" />
+                </div>
+              </div>
+              <div 
+                className="files-table-header-cell updated-at sortable" 
+                onClick={() => handleSort('updatedAt')}
+              >
+                <div className="sortable-header-content">
+                  <span>Last Updated</span>
+                  <SortIcon column="updatedAt" />
+                </div>
+              </div>
               <div className="files-table-header-cell status">Status</div>
-              <div className="files-table-header-cell progress">Progress</div>
+              <div 
+                className="files-table-header-cell progress sortable" 
+                onClick={() => handleSort('progress')}
+              >
+                <div className="sortable-header-content">
+                  <span>Progress</span>
+                  <SortIcon column="progress" />
+                </div>
+              </div>
               <div className="files-table-header-cell actions">Actions</div>
             </div>
 
@@ -499,7 +614,15 @@ const Files = () => {
               <div className="files-table-header-cell file-name">File Name</div>
               <div className="files-table-header-cell business-type">Business File Type</div>
               <div className="files-table-header-cell product-category">Product Category</div>
-              <div className="files-table-header-cell created-at">Created at</div>
+              <div 
+                className="files-table-header-cell created-at sortable" 
+                onClick={() => handleSort('createdAt')}
+              >
+                <div className="sortable-header-content">
+                  <span>Created at</span>
+                  <SortIcon column="createdAt" />
+                </div>
+              </div>
               <div className="files-table-header-cell status">Status</div>
               <div className="files-table-header-cell actions">Actions</div>
             </div>
