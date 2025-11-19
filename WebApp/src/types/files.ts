@@ -1,4 +1,4 @@
-export enum FileType {
+export enum BusinessFileType {
   Catalog = 'Catalog',
   PriceList = 'Price List',
   SalesDrawing = 'Sales Drawing'
@@ -6,7 +6,7 @@ export enum FileType {
 
 // Catalog-specific form data
 export interface CatalogFormData {
-  fileType: FileType.Catalog;
+  fileType: BusinessFileType.Catalog;
   fileName: string;
   productCategory: string; // ProductCategory enum value
   catalogSerialNumber: string;
@@ -17,7 +17,7 @@ export interface CatalogFormData {
 
 // Sales Drawing-specific form data
 export interface SalesDrawingFormData {
-  fileType: FileType.SalesDrawing;
+  fileType: BusinessFileType.SalesDrawing;
   fileName: string;
   orderingNumber: string;
   manufacturer: string;
@@ -28,7 +28,7 @@ export interface SalesDrawingFormData {
 
 // Price List-specific form data
 export interface PriceListFormData {
-  fileType: FileType.PriceList;
+  fileType: BusinessFileType.PriceList;
   fileName: string;
   year: string;
   description: string;
@@ -73,14 +73,17 @@ export interface ProcessingDetails {
 }
 
 // File status values
-export type FileStatus = 
-  | 'textract_started'
-  | 'textract_processing'
-  | 'textract_completed'
-  | 'parsing_tables'
-  | 'saving_products'
-  | 'completed'
-  | 'failed';
+export enum FileStatus {
+  TEXTRACT_STARTED = 'textract_started',
+  TEXTRACT_PROCESSING = 'textract_processing',
+  TEXTRACT_COMPLETED = 'textract_completed',
+  PARSING_TABLES = 'parsing_tables',
+  SAVING_PRODUCTS = 'saving_products',
+  PENDING_REVIEW = 'pending_review',
+  COMPLETED = 'completed',
+  FAILED = 'failed'
+}
+
 
 // File information from backend
 export interface FileInfo {
@@ -98,7 +101,7 @@ export interface FileInfo {
   displayName?: string;       // User-chosen display name from form
   
   // Common form fields
-  businessFileType?: FileType;
+  businessFileType?: BusinessFileType;
   year?: string;
   
   // Catalog-specific fields
@@ -121,6 +124,48 @@ export interface FileInfo {
   textractResultsKey?: string;
   
   [key: string]: any; // Allow additional properties from backend
+}
+
+// Raw file record as stored in DynamoDB
+export interface DBFile {
+  fileId: string;
+  fileName: string;
+  displayName?: string;
+  uploadedFileName?: string;
+  fileType?: string; // Actual file extension/type e.g., PDF
+  businessFileType?: BusinessFileType;
+  productCategory?: string;
+  description?: string;
+  catalogSerialNumber?: string;
+  orderingNumber?: string;
+  year?: string;
+  manufacturer?: string;
+  notes?: string;
+  onlineLink?: string;
+  status?: FileStatus | null;
+  processingStage?: string;
+  pagesCount?: number;
+  tablesCount?: number;
+  tablesWithProducts?: number;
+  productsCount?: number;
+  reviewedProductsCount?: number;
+  bucket?: string;
+  key?: string;
+  s3Key?: string;
+  textractJobId?: string;
+  textractResultsKey?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  createdAtIso?: string;
+  updatedAtIso?: string;
+  totalItems?: number;
+  processedItems?: number;
+  metadata?: {
+    originalFileName?: string;
+    uploadedBy?: string;
+    [key: string]: any;
+  };
+  [key: string]: any;
 }
 
 // Products response from backend

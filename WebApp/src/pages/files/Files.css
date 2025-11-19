@@ -69,6 +69,8 @@
   background: var(--color-background);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
 }
 
 .files-table-inner {
@@ -86,8 +88,9 @@
   align-items: center;
   padding: 0px;
   align-self: stretch;
-  background: var(--color-background);
+  background: var(--color-background-gray);
   min-height: 46px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .files-table-header-cell {
@@ -115,13 +118,23 @@
   min-width: 130px;
 }
 
+.files-table-header-cell.business-type {
+  flex: 1;
+  min-width: 150px;
+}
+
+.files-table-header-cell.product-category {
+  flex: 1;
+  min-width: 150px;
+}
+
 .files-table-header-cell.created-at {
   flex: 1;
   min-width: 120px;
 }
 
 .files-table-header-cell.status {
-  flex: 0 0 160px;
+  flex: 0 0 180px;
 }
 
 .files-table-header-cell.progress {
@@ -151,6 +164,15 @@
   align-self: stretch;
   border-top: 1px solid var(--color-border-light);
   min-height: 72px;
+  transition: background 0.15s ease;
+}
+
+.files-table-row:nth-child(even) {
+  background: var(--color-background-gray-light, #f7f8fa);
+}
+
+.files-table-row:hover {
+  background: var(--color-background-hover, #f0f2f5);
 }
 
 .files-table-cell {
@@ -180,6 +202,18 @@
   color: var(--color-text-secondary);
 }
 
+.files-table-cell.business-type {
+  flex: 1;
+  min-width: 150px;
+  color: var(--color-text-secondary);
+}
+
+.files-table-cell.product-category {
+  flex: 1;
+  min-width: 150px;
+  color: var(--color-text-secondary);
+}
+
 .files-table-cell.created-at {
   flex: 1;
   min-width: 120px;
@@ -187,7 +221,7 @@
 }
 
 .files-table-cell.status {
-  flex: 0 0 160px;
+  flex: 0 0 180px;
 }
 
 .files-table-cell.progress {
@@ -413,5 +447,39 @@
   font-size: 12px;
   line-height: 16px;
   color: var(--color-text-secondary);
+}
+
+/* Pagination */
+.files-pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+}
+
+.pagination-info {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.pagination-button {
+  padding: 6px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.pagination-button:hover:not(:disabled) {
+  background: var(--color-background-hover);
+}
+
+.pagination-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 

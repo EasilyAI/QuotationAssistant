@@ -1,63 +1,52 @@
-/**
- * Type definitions for Catalog Product data structure
- * 
- * This type represents a product extracted from a catalog table.
- * All fields except 'id' and 'orderingNumber' are optional and will have
- * default/empty values when instantiated if missing from the event data.
- */
-
 export interface BoundingBox {
-  /** Left position (0-1, relative to page width) */
-  left: number;
-  /** Top position (0-1, relative to page height) */
-  top: number;
-  /** Width (0-1, relative to page width) */
-  width: number;
-  /** Height (0-1, relative to page height) */
-  height: number;
+  left: number; // (0-1, relative to page width)
+  top: number; // (0-1, relative to page height)
+  width: number; // (0-1, relative to page width)
+  height: number; // (0-1, relative to page height)
 }
 
 export interface ProductLocation {
-  /** Page number in the PDF document (1-based) */
-  page: number;
-  /** Bounding box coordinates for PDF preview (optional) */
+  page: number; // 1-based page index
   boundingBox?: BoundingBox;
 }
 
-export interface CatalogProduct {
-  /** Auto-generated unique identifier */
-  id: number;
-  /** Product ordering/part number (required) */
-  orderingNumber: string;
-  /** Product specifications as key-value pairs (optional) */
-  specs?: Record<string, string>;
-  /** Location information for PDF preview (optional) */
-  location?: ProductLocation;
+export enum CatalogProductStatus {
+  PendingReview = 'pending_review',
+  Reviewed = 'reviewed',
 }
 
-/**
- * Default/empty values for CatalogProduct
- * Use this when instantiating a product with missing fields
- */
+export interface CatalogProduct {
+  id: number;
+  orderingNumber: string;
+  specs?: Record<string, string>;
+  location?: ProductLocation;
+  status?: CatalogProductStatus;
+  /**
+   * Index of the table that produced this product within the source file.
+   * Useful when mapping back to original extraction data.
+   */
+  tindex?: number;
+}
+
 export const defaultCatalogProduct: Omit<CatalogProduct, 'id' | 'orderingNumber'> = {
   specs: {},
   location: undefined,
+  status: CatalogProductStatus.PendingReview,
+  tindex: undefined,
 };
 
-/**
- * Helper function to create a CatalogProduct with defaults for missing fields
- */
-export function createCatalogProduct(data: Partial<CatalogProduct> & { id: number; orderingNumber: string }): CatalogProduct {
+export function createCatalogProduct(
+  data: Partial<CatalogProduct> & { id: number; orderingNumber: string },
+): CatalogProduct {
   return {
     id: data.id,
     orderingNumber: data.orderingNumber,
     specs: data.specs ?? {},
     location: data.location,
+    status: data.status ?? CatalogProductStatus.PendingReview,
+    tindex: data.tindex,
   };
 }
 
-/**
- * Type for the products dictionary (keyed by ordering number)
- */
 export type CatalogProducts = Record<string, CatalogProduct>;
 

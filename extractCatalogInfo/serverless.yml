@@ -98,6 +98,23 @@ functions:
           path: /api/files/{fileId}
           method: get
 
+  # HTTP API for UI -> generate presigned download URL (client supplies S3 key)
+  getFileDownloadUrl:
+    handler: src/get_files.get_file_download_url
+    events:
+      - httpApi:
+          path: /api/files/download-url
+          method: post
+
+
+  # HTTP API for UI -> get all files
+  getFiles:
+    handler: src/get_files.get_files
+    events:
+      - httpApi:
+          path: /api/files
+          method: get
+
   # HTTP API for UI -> get products extracted from a file
   getFileProducts:
     handler: src/get_files.get_catalog_products

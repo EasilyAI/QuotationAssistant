@@ -6,7 +6,7 @@ import { pollFileStatus, getFileProducts, validateFileDoesNotExist } from '../..
 import { validateUploadForm } from '../../services/formValidationService';
 import { 
   ProductCategory, 
-  FileType,
+  BusinessFileType,
   CatalogFormData,
   SalesDrawingFormData,
   PriceListFormData,
@@ -17,19 +17,19 @@ import {
   FileUploadResponse
 } from '../../types';
 
-// Helper to map URL param to FileType enum
-const getFileTypeFromParam = (param: string | null): FileType => {
-  if (param === 'catalog') return FileType.Catalog;
-  if (param === 'sales-drawing') return FileType.SalesDrawing;
-  if (param === 'price-list') return FileType.PriceList;
-  return FileType.Catalog;
+// Helper to map URL param to BusinessFileType enum
+const getFileTypeFromParam = (param: string | null): BusinessFileType => {
+  if (param === 'catalog') return BusinessFileType.Catalog;
+  if (param === 'sales-drawing') return BusinessFileType.SalesDrawing;
+  if (param === 'price-list') return BusinessFileType.PriceList;
+  return BusinessFileType.Catalog;
 };
 
-// Helper to map FileType enum to URL param
-const getParamFromFileType = (fileType: FileType): string => {
-  if (fileType === FileType.Catalog) return 'catalog';
-  if (fileType === FileType.SalesDrawing) return 'sales-drawing';
-  if (fileType === FileType.PriceList) return 'price-list';
+// Helper to map BusinessFileType enum to URL param
+const getParamFromFileType = (fileType: BusinessFileType): string => {
+  if (fileType === BusinessFileType.Catalog) return 'catalog';
+  if (fileType === BusinessFileType.SalesDrawing) return 'sales-drawing';
+  if (fileType === BusinessFileType.PriceList) return 'price-list';
   return 'catalog';
 };
 
@@ -44,9 +44,9 @@ const FileUpload = () => {
     const year = new Date().getFullYear().toString();
     
     switch (fileType) {
-      case FileType.Catalog:
+      case BusinessFileType.Catalog:
         return {
-          fileType: FileType.Catalog,
+          fileType: BusinessFileType.Catalog,
           fileName: '',
           productCategory: ProductCategory.VALVE,
           catalogSerialNumber: '',
@@ -54,9 +54,9 @@ const FileUpload = () => {
           onlineLink: '',
           year,
         };
-      case FileType.SalesDrawing:
+      case BusinessFileType.SalesDrawing:
         return {
-          fileType: FileType.SalesDrawing,
+          fileType: BusinessFileType.SalesDrawing,
           fileName: '',
           orderingNumber: '',
           manufacturer: '',
@@ -64,16 +64,16 @@ const FileUpload = () => {
           year,
           notes: '',
         };
-      case FileType.PriceList:
+      case BusinessFileType.PriceList:
         return {
-          fileType: FileType.PriceList,
+          fileType: BusinessFileType.PriceList,
           fileName: '',
           year,
           description: '',
         };
       default:
         return {
-          fileType: FileType.Catalog,
+          fileType: BusinessFileType.Catalog,
           fileName: '',
           productCategory: ProductCategory.VALVE,
           catalogSerialNumber: '',
@@ -314,11 +314,11 @@ const FileUpload = () => {
   // Get page title based on file type
   const getPageTitle = (): string => {
     switch (fileType) {
-      case FileType.Catalog:
+      case BusinessFileType.Catalog:
         return 'Upload Catalog';
-      case FileType.SalesDrawing:
+      case BusinessFileType.SalesDrawing:
         return 'Upload Sales Drawing';
-      case FileType.PriceList:
+      case BusinessFileType.PriceList:
         return 'Upload Price List';
       default:
         return 'File Upload';
@@ -328,7 +328,7 @@ const FileUpload = () => {
   // Render different form fields based on file type
   const renderFormFields = (): React.ReactElement | null => {
     switch (fileType) {
-      case FileType.Catalog:
+      case BusinessFileType.Catalog:
         return (
           <>
             <div className="form-group">
@@ -411,7 +411,7 @@ const FileUpload = () => {
           </>
         );
 
-      case FileType.SalesDrawing:
+      case BusinessFileType.SalesDrawing:
         return (
           <>
             <div className="form-group">
@@ -490,7 +490,7 @@ const FileUpload = () => {
           </>
         );
 
-      case FileType.PriceList:
+      case BusinessFileType.PriceList:
         return (
           <>
             <div className="form-group">
@@ -576,9 +576,9 @@ const FileUpload = () => {
                 }}
               >
                 {[
-                  { value: FileType.Catalog, param: 'catalog' },
-                  { value: FileType.SalesDrawing, param: 'sales-drawing' },
-                  { value: FileType.PriceList, param: 'price-list' }
+                  { value: BusinessFileType.Catalog, param: 'catalog' },
+                  { value: BusinessFileType.SalesDrawing, param: 'sales-drawing' },
+                  { value: BusinessFileType.PriceList, param: 'price-list' }
                 ].map(({ value: typeValue, param }) => (
                   <option key={typeValue} value={param}>{typeValue}</option>
                 ))}
@@ -662,7 +662,7 @@ const FileUpload = () => {
                   <input
                     id="file-input"
                     type="file"
-                    accept={fileType === FileType.PriceList ? '.xlsx,.xls,.csv' : '.pdf'}
+                    accept={fileType === BusinessFileType.PriceList ? '.xlsx,.xls,.csv' : '.pdf'}
                     onChange={handleFileSelect}
                     style={{ display: 'none' }}
                   />

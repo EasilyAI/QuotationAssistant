@@ -6,13 +6,38 @@ import time
 import boto3
 
 from utils.corsHeaders import get_cors_headers
+from utils.helpers import convert_decimals_to_native
 
 dynamodb = boto3.resource("dynamodb")
+s3 = boto3.client("s3")
 
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")
+UPLOAD_BUCKET = os.environ.get("UPLOAD_BUCKET", "hb-files-raw")
 
 
+def get_files(event, context):
+    """
+    Get all files from DynamoDB.
+    Returns:
+        dict: All files from DynamoDB
+    """
+    print(f"[get_files] Starting request processing")
+    table = dynamodb.Table(FILES_TABLE)
+    
+    response = table.scan()
+    files = response.get("Items", [])
+
+    print(f"[get_files] Retrieved {len(files)} files, first file: {files[0] if files else 'None'}")
+    
+    # Convert Decimal types to JSON-serializable native numbers
+    files = [convert_decimals_to_native(file) for file in files]
+    
+    return {
+        "statusCode": 200,
+        "body": json.dumps(files),
+        "headers": get_cors_headers(),
+    }
 def get_file_info(event, context):
     """
     Get file processing information from DynamoDB.
@@ -30,6 +55,59 @@ def get_file_info(event, context):
             "body": "",
             "headers": get_cors_headers(),
         }
+
+
+def get_file_download_url(event, context):
+    """
+    Generate a temporary presigned URL for a provided S3 key.
+    """
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        body = {}
+
+    key = body.get("key")
+    bucket = body.get("bucket") or UPLOAD_BUCKET
+
+    if not key:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "S3 key is required"}),
+            "headers": get_cors_headers(),
+        }
+
+    # Normalize key (strip leading slash)
+    normalized_key = key.lstrip("/")
+
+    try:
+        url = s3.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={"Bucket": bucket, "Key": normalized_key},
+            ExpiresIn=300,
+        )
+    except Exception as error:
+        print(f"[get_file_download_url] ERROR generating URL for {bucket}/{normalized_key}: {error}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to generate download URL"}),
+            "headers": get_cors_headers(),
+        }
+
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"url": url}),
+        "headers": get_cors_headers(),
+    }
+
+
     
     # Extract fileId from path parameters
     # For HTTP API v2, path parameters are in event["pathParameters"]

@@ -7,7 +7,8 @@ export const API_CONFIG = {
   // Base URL for your backend API
   // Set via REACT_APP_API_BASE_URL environment variable
   // Example: REACT_APP_API_BASE_URL=https://api.yourdomain.com
-  BASE_URL: process.env.REACT_APP_API_BASE_URL || 'https://3knsgg9rw3.execute-api.us-east-1.amazonaws.com/',
+  // BASE_URL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:3000',
+  BASE_URL: 'http://localhost:3000',
   
   // Endpoint paths (not secrets, part of API contract)
   // Endpoint to get presigned URL for S3 upload

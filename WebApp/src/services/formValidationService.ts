@@ -1,5 +1,5 @@
 import {
-  FileType,
+  BusinessFileType,
   CatalogFormData,
   SalesDrawingFormData,
   PriceListFormData,
@@ -9,15 +9,15 @@ import {
 /**
  * Validate form data before upload
  * @param {CatalogFormData | SalesDrawingFormData | PriceListFormData} formData - Form data to validate
- * @param {FileType} fileType - Type of file being uploaded
+ * @param {BusinessFileType} fileType - Type of file being uploaded
  * @returns {FileValidationResult} Validation result with error message if invalid
  */
 export const validateUploadForm = (
   formData: CatalogFormData | SalesDrawingFormData | PriceListFormData,
-  fileType: FileType
+  fileType: BusinessFileType
 ): FileValidationResult => {
   switch (fileType) {
-    case FileType.Catalog:
+    case BusinessFileType.Catalog:
       const catalogData = formData as CatalogFormData;
       if (!catalogData.fileName?.trim()) {
         return { valid: false, error: 'Catalog Name is required' };
@@ -34,7 +34,7 @@ export const validateUploadForm = (
       // catalogDescription and onlineLink are optional based on form design
       break;
 
-    case FileType.SalesDrawing:
+    case BusinessFileType.SalesDrawing:
       const salesDrawingData = formData as SalesDrawingFormData;
       if (!salesDrawingData.fileName?.trim()) {
         return { valid: false, error: 'Drawing Name is required' };
@@ -51,7 +51,7 @@ export const validateUploadForm = (
       // swaglokLink and notes are optional (swaglokLink is explicitly optional in type)
       break;
 
-    case FileType.PriceList:
+    case BusinessFileType.PriceList:
       const priceListData = formData as PriceListFormData;
       if (!priceListData.fileName?.trim()) {
         return { valid: false, error: 'File Name is required' };

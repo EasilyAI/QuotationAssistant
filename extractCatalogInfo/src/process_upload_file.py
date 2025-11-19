@@ -7,6 +7,7 @@ import boto3
 
 from utils.incomingEventParser import parse_s3_key
 from utils.corsHeaders import get_cors_headers
+from utils.helpers import convert_floats_to_decimal
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -59,26 +60,6 @@ def update_file_status(file_id, status, **kwargs):
         print(f"[update_file_status] Updated file {file_id} with status: {status}")
     except Exception as e:
         print(f"[update_file_status] ERROR: Failed to update file status: {e}")
-
-
-def convert_floats_to_decimal(obj):
-    """
-    Recursively convert all float values to Decimal for DynamoDB compatibility.
-    
-    Args:
-        obj: Object to convert (dict, list, or primitive)
-    
-    Returns:
-        Converted object with Decimal instead of float
-    """
-    if isinstance(obj, list):
-        return [convert_floats_to_decimal(item) for item in obj]
-    elif isinstance(obj, dict):
-        return {key: convert_floats_to_decimal(value) for key, value in obj.items()}
-    elif isinstance(obj, float):
-        return Decimal(str(obj))
-    else:
-        return obj
 
 
 def save_products_to_catalog_products_table(file_id, s3_key, event_payloads):
