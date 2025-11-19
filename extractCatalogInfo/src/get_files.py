@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 import time
+from datetime import datetime
 
 import boto3
 
@@ -292,9 +293,15 @@ def update_catalog_products(event, context):
 
     products_count = len(products)
     timestamp = int(time.time() * 1000)
-    print(f"[update_catalog_products] Saving {products_count} products for file {file_id}")
+    # Generate ISO timestamp
+    iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+    
+    # Count reviewed products (status === 'reviewed')
+    reviewed_count = sum(1 for product in products if product.get("status") == "reviewed")
+    print(f"[update_catalog_products] Saving {products_count} products for file {file_id}, {reviewed_count} reviewed")
 
     table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
+    files_table = dynamodb.Table(FILES_TABLE)
     try:
         sanitized_products = convert_floats_to_decimal(products)
         response = table.update_item(
@@ -318,6 +325,27 @@ def update_catalog_products(event, context):
         updated_item_native = convert_decimals_to_native(updated_item)
         print(f"[update_catalog_products] Successfully updated products for file {file_id}")
 
+        # Also update the FILES_TABLE with reviewedProductsCount and updatedAtIso
+        try:
+            files_table.update_item(
+                Key={"fileId": file_id},
+                UpdateExpression="SET #reviewedProductsCount = :reviewedCount, #updatedAt = :updatedAt, #updatedAtIso = :updatedAtIso",
+                ExpressionAttributeNames={
+                    "#reviewedProductsCount": "reviewedProductsCount",
+                    "#updatedAt": "updatedAt",
+                    "#updatedAtIso": "updatedAtIso",
+                },
+                ExpressionAttributeValues={
+                    ":reviewedCount": reviewed_count,
+                    ":updatedAt": timestamp,
+                    ":updatedAtIso": iso_timestamp,
+                },
+            )
+            print(f"[update_catalog_products] Successfully updated FILES_TABLE for file {file_id}")
+        except Exception as files_error:
+            # Log error but don't fail the whole operation
+            print(f"[update_catalog_products] WARNING: Failed to update FILES_TABLE: {files_error}")
+
         return {
             "statusCode": 200,
             "body": json.dumps(
@@ -326,6 +354,7 @@ def update_catalog_products(event, context):
                     "products": updated_item_native.get("products", []),
                     "count": updated_item_native.get("productsCount", products_count),
                     "updatedAt": updated_item_native.get("updatedAt", timestamp),
+                    "reviewedProductsCount": reviewed_count,
                 }
             ),
             "headers": get_cors_headers(),
@@ -524,5 +553,141 @@ def check_file_exists(event, context):
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "Failed to check file existence"}),
+            "headers": get_cors_headers(),
+        }
+
+
+def delete_file(event, context):
+    """
+    Delete a file and all associated data.
+    Deletes:
+    1. File from S3 bucket
+    2. Textract results from S3 bucket (if exists)
+    3. File record from FILES_TABLE
+    4. Products from CATALOG_PRODUCTS_TABLE
+    
+    Only allows deletion of files that are not completed.
+    """
+    print(f"[delete_file] Starting request")
+    
+    # Handle OPTIONS preflight request
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        print(f"[delete_file] Handling OPTIONS preflight request")
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    # Extract fileId from path parameters
+    path_params = event.get("pathParameters") or {}
+    file_id = path_params.get("fileId")
+    print(f"[delete_file] Extracted fileId: {file_id}")
+    
+    if not file_id:
+        print(f"[delete_file] ERROR: fileId is required but not provided")
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Get file information from DynamoDB first
+    files_table = dynamodb.Table(FILES_TABLE)
+    try:
+        response = files_table.get_item(Key={"fileId": file_id})
+        
+        if "Item" not in response:
+            print(f"[delete_file] ERROR: File {file_id} not found")
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "File not found"}),
+                "headers": get_cors_headers(),
+            }
+        
+        file_info = response["Item"]
+        file_status = file_info.get("status", "")
+        
+        # Check if file is completed - prevent deletion
+        if file_status == "completed":
+            print(f"[delete_file] ERROR: Cannot delete completed file {file_id}")
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "Cannot delete completed files"}),
+                "headers": get_cors_headers(),
+            }
+        
+        # Get S3 keys
+        s3_key = file_info.get("key") or file_info.get("s3Key")
+        textract_results_key = file_info.get("textractResultsKey")
+        bucket = file_info.get("bucket") or UPLOAD_BUCKET
+        
+        print(f"[delete_file] File info - status: {file_status}, s3_key: {s3_key}, textract_results_key: {textract_results_key}")
+        
+        # Delete from S3
+        deleted_s3_objects = []
+        if s3_key:
+            try:
+                normalized_key = s3_key.lstrip("/")
+                print(f"[delete_file] Deleting S3 object: {bucket}/{normalized_key}")
+                s3.delete_object(Bucket=bucket, Key=normalized_key)
+                deleted_s3_objects.append(normalized_key)
+                print(f"[delete_file] Successfully deleted S3 object: {normalized_key}")
+            except Exception as e:
+                print(f"[delete_file] WARNING: Failed to delete S3 object {s3_key}: {e}")
+                # Continue with deletion even if S3 delete fails
+        
+        if textract_results_key:
+            try:
+                normalized_textract_key = textract_results_key.lstrip("/")
+                print(f"[delete_file] Deleting Textract results: {bucket}/{normalized_textract_key}")
+                s3.delete_object(Bucket=bucket, Key=normalized_textract_key)
+                deleted_s3_objects.append(normalized_textract_key)
+                print(f"[delete_file] Successfully deleted Textract results: {normalized_textract_key}")
+            except Exception as e:
+                print(f"[delete_file] WARNING: Failed to delete Textract results {textract_results_key}: {e}")
+                # Continue with deletion even if S3 delete fails
+        
+        # Delete from catalog products table
+        products_table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
+        try:
+            print(f"[delete_file] Deleting products for file {file_id}")
+            products_table.delete_item(Key={"fileId": file_id})
+            print(f"[delete_file] Successfully deleted products for file {file_id}")
+        except Exception as e:
+            print(f"[delete_file] WARNING: Failed to delete products for file {file_id}: {e}")
+            # Continue with deletion even if products delete fails (might not exist)
+        
+        # Delete from files table
+        try:
+            print(f"[delete_file] Deleting file record {file_id}")
+            files_table.delete_item(Key={"fileId": file_id})
+            print(f"[delete_file] Successfully deleted file record {file_id}")
+        except Exception as e:
+            print(f"[delete_file] ERROR: Failed to delete file record: {e}")
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "Failed to delete file record"}),
+                "headers": get_cors_headers(),
+            }
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "File deleted successfully",
+                "fileId": file_id,
+                "deletedS3Objects": deleted_s3_objects
+            }),
+            "headers": get_cors_headers(),
+        }
+        
+    except Exception as e:
+        print(f"[delete_file] ERROR: Failed to delete file: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to delete file"}),
             "headers": get_cors_headers(),
         }

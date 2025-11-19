@@ -57,6 +57,7 @@ provider:
       Action:
         - s3:PutObject
         - s3:GetObject
+        - s3:DeleteObject
         - s3:ListBucket
       Resource:
         - arn:aws:s3:::${self:custom.uploadBucket}
@@ -68,6 +69,7 @@ provider:
         - dynamodb:PutItem
         - dynamodb:GetItem
         - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
         - dynamodb:Query
         - dynamodb:Scan
       Resource:
@@ -106,8 +108,6 @@ functions:
           path: /api/files/{fileId}
           method: get
 
-
-
   # HTTP API for UI -> get all files
   getFiles:
     handler: src/get_files.get_files
@@ -115,6 +115,16 @@ functions:
       - httpApi:
           path: /api/files
           method: get
+
+  
+  # HTTP API for UI -> delete a file
+  deleteFile:
+    handler: src/get_files.delete_file
+    events:
+      - httpApi:
+          path: /api/files/{fileId}
+          method: delete
+
 
   # HTTP API for UI -> get products extracted from a file
   getFileProducts:
@@ -139,6 +149,7 @@ functions:
       - httpApi:
           path: /api/files/check-file-exists
           method: post
+
 
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
