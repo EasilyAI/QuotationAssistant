@@ -106,6 +106,14 @@ functions:
           path: /api/files/{fileId}/products
           method: get
 
+  # HTTP API for UI -> check if a file already exists
+  checkFileExists:
+    handler: process_upload_file.check_file_exists
+    events:
+      - httpApi:
+          path: /api/files/check-file-exists
+          method: post
+
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
   processUploadedFile:

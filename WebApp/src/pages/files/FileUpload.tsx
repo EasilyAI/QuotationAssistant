@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './FileUpload.css';
-import { uploadFileToS3, validateFile, pollFileStatus, getFileProducts } from '../../services/s3UploadService';
+import { uploadFileToS3, validateFile } from '../../services/s3UploadService';
+import { pollFileStatus, getFileProducts, validateFileDoesNotExist } from '../../services/fileInfoService';
 import { validateUploadForm } from '../../services/formValidationService';
 import { 
   ProductCategory, 
@@ -46,17 +47,17 @@ const FileUpload = () => {
       case FileType.Catalog:
         return {
           fileType: FileType.Catalog,
-          catalogName: '',
+          fileName: '',
           productCategory: ProductCategory.VALVE,
           catalogSerialNumber: '',
-          catalogDescription: '',
+          description: '',
           onlineLink: '',
           year,
         };
       case FileType.SalesDrawing:
         return {
           fileType: FileType.SalesDrawing,
-          drawingName: '',
+          fileName: '',
           orderingNumber: '',
           manufacturer: '',
           swaglokLink: '',
@@ -73,10 +74,10 @@ const FileUpload = () => {
       default:
         return {
           fileType: FileType.Catalog,
-          catalogName: '',
+          fileName: '',
           productCategory: ProductCategory.VALVE,
           catalogSerialNumber: '',
-          catalogDescription: '',
+          description: '',
           onlineLink: '',
           year,
         };
@@ -84,16 +85,7 @@ const FileUpload = () => {
   };
 
   const [formData, setFormData] = useState<CatalogFormData | SalesDrawingFormData | PriceListFormData>(() => {
-    const year = new Date().getFullYear().toString();
-    return {
-      fileType: FileType.Catalog,
-      catalogName: '',
-      productCategory: ProductCategory.VALVE,
-      catalogSerialNumber: '',
-      catalogDescription: '',
-      onlineLink: '',
-      year,
-    };
+    return getInitialFormData();
   });
   
   // Reset form data when file type changes
@@ -132,6 +124,19 @@ const FileUpload = () => {
       setSelectedFile(file);
       setUploadError(null);
       setUploadSuccess(false);
+      
+      // Auto-populate file name if not already set
+      setFormData(prev => {
+        if (!prev.fileName) {
+          // Extract filename without extension
+          const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+          return {
+            ...prev,
+            fileName: fileNameWithoutExt
+          };
+        }
+        return prev;
+      });
     }
   };
 
@@ -159,6 +164,19 @@ const FileUpload = () => {
       setSelectedFile(file);
       setUploadError(null);
       setUploadSuccess(false);
+      
+      // Auto-populate file name if not already set
+      setFormData(prev => {
+        if (!prev.fileName) {
+          // Extract filename without extension
+          const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+          return {
+            ...prev,
+            fileName: fileNameWithoutExt
+          };
+        }
+        return prev;
+      });
     }
   };
 
@@ -201,9 +219,18 @@ const FileUpload = () => {
     setProcessingDetails(null);
 
     try {
+      // Step 0: Check if file already exists in S3
+      const fileValidation = await validateFileDoesNotExist(formData, fileType);
+      if (!fileValidation.valid) {
+        setUploadError(fileValidation.error || 'File already exists');
+        setIsUploading(false);
+        return;
+      }
+
       // Step 1: Upload file to S3
       console.log('Uploading file to S3...');
       const uploadResponse: FileUploadResponse = await uploadFileToS3(
+        formData,
         selectedFile,
         fileType,
         (progress: number) => {
@@ -311,7 +338,7 @@ const FileUpload = () => {
                 name="catalogName"
                 className="form-input"
                 placeholder="Enter catalog name"
-                value={(formData as CatalogFormData).catalogName}
+                value={(formData as CatalogFormData).fileName}
                 onChange={handleInputChange}
               />
             </div>
@@ -376,7 +403,7 @@ const FileUpload = () => {
                 name="catalogDescription"
                 className="form-textarea"
                 placeholder="Enter catalog description"
-                value={(formData as CatalogFormData).catalogDescription}
+                value={(formData as CatalogFormData).description}
                 onChange={handleInputChange}
                 rows={4}
               />
@@ -394,7 +421,7 @@ const FileUpload = () => {
                 name="drawingName"
                 className="form-input"
                 placeholder="Enter drawing name"
-                value={(formData as SalesDrawingFormData).drawingName}
+                value={(formData as SalesDrawingFormData).fileName}
                 onChange={handleInputChange}
               />
             </div>
@@ -657,7 +684,7 @@ const FileUpload = () => {
                     <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '14px', fontWeight: '500', color: '#ef4444', wordBreak: 'break-word' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '500', color: '#ef4444', wordBreak: 'break-word', whiteSpace: 'pre-line' }}>
                       {uploadError}
                     </div>
                   </div>

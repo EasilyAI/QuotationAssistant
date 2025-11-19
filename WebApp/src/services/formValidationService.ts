@@ -19,7 +19,7 @@ export const validateUploadForm = (
   switch (fileType) {
     case FileType.Catalog:
       const catalogData = formData as CatalogFormData;
-      if (!catalogData.catalogName?.trim()) {
+      if (!catalogData.fileName?.trim()) {
         return { valid: false, error: 'Catalog Name is required' };
       }
       if (!catalogData.productCategory?.trim()) {
@@ -36,7 +36,7 @@ export const validateUploadForm = (
 
     case FileType.SalesDrawing:
       const salesDrawingData = formData as SalesDrawingFormData;
-      if (!salesDrawingData.drawingName?.trim()) {
+      if (!salesDrawingData.fileName?.trim()) {
         return { valid: false, error: 'Drawing Name is required' };
       }
       if (!salesDrawingData.orderingNumber?.trim()) {

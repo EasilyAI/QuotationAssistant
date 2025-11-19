@@ -27,6 +27,27 @@ def get_cors_headers():
         "Access-Control-Max-Age": "3600",
     }
 
+def get_file_record(file_id):
+    """
+    Get file record from DynamoDB including form data stored in metadata.
+    
+    Args:
+        file_id: File ID to retrieve
+    
+    Returns:
+        dict: File record from DynamoDB, or None if not found
+    """
+    table = dynamodb.Table(FILES_TABLE)
+    try:
+        response = table.get_item(Key={"fileId": file_id})
+        if "Item" in response:
+            return response["Item"]
+        return None
+    except Exception as e:
+        print(f"[get_file_record] ERROR: Failed to get file record: {e}")
+        return None
+
+
 def update_file_status(file_id, status, **kwargs):
     """
     Update file processing status in DynamoDB.
@@ -306,6 +327,207 @@ def get_file_products(event, context):
             "body": json.dumps({"error": "Failed to get products"}),
             "headers": get_cors_headers(),
         }
+
+
+def check_file_exists(event, context):
+    """
+    Check if a file already exists based on duplicate prevention rules.
+    
+    Duplicate Rules:
+    1. If businessFileType + displayName + year already exists -> duplicate
+    2. For Catalog: can't have another file with the same catalogSerialNumber
+    3. For SalesDrawing: can't have another file with the same orderingNumber
+    4. For PriceList: can only be one file per year
+    
+    Request body should contain:
+    - fileType: Business file type (Catalog, Sales Drawing, Price List)
+    - fileName: Display name from form
+    - year: Year of the file
+    - catalogSerialNumber: (for Catalog files)
+    - orderingNumber: (for SalesDrawing files)
+    """
+    # Handle OPTIONS preflight request
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    # Parse request body
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON in request body"}),
+            "headers": get_cors_headers(),
+        }
+    
+    business_file_type = body.get("fileType")  # Catalog, Sales Drawing, Price List
+    display_name = body.get("fileName")  # User-chosen display name
+    year = body.get("year")
+    catalog_serial_number = body.get("catalogSerialNumber")
+    ordering_number = body.get("orderingNumber")
+    
+    # Validate required fields
+    if not business_file_type:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileType is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    if not display_name:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileName is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Validate type-specific required fields
+    if business_file_type == "Catalog" and not catalog_serial_number:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "catalogSerialNumber is required for Catalog files"}),
+            "headers": get_cors_headers(),
+        }
+    
+    if business_file_type == "Sales Drawing" and not ordering_number:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "orderingNumber is required for Sales Drawing files"}),
+            "headers": get_cors_headers(),
+        }
+    
+    if business_file_type == "Price List" and not year:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "year is required for Price List files"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Scan FILES_TABLE for matching files
+    table = dynamodb.Table(FILES_TABLE)
+    try:
+        response = table.scan()
+        files = response.get("Items", [])
+        
+        # Convert Decimal types to strings for comparison
+        files_json = json.loads(json.dumps(files, default=str))
+        
+        # Normalize input values for comparison
+        display_name_normalized = display_name.lower().strip()
+        year_str = str(year).strip() if year else None
+        
+        # Check each file against duplicate rules
+        for file_item in files_json:
+            item_business_type = file_item.get("businessFileType", "")
+            item_display_name = file_item.get("displayName", "")
+            item_year = str(file_item.get("year", "")).strip() if file_item.get("year") else None
+            
+            # Skip if business file type doesn't match
+            if item_business_type != business_file_type:
+                continue
+            
+            # Rule 1: Check if businessFileType + displayName + year already exists
+            item_display_name_normalized = item_display_name.lower().strip() if item_display_name else ""
+            name_match = display_name_normalized == item_display_name_normalized
+            year_match = year_str and item_year and year_str == item_year
+            
+            if name_match and year_match:
+                print(f"[check_file_exists] Rule 1 violation: Found duplicate - type={business_file_type}, name={display_name}, year={year}")
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "exists": True,
+                        "file": _build_file_details(file_item),
+                        "reason": "A file with the same type, name, and year already exists"
+                    }),
+                    "headers": get_cors_headers(),
+                }
+            
+            # Rule 2: For Catalog - check catalogSerialNumber
+            if business_file_type == "Catalog" and catalog_serial_number:
+                item_serial = file_item.get("catalogSerialNumber", "")
+                if item_serial and item_serial.lower().strip() == catalog_serial_number.lower().strip():
+                    print(f"[check_file_exists] Rule 2 violation: Found duplicate Catalog with serial number={catalog_serial_number}")
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({
+                            "exists": True,
+                            "file": _build_file_details(file_item),
+                            "reason": "A Catalog file with the same serial number already exists"
+                        }),
+                        "headers": get_cors_headers(),
+                    }
+            
+            # Rule 3: For SalesDrawing - check orderingNumber
+            elif business_file_type == "Sales Drawing" and ordering_number:
+                item_ordering = file_item.get("orderingNumber", "")
+                if item_ordering and item_ordering.lower().strip() == ordering_number.lower().strip():
+                    print(f"[check_file_exists] Rule 3 violation: Found duplicate Sales Drawing with ordering number={ordering_number}")
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({
+                            "exists": True,
+                            "file": _build_file_details(file_item),
+                            "reason": "A Sales Drawing file with the same ordering number already exists"
+                        }),
+                        "headers": get_cors_headers(),
+                    }
+            
+            # Rule 4: For PriceList - only one file per year
+            elif business_file_type == "Price List" and year_str:
+                if item_year and year_str == item_year:
+                    print(f"[check_file_exists] Rule 4 violation: Found duplicate Price List for year={year}")
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({
+                            "exists": True,
+                            "file": _build_file_details(file_item),
+                            "reason": "A Price List file for this year already exists"
+                        }),
+                        "headers": get_cors_headers(),
+                    }
+        
+        # No duplicate found
+        print(f"[check_file_exists] No duplicate found for {business_file_type}: {display_name}")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"exists": False}),
+            "headers": get_cors_headers(),
+        }
+        
+    except Exception as e:
+        print(f"[check_file_exists] ERROR: Failed to check file existence: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to check file existence"}),
+            "headers": get_cors_headers(),
+        }
+
+
+def _build_file_details(file_item):
+    """Helper function to build file details dictionary from DynamoDB item."""
+    return {
+        "fileId": file_item.get("fileId"),
+        "uploadedFileName": file_item.get("uploadedFileName", ""),
+        "displayName": file_item.get("displayName", ""),
+        "fileType": file_item.get("fileType", ""),  # PDF / XLSX / etc
+        "businessFileType": file_item.get("businessFileType", ""),
+        "status": file_item.get("status", "unknown"),
+        "createdAt": file_item.get("createdAt"),
+        "year": file_item.get("year"),
+        "catalogSerialNumber": file_item.get("catalogSerialNumber"),
+        "productCategory": file_item.get("productCategory"),
+        "orderingNumber": file_item.get("orderingNumber"),
+        "manufacturer": file_item.get("manufacturer"),
+        "description": file_item.get("description"),
+    }
 
 from utils.textractClient import start_job, is_job_complete, get_job_results
 from utils.textractParser import (

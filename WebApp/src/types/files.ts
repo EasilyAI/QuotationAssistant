@@ -7,10 +7,10 @@ export enum FileType {
 // Catalog-specific form data
 export interface CatalogFormData {
   fileType: FileType.Catalog;
-  catalogName: string;
+  fileName: string;
   productCategory: string; // ProductCategory enum value
   catalogSerialNumber: string;
-  catalogDescription: string;
+  description: string;
   onlineLink: string;
   year: string;
 }
@@ -18,7 +18,7 @@ export interface CatalogFormData {
 // Sales Drawing-specific form data
 export interface SalesDrawingFormData {
   fileType: FileType.SalesDrawing;
-  drawingName: string;
+  fileName: string;
   orderingNumber: string;
   manufacturer: string;
   swaglokLink?: string;
@@ -92,6 +92,34 @@ export interface FileInfo {
   tablesWithProducts?: number;
   productsCount?: number;
   error?: string;
+  
+  // File name fields
+  uploadedFileName?: string;  // Actual file name from S3 upload
+  displayName?: string;       // User-chosen display name from form
+  
+  // Common form fields
+  businessFileType?: FileType;
+  year?: string;
+  
+  // Catalog-specific fields
+  productCategory?: string;
+  catalogSerialNumber?: string;
+  onlineLink?: string;
+  
+  // SalesDrawing-specific fields
+  orderingNumber?: string;
+  manufacturer?: string;
+  swaglokLink?: string;
+  notes?: string;
+  
+  // PriceList-specific fields (description is common)
+  description?: string;
+  
+  // Processing metadata
+  s3Key?: string;
+  textractJobId?: string;
+  textractResultsKey?: string;
+  
   [key: string]: any; // Allow additional properties from backend
 }
 
