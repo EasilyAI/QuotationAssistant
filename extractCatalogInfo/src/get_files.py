@@ -61,8 +61,11 @@ def get_file_download_url(event, context):
     """
     Generate a temporary presigned URL for a provided S3 key.
     """
+    print(f"[get_file_download_url] Starting request processing")
+    
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        print(f"[get_file_download_url] Handling OPTIONS preflight request")
         return {
             "statusCode": 200,
             "body": "",
@@ -71,13 +74,17 @@ def get_file_download_url(event, context):
 
     try:
         body = json.loads(event.get("body") or "{}")
+        print(f"[get_file_download_url] Parsed request body: {json.dumps(body, default=str)}")
     except json.JSONDecodeError:
+        print(f"[get_file_download_url] WARNING: Failed to parse request body, using empty dict")
         body = {}
 
     key = body.get("key")
     bucket = body.get("bucket") or UPLOAD_BUCKET
+    print(f"[get_file_download_url] Request parameters - key: {key}, bucket: {bucket}")
 
     if not key:
+        print(f"[get_file_download_url] ERROR: S3 key is required but not provided")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "S3 key is required"}),
@@ -86,13 +93,16 @@ def get_file_download_url(event, context):
 
     # Normalize key (strip leading slash)
     normalized_key = key.lstrip("/")
+    print(f"[get_file_download_url] Normalized key: {normalized_key}")
 
     try:
+        print(f"[get_file_download_url] Generating presigned URL for {bucket}/{normalized_key}")
         url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket, "Key": normalized_key},
             ExpiresIn=300,
         )
+        print(f"[get_file_download_url] Successfully generated presigned URL")
     except Exception as error:
         print(f"[get_file_download_url] ERROR generating URL for {bucket}/{normalized_key}: {error}")
         return {
@@ -158,9 +168,12 @@ def get_catalog_products(event, context):
     Get all products for a file from the temporary products table.
     Returns the products document containing all products for the given fileId.
     """
+    print(f"[get_catalog_products] Starting request")
+    
     # Handle OPTIONS preflight request
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        print(f"[get_catalog_products] Handling OPTIONS preflight request")
         return {
             "statusCode": 200,
             "body": "",
@@ -170,8 +183,10 @@ def get_catalog_products(event, context):
     # Extract fileId from path parameters
     path_params = event.get("pathParameters") or {}
     file_id = path_params.get("fileId")
+    print(f"[get_catalog_products] Extracted fileId: {file_id}")
     
     if not file_id:
+        print(f"[get_catalog_products] ERROR: fileId is required but not provided")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "fileId is required"}),
@@ -181,13 +196,14 @@ def get_catalog_products(event, context):
     # Get products document from temp table (single document with fileId as key)
     table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
     try:
+        print(f"[get_catalog_products] Querying table {CATALOG_PRODUCTS_TABLE} for fileId: {file_id}")
         # Get the single document by fileId
         response = table.get_item(
             Key={"fileId": file_id}
         )
         
         if "Item" not in response:
-            print(f"[get_file_products] No products found for file {file_id}")
+            print(f"[get_catalog_products] No products found for file {file_id}")
             return {
                 "statusCode": 404,
                 "body": json.dumps({
@@ -200,13 +216,14 @@ def get_catalog_products(event, context):
             }
         
         document = response["Item"]
+        print(f"[get_catalog_products] Retrieved document for fileId: {file_id}")
         
         # Convert entire document (including Decimal types) to JSON-serializable format
         document_json = json.loads(json.dumps(document, default=str))
         
         products = document_json.get("products", [])
         
-        print(f"[get_file_products] Found {len(products)} products for file {file_id}")
+        print(f"[get_catalog_products] Found {len(products)} products for file {file_id}")
         
         return {
             "statusCode": 200,
@@ -220,13 +237,12 @@ def get_catalog_products(event, context):
             "headers": get_cors_headers(),
         }
     except Exception as e:
-        print(f"[get_file_products] ERROR: Failed to get products: {e}")
+        print(f"[get_catalog_products] ERROR: Failed to get products: {e}")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "Failed to get products"}),
             "headers": get_cors_headers(),
         }
-
 
 
 
