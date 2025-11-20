@@ -140,6 +140,33 @@ export const updateFileProducts = async (fileId, products) => {
 };
 
 /**
+ * Mark a file review as completed
+ * @param {string} fileId
+ */
+export const completeFileReview = async (fileId) => {
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
+    ? API_CONFIG.BASE_URL.slice(0, -1)
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/complete`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to update file status' }));
+    throw new Error(error.message || `Failed to update file status: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
  * Poll file status until processing is complete
  * @param {string} fileId - File ID to poll
  * @param {Function} onStatusUpdate - Callback for status updates (status, fileInfo) => void

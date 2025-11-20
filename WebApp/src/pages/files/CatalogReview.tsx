@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker, useBeforeUnload, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
+import ConsolidationDialog, { ConsolidationConflict, ConsolidationAction } from '../../components/ConsolidationDialog';
 import { CatalogProduct, CatalogProductStatus } from '../../types/catalogProduct';
-import { getFileDownloadUrl, getFileProducts, updateFileProducts } from '../../services/fileInfoService';
+import { Product, ProductCategory } from '../../types/products';
+import {
+  getFileDownloadUrl,
+  getFileProducts,
+  updateFileProducts,
+  getFileInfo,
+  completeFileReview,
+} from '../../services/fileInfoService';
+import { checkExistingProducts, saveProducts } from '../../services/productsService';
 
 import './CatalogReview.css';
 
@@ -26,10 +35,27 @@ type CatalogReviewLocationState = {
   fileId?: string;
   fileKey?: string;
   fileUrl?: string;
-  fileInfo?: { s3Key?: string } | null;
+  fileInfo?: {
+    s3Key?: string;
+    uploadedFileName?: string;
+    fileName?: string;
+    displayName?: string;
+    productCategory?: string;
+  } | null;
 };
 
 const PAGE_SIZE = 15;
+
+const normalizeProductCategory = (value?: string | null): ProductCategory | null => {
+  if (!value) {
+    return null;
+  }
+  const lowerValue = value.toLowerCase();
+  const match = Object.values(ProductCategory).find(
+    (category) => category.toLowerCase() === lowerValue,
+  );
+  return match ?? null;
+};
 
 const CatalogReview = () => {
   const navigate = useNavigate();
@@ -62,6 +88,28 @@ const CatalogReview = () => {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [blockedNavigation, setBlockedNavigation] = useState<RouterBlocker | null>(null);
+  const [showConsolidationDialog, setShowConsolidationDialog] = useState(false);
+  const [consolidationConflicts, setConsolidationConflicts] = useState<ConsolidationConflict[]>([]);
+  const [isFinishingReview, setIsFinishingReview] = useState(false);
+  const [finishReviewError, setFinishReviewError] = useState<string | null>(null);
+  const [fileInfo, setFileInfo] = useState<{
+    fileName?: string;
+    displayName?: string;
+    productCategory?: ProductCategory | null;
+  } | null>(() => {
+    if (!locationState?.fileInfo) {
+      return null;
+    }
+    return {
+      fileName: locationState.fileInfo.uploadedFileName ?? locationState.fileInfo.fileName,
+      displayName: locationState.fileInfo.displayName,
+      productCategory: normalizeProductCategory(locationState.fileInfo.productCategory),
+    };
+  });
+  const [showIncompleteReviewDialog, setShowIncompleteReviewDialog] = useState(false);
+  const [pendingUnreviewedCount, setPendingUnreviewedCount] = useState(0);
+  const pendingFinishActionRef = useRef<(() => void) | null>(null);
+  const pendingFinalizeProductsRef = useRef<ReviewProduct[] | null>(null);
 
   const loadSpecsList = useCallback((specs?: Record<string, string>): SpecItem[] => {
     if (!specs) {
@@ -119,6 +167,39 @@ const CatalogReview = () => {
       }),
     [reduceSpecsRecord],
   );
+
+  const buildProductTextDescription = useCallback((product: ReviewProduct): string => {
+    const parts: string[] = [];
+    if (product.orderingNumber) {
+      parts.push(`Ordering Number: ${product.orderingNumber}`);
+    }
+    if (product.description?.trim()) {
+      parts.push(product.description.trim());
+    }
+    if (product.manualInput?.trim()) {
+      parts.push(product.manualInput.trim());
+    }
+    if (product.specsList.length) {
+      const specsText = product.specsList
+        .map((spec) => {
+          const key = spec.key.trim();
+          const value = spec.value.trim();
+          if (key && value) {
+            return `${key}: ${value}`;
+          }
+          return key || value;
+        })
+        .filter(Boolean)
+        .join('; ');
+      if (specsText) {
+        parts.push(`Specs: ${specsText}`);
+      }
+    }
+    if (product.location?.page) {
+      parts.push(`Located on page ${product.location.page}`);
+    }
+    return parts.filter(Boolean).join('\n');
+  }, []);
 
   const applyLoadedProducts = useCallback(
     (backendProducts: CatalogProduct[]) => {
@@ -189,6 +270,20 @@ const CatalogReview = () => {
         applyLoadedProducts(backendProducts);
         if (productsData.sourceFile) {
           setFileKey((prev) => prev ?? productsData.sourceFile);
+        }
+
+        // Load file info for metadata
+        try {
+          const info = await getFileInfo(fileId);
+          if (isSubscribed) {
+            setFileInfo({
+              fileName: info.uploadedFileName || info.fileName,
+              displayName: info.displayName,
+              productCategory: normalizeProductCategory(info.productCategory),
+            });
+          }
+        } catch (error) {
+          console.warn('Failed to load file info:', error);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to load products';
@@ -455,9 +550,294 @@ const CatalogReview = () => {
     [executeNavigationAction, hasUnsavedChanges],
   );
 
-  const handleFinishReview = () => {
-    requestNavigation('finish');
-  };
+  /**
+   * Transform a CatalogProduct to a Product for saving to the products table
+   */
+  const transformCatalogProductToProduct = useCallback(
+    (
+      catalogProduct: ReviewProduct,
+      fileId: string,
+      fileKey: string | null,
+      fileName: string | undefined,
+      productCategory: ProductCategory,
+    ): Product => {
+      return {
+        orderingNumber: catalogProduct.orderingNumber,
+        productCategory,
+        metadata: {
+          sourceFileId: fileId,
+          sourceFileKey: fileKey ?? undefined,
+          sourceFileName: fileName,
+          catalogProductId: catalogProduct.id,
+          catalogProductTableIndex: catalogProduct.tindex,
+          catalogProductSnapshot: {
+            id: catalogProduct.id,
+            orderingNumber: catalogProduct.orderingNumber,
+            description: catalogProduct.description,
+            manualInput: catalogProduct.manualInput,
+            specs: catalogProduct.specs,
+            location: catalogProduct.location,
+            status: catalogProduct.status,
+            tindex: catalogProduct.tindex,
+          },
+        },
+        text_description: buildProductTextDescription(catalogProduct),
+        productPriceKey: catalogProduct.orderingNumber,
+      };
+    },
+    [buildProductTextDescription],
+  );
+
+  const mergeProducts = useCallback(
+    (
+      existing: Product,
+      newProduct: ReviewProduct,
+      action: ConsolidationAction,
+      fileId: string,
+      fileKey: string | null,
+      fileName: string | undefined,
+      productCategory: ProductCategory,
+    ): Product => {
+      if (action === 'keep') {
+        return existing;
+      }
+      const replacement = transformCatalogProductToProduct(
+        newProduct,
+        fileId,
+        fileKey,
+        fileName,
+        productCategory,
+      );
+      return {
+        ...replacement,
+        createdAt: existing.createdAt,
+        createdAtIso: existing.createdAtIso,
+      };
+    },
+    [transformCatalogProductToProduct],
+  );
+
+  const handleConsolidationAction = useCallback((orderingNumber: string, action: ConsolidationAction) => {
+    setConsolidationConflicts((prev) =>
+      prev.map((conflict) =>
+        conflict.orderingNumber === orderingNumber ? { ...conflict, action } : conflict,
+      ),
+    );
+  }, []);
+
+  const finalizeFinishReview = useCallback(
+    async (productsToFinalize: ReviewProduct[]) => {
+      if (!fileId) {
+        setFinishReviewError('Missing file information');
+        return;
+      }
+      const resolvedCategory = fileInfo?.productCategory;
+      if (!resolvedCategory) {
+        setFinishReviewError('Missing product category. Please provide it before finishing the review.');
+        return;
+      }
+      const sourceFileName = fileInfo?.fileName || fileInfo?.displayName;
+
+      setIsFinishingReview(true);
+      setFinishReviewError(null);
+
+      pendingFinalizeProductsRef.current = productsToFinalize;
+
+      try {
+        if (!productsToFinalize.length) {
+          setFinishReviewError('No products to save');
+          setIsFinishingReview(false);
+          return;
+        }
+
+        const orderingNumbers = productsToFinalize
+          .map((p) => p.orderingNumber)
+          .filter((orderingNumber): orderingNumber is string => Boolean(orderingNumber));
+
+        if (!orderingNumbers.length) {
+          setFinishReviewError('No valid ordering numbers found in reviewed products');
+          setIsFinishingReview(false);
+          return;
+        }
+
+        const existingCheck = await checkExistingProducts(orderingNumbers);
+        const existingProducts = existingCheck.existing || {};
+
+        const conflicts: ConsolidationConflict[] = [];
+
+        for (const orderingNumber of orderingNumbers) {
+          const existing = existingProducts[orderingNumber];
+          if (existing) {
+            const newProduct = productsToFinalize.find((p) => p.orderingNumber === orderingNumber);
+            if (newProduct) {
+              conflicts.push({
+                orderingNumber,
+                existing,
+                new: newProduct,
+              });
+            }
+          }
+        }
+
+        if (conflicts.length > 0) {
+          setConsolidationConflicts(conflicts);
+          setShowConsolidationDialog(true);
+          setIsFinishingReview(false);
+          return;
+        }
+
+        const productsToSave: Product[] = productsToFinalize.map((catalogProduct) =>
+          transformCatalogProductToProduct(
+            catalogProduct,
+            fileId,
+            fileKey,
+            sourceFileName,
+            resolvedCategory,
+          ),
+        );
+
+        await saveProducts(productsToSave);
+
+        await completeFileReview(fileId);
+
+        navigateBackToFiles();
+        pendingFinalizeProductsRef.current = null;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to finish review';
+        setFinishReviewError(message);
+        setIsFinishingReview(false);
+      }
+    },
+    [
+      checkExistingProducts,
+      completeFileReview,
+      fileId,
+      fileInfo,
+      fileKey,
+      navigateBackToFiles,
+      transformCatalogProductToProduct,
+    ],
+  );
+
+  const completeConsolidationSave = useCallback(async () => {
+    if (!fileId) {
+      setFinishReviewError('Missing file information');
+      return;
+    }
+    const resolvedCategory = fileInfo?.productCategory;
+    if (!resolvedCategory) {
+      setFinishReviewError('Missing product category. Please provide it before finishing the review.');
+      return;
+    }
+    const sourceFileName = fileInfo?.fileName || fileInfo?.displayName;
+    const productsToFinalize =
+      pendingFinalizeProductsRef.current ?? products.filter((product) => product.orderingNumber);
+
+    if (!productsToFinalize.length) {
+      setFinishReviewError('No products available to save.');
+      return;
+    }
+
+    setIsFinishingReview(true);
+    setFinishReviewError(null);
+
+    try {
+      const productsToSave: Product[] = productsToFinalize.map((catalogProduct) => {
+        const conflict = consolidationConflicts.find(
+          (c) => c.orderingNumber === catalogProduct.orderingNumber,
+        );
+
+        if (conflict && conflict.action) {
+          return mergeProducts(
+            conflict.existing,
+            catalogProduct,
+            conflict.action,
+            fileId,
+            fileKey,
+            sourceFileName,
+            resolvedCategory,
+          );
+        }
+
+        return transformCatalogProductToProduct(
+          catalogProduct,
+          fileId,
+          fileKey,
+          sourceFileName,
+          resolvedCategory,
+        );
+      });
+
+      await saveProducts(productsToSave);
+      await completeFileReview(fileId);
+      setShowConsolidationDialog(false);
+      setConsolidationConflicts([]);
+      pendingFinalizeProductsRef.current = null;
+      navigateBackToFiles();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to finish review';
+      setFinishReviewError(message);
+      setIsFinishingReview(false);
+    }
+  }, [
+    completeFileReview,
+    fileId,
+    fileInfo,
+    fileKey,
+    mergeProducts,
+    navigateBackToFiles,
+    products,
+    consolidationConflicts,
+    transformCatalogProductToProduct,
+  ]);
+
+  const handleConsolidationConfirm = useCallback(async () => {
+    await completeConsolidationSave();
+  }, [completeConsolidationSave]);
+
+  const handleFinishReview = useCallback(async () => {
+    if (!fileId) {
+      setFinishReviewError('No file ID available');
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      const saved = await handleSaveAll();
+      if (!saved) {
+        setFinishReviewError('Please save your changes before finishing the review');
+        return;
+      }
+    }
+
+    const productsWithOrdering = products.filter((p) => p.orderingNumber);
+    if (!productsWithOrdering.length) {
+      setFinishReviewError('No products with ordering numbers available to save.');
+      return;
+    }
+
+    const reviewedProducts = products.filter((p) => p.isReviewed);
+    const pendingCount = products.length - reviewedProducts.length;
+    if (pendingCount > 0) {
+      setPendingUnreviewedCount(pendingCount);
+      pendingFinishActionRef.current = () => {
+        setShowIncompleteReviewDialog(false);
+        pendingFinishActionRef.current = null;
+        void finalizeFinishReview(productsWithOrdering);
+      };
+      setShowIncompleteReviewDialog(true);
+      return;
+    }
+
+    await finalizeFinishReview(productsWithOrdering);
+  }, [
+    completeFileReview,
+    finalizeFinishReview,
+    fileId,
+    handleSaveAll,
+    hasUnsavedChanges,
+    navigateBackToFiles,
+    products,
+  ]);
 
   const handleCancel = () => {
     requestNavigation('cancel');
@@ -531,6 +911,17 @@ const CatalogReview = () => {
     setIsPreviewOpen(false);
     setPreviewProduct(null);
   };
+
+  const handleIncompleteReviewConfirm = useCallback(() => {
+    if (pendingFinishActionRef.current) {
+      pendingFinishActionRef.current();
+    }
+  }, []);
+
+  const handleIncompleteReviewCancel = useCallback(() => {
+    pendingFinishActionRef.current = null;
+    setShowIncompleteReviewDialog(false);
+  }, []);
 
   const filteredProducts = useMemo(
     () => (showUnreviewedOnly ? products.filter((product) => !product.isReviewed) : products),
@@ -667,8 +1058,12 @@ const CatalogReview = () => {
             >
               {isSaving ? 'Saving…' : 'Save Changes'}
             </button>
-            <button className="btn-primary" onClick={handleFinishReview}>
-              Finish Review
+            <button
+              className="btn-primary"
+              onClick={handleFinishReview}
+              disabled={isFinishingReview}
+            >
+              {isFinishingReview ? 'Finishing Review...' : 'Finish Review'}
             </button>
           </div>
         </div>
@@ -742,9 +1137,9 @@ const CatalogReview = () => {
           </div>
         )}
 
-        {(saveError || saveSuccess) && (
-          <div className={`save-feedback ${saveError ? 'error' : 'success'}`}>
-            {saveError || saveSuccess}
+        {(saveError || saveSuccess || finishReviewError) && (
+          <div className={`save-feedback ${saveError || finishReviewError ? 'error' : 'success'}`}>
+            {saveError || finishReviewError || saveSuccess}
           </div>
         )}
 
@@ -1031,6 +1426,36 @@ const CatalogReview = () => {
           </div>
         </div>
       )}
+      {showIncompleteReviewDialog && (
+        <div className="unsaved-dialog-backdrop">
+          <div className="unsaved-dialog">
+            <h3>Products Still Pending Review</h3>
+            <p>
+              {pendingUnreviewedCount} product{pendingUnreviewedCount === 1 ? '' : 's'} are still marked as pending.
+              You can return to continue reviewing or finish anyway.
+            </p>
+            <div className="unsaved-dialog-actions">
+              <button className="btn-secondary" type="button" onClick={handleIncompleteReviewCancel} disabled={isFinishingReview}>
+                Keep Reviewing
+              </button>
+              <button className="btn-primary" type="button" onClick={handleIncompleteReviewConfirm} disabled={isFinishingReview}>
+                Finish Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <ConsolidationDialog
+        isOpen={showConsolidationDialog}
+        conflicts={consolidationConflicts}
+        onAction={handleConsolidationAction}
+        onConfirm={handleConsolidationConfirm}
+        onCancel={() => {
+          setShowConsolidationDialog(false);
+          setConsolidationConflicts([]);
+          setIsFinishingReview(false);
+        }}
+      />
     </>
   );
 };

@@ -14,6 +14,7 @@ s3 = boto3.client("s3")
 
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")
+PRODUCTS_TABLE = os.environ.get("PRODUCTS_TABLE", "hb-products")
 UPLOAD_BUCKET = os.environ.get("UPLOAD_BUCKET", "hb-files-raw")
 
 
@@ -697,5 +698,293 @@ def delete_file(event, context):
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "Failed to delete file"}),
+            "headers": get_cors_headers(),
+        }
+
+
+def check_existing_products(event, context):
+    """
+    Check for existing products by ordering numbers.
+    Returns products that already exist in the Products table.
+    """
+    print(f"[check_existing_products] Starting request")
+    
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON body"}),
+            "headers": get_cors_headers(),
+        }
+    
+    ordering_numbers = body.get("orderingNumbers", [])
+    if not isinstance(ordering_numbers, list):
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "orderingNumbers must be an array"}),
+            "headers": get_cors_headers(),
+        }
+    
+    if not ordering_numbers:
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"existing": {}}),
+            "headers": get_cors_headers(),
+        }
+    
+    print(f"[check_existing_products] Checking {len(ordering_numbers)} ordering numbers")
+    
+    products_table = dynamodb.Table(PRODUCTS_TABLE)
+    existing_products = {}
+    
+    # Batch get items (DynamoDB allows up to 100 items per batch)
+    for i in range(0, len(ordering_numbers), 100):
+        batch = ordering_numbers[i:i+100]
+        keys = [{"orderingNumber": on} for on in batch]
+        
+        try:
+            response = products_table.meta.client.batch_get_item(
+                RequestItems={
+                    PRODUCTS_TABLE: {
+                        "Keys": keys
+                    }
+                }
+            )
+            
+            items = response.get("Responses", {}).get(PRODUCTS_TABLE, [])
+            for item in items:
+                ordering_number = item.get("orderingNumber")
+                if ordering_number:
+                    existing_products[ordering_number] = convert_decimals_to_native(item)
+            
+        except Exception as e:
+            print(f"[check_existing_products] ERROR: Failed to batch get items: {e}")
+            # Continue with other batches
+    
+    print(f"[check_existing_products] Found {len(existing_products)} existing products")
+    
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"existing": existing_products}),
+        "headers": get_cors_headers(),
+    }
+
+
+def save_products(event, context):
+    """
+    Save products to the Products table.
+    Products are keyed by orderingNumber.
+    """
+    print(f"[save_products] Starting request")
+    
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON body"}),
+            "headers": get_cors_headers(),
+        }
+    
+    products = body.get("products", [])
+    if not isinstance(products, list):
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "products must be an array"}),
+            "headers": get_cors_headers(),
+        }
+    
+    if not products:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "products array cannot be empty"}),
+            "headers": get_cors_headers(),
+        }
+    
+    print(f"[save_products] Saving {len(products)} products")
+    
+    products_table = dynamodb.Table(PRODUCTS_TABLE)
+    timestamp = int(time.time() * 1000)
+    iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+    
+    saved_count = 0
+    errors = []
+    
+    # Convert products to DynamoDB format and save
+    for product in products:
+        ordering_number = product.get("orderingNumber")
+        if not ordering_number:
+            errors.append("Product missing orderingNumber")
+            continue
+        
+        try:
+            product_category = product.get("productCategory")
+            if not product_category:
+                errors.append(f"Product {ordering_number} missing productCategory")
+                continue
+            metadata = product.get("metadata", {}) or {}
+            text_description = product.get("text_description", "")
+            product_price_key = product.get("productPriceKey") or ordering_number
+
+            # Prepare product item
+            product_item = {
+                "orderingNumber": ordering_number,
+                "productCategory": product_category,
+                "metadata": convert_floats_to_decimal(metadata),
+                "text_description": text_description,
+                "productPriceKey": product_price_key,
+                "updatedAt": timestamp,
+                "updatedAtIso": iso_timestamp,
+            }
+            
+            # Check if product exists to preserve createdAt
+            try:
+                existing = products_table.get_item(Key={"orderingNumber": ordering_number})
+                if "Item" in existing:
+                    product_item["createdAt"] = existing["Item"].get("createdAt", timestamp)
+                    product_item["createdAtIso"] = existing["Item"].get("createdAtIso", iso_timestamp)
+                else:
+                    product_item["createdAt"] = timestamp
+                    product_item["createdAtIso"] = iso_timestamp
+            except Exception as e:
+                print(f"[save_products] WARNING: Could not check existing product {ordering_number}: {e}")
+                product_item["createdAt"] = timestamp
+                product_item["createdAtIso"] = iso_timestamp
+            
+            # Save product
+            products_table.put_item(Item=product_item)
+            saved_count += 1
+            print(f"[save_products] Saved product: {ordering_number}")
+            
+        except Exception as e:
+            error_msg = f"Failed to save product {ordering_number}: {str(e)}"
+            errors.append(error_msg)
+            print(f"[save_products] ERROR: {error_msg}")
+    
+    if errors:
+        print(f"[save_products] Completed with {len(errors)} errors")
+        return {
+            "statusCode": 207,  # Multi-Status
+            "body": json.dumps({
+                "saved": saved_count,
+                "errors": errors,
+                "message": f"Saved {saved_count} products with {len(errors)} errors"
+            }),
+            "headers": get_cors_headers(),
+        }
+    
+    print(f"[save_products] Successfully saved {saved_count} products")
+    return {
+        "statusCode": 200,
+        "body": json.dumps({
+            "saved": saved_count,
+            "message": f"Successfully saved {saved_count} products"
+        }),
+        "headers": get_cors_headers(),
+    }
+
+
+def complete_file_review(event, context):
+    """
+    Mark file and catalog products as completed after review.
+    Updates file status to 'completed' and catalog products status to 'completed'.
+    """
+    print(f"[complete_file_review] Starting request")
+    
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    path_params = event.get("pathParameters") or {}
+    file_id = path_params.get("fileId")
+    
+    if not file_id:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    timestamp = int(time.time() * 1000)
+    iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+    
+    files_table = dynamodb.Table(FILES_TABLE)
+    catalog_products_table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
+    
+    try:
+        # Update file status to completed
+        files_table.update_item(
+            Key={"fileId": file_id},
+            UpdateExpression="SET #status = :status, #updatedAt = :updatedAt, #updatedAtIso = :updatedAtIso",
+            ExpressionAttributeNames={
+                "#status": "status",
+                "#updatedAt": "updatedAt",
+                "#updatedAtIso": "updatedAtIso",
+            },
+            ExpressionAttributeValues={
+                ":status": "completed",
+                ":updatedAt": timestamp,
+                ":updatedAtIso": iso_timestamp,
+            },
+        )
+        print(f"[complete_file_review] Updated file {file_id} status to completed")
+        
+        # Update catalog products status to completed
+        try:
+            catalog_products_table.update_item(
+                Key={"fileId": file_id},
+                UpdateExpression="SET #status = :status, #updatedAt = :updatedAt",
+                ExpressionAttributeNames={
+                    "#status": "status",
+                    "#updatedAt": "updatedAt",
+                },
+                ExpressionAttributeValues={
+                    ":status": "completed",
+                    ":updatedAt": timestamp,
+                },
+            )
+            print(f"[complete_file_review] Updated catalog products {file_id} status to completed")
+        except Exception as e:
+            print(f"[complete_file_review] WARNING: Failed to update catalog products status: {e}")
+            # Don't fail the whole operation if catalog products update fails
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "fileId": file_id,
+                "status": "completed",
+                "message": "File review completed successfully"
+            }),
+            "headers": get_cors_headers(),
+        }
+        
+    except Exception as e:
+        print(f"[complete_file_review] ERROR: Failed to complete file review: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to complete file review"}),
             "headers": get_cors_headers(),
         }

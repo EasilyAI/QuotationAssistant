@@ -1,7 +1,7 @@
 import boto3
 import json
 
-def start_job(bucket, document, features=['TABLES','FORMS'], region='us-east-1'):
+def start_job(bucket, document, features=['TABLES'], region='us-east-1'):
     client = boto3.client('textract', region_name=region)
     response = client.start_document_analysis(
         DocumentLocation={'S3Object': {'Bucket': bucket, 'Name': document}},

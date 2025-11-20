@@ -11,6 +11,7 @@ custom:
   uploadBucket: hb-files-raw
   filesTable: hb-files
   catalogProductsTable: hb-catalog-products
+  productsTable: hb-products
 
 provider:
   name: aws
@@ -50,6 +51,7 @@ provider:
     UPLOAD_BUCKET: ${self:custom.uploadBucket}
     FILES_TABLE: ${self:custom.filesTable}
     CATALOG_PRODUCTS_TABLE: ${self:custom.catalogProductsTable}
+    PRODUCTS_TABLE: ${self:custom.productsTable}
 
   iamRoleStatements:
     # S3 access for generating presigned URLs and accessing uploaded files
@@ -63,7 +65,7 @@ provider:
         - arn:aws:s3:::${self:custom.uploadBucket}
         - arn:aws:s3:::${self:custom.uploadBucket}/*
 
-    # DynamoDB access for Files and TempProducts tables
+    # DynamoDB access for Files, CatalogProducts, and Products tables
     - Effect: Allow
       Action:
         - dynamodb:PutItem
@@ -72,9 +74,12 @@ provider:
         - dynamodb:DeleteItem
         - dynamodb:Query
         - dynamodb:Scan
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
       Resource:
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.filesTable}
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.catalogProductsTable}
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.productsTable}
 
     # Textract permissions (for PDFs)
     - Effect: Allow
@@ -150,6 +155,29 @@ functions:
           path: /api/files/check-file-exists
           method: post
 
+  # HTTP API for UI -> complete file review (mark as completed)
+  completeFileReview:
+    handler: src/get_files.complete_file_review
+    events:
+      - httpApi:
+          path: /api/files/{fileId}/complete
+          method: put
+
+  # HTTP API for UI -> check existing products by ordering numbers
+  checkExistingProducts:
+    handler: src/get_files.check_existing_products
+    events:
+      - httpApi:
+          path: /api/products/check-existing
+          method: post
+
+  # HTTP API for UI -> save products to products table
+  saveProducts:
+    handler: src/get_files.save_products
+    events:
+      - httpApi:
+          path: /api/products
+          method: post
 
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
@@ -205,4 +233,16 @@ resources:
             AttributeType: S
         KeySchema:
           - AttributeName: fileId
+            KeyType: HASH
+
+    ProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.productsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: orderingNumber
+            AttributeType: S
+        KeySchema:
+          - AttributeName: orderingNumber
             KeyType: HASH
