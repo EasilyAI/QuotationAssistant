@@ -11,10 +11,10 @@
     "react-scripts": "5.0.1"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "dev": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
+    "start": "cross-env NODE_OPTIONS=--max-http-header-size=16384 craco start",
+    "dev": "cross-env NODE_OPTIONS=--max-http-header-size=16384 craco start",
+    "build": "craco build",
+    "test": "craco test",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
@@ -37,9 +37,11 @@
   },
   "proxy": "http://localhost:3000",
   "devDependencies": {
+    "@craco/craco": "^7.1.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
+    "cross-env": "^10.1.0",
     "typescript": "^4.9.5"
   }
 }

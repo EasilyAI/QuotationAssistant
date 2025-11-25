@@ -76,6 +76,8 @@ const CatalogReview = () => {
     locationState?.fileKey ?? locationState?.fileInfo?.s3Key ?? null,
   );
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(locationState?.fileUrl ?? null);
+  const [cachedPreviewUrlKey, setCachedPreviewUrlKey] = useState<string | null>(null);
+  const [cachedPreviewUrlTimestamp, setCachedPreviewUrlTimestamp] = useState<number | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewProduct, setPreviewProduct] = useState<ReviewProduct | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -328,6 +330,15 @@ const CatalogReview = () => {
     const timeoutId = window.setTimeout(() => setSaveSuccess(null), 4000);
     return () => window.clearTimeout(timeoutId);
   }, [saveSuccess]);
+
+  // Clear cached preview URL when file key changes to avoid using stale URLs
+  useEffect(() => {
+    if (fileKey !== cachedPreviewUrlKey) {
+      setFilePreviewUrl(null);
+      setCachedPreviewUrlKey(null);
+      setCachedPreviewUrlTimestamp(null);
+    }
+  }, [fileKey, cachedPreviewUrlKey]);
 
   const updateProduct = useCallback((productId: number, updater: (product: ReviewProduct) => ReviewProduct) => {
     setProducts((prev) => prev.map((product) => (product.id === productId ? updater(product) : product)));
@@ -861,15 +872,25 @@ const CatalogReview = () => {
   };
 
   const ensurePreviewUrl = useCallback(async (): Promise<string | null> => {
-    if (filePreviewUrl) {
-      return filePreviewUrl;
-    }
-
     if (!fileKey) {
       setPreviewError('No source file available for preview.');
       return null;
     }
 
+    // Check if we have a valid cached URL for this file key
+    const PRESIGNED_URL_TTL_MS = 50 * 60 * 1000; // 50 minutes (conservative, presigned URLs typically last 1 hour)
+    const now = Date.now();
+    const isCachedUrlValid =
+      filePreviewUrl &&
+      cachedPreviewUrlKey === fileKey &&
+      cachedPreviewUrlTimestamp &&
+      now - cachedPreviewUrlTimestamp < PRESIGNED_URL_TTL_MS;
+
+    if (isCachedUrlValid) {
+      return filePreviewUrl;
+    }
+
+    // Cache is invalid or missing - fetch a fresh URL
     setPreviewError(null);
     setIsPreviewLoading(true);
     try {
@@ -878,6 +899,8 @@ const CatalogReview = () => {
         throw new Error('Missing download URL for this file.');
       }
       setFilePreviewUrl(response.url);
+      setCachedPreviewUrlKey(fileKey);
+      setCachedPreviewUrlTimestamp(now);
       return response.url;
     } catch (error) {
       const message =
@@ -887,7 +910,7 @@ const CatalogReview = () => {
     } finally {
       setIsPreviewLoading(false);
     }
-  }, [fileKey, filePreviewUrl]);
+  }, [fileKey, filePreviewUrl, cachedPreviewUrlKey, cachedPreviewUrlTimestamp]);
 
   const handlePreview = useCallback(
     async (product: ReviewProduct) => {
