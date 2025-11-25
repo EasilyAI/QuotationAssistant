@@ -127,9 +127,102 @@ const CatalogPreviewDialog = ({
     [hasProductLocation, product?.location?.page],
   );
 
-  const handleDocumentLoadError = useCallback((err: Error) => {
-    setError(err.message || 'Failed to load catalog preview');
+  const formatErrorMessage = useCallback((error: Error | string): string => {
+    let errorMessage = typeof error === 'string' ? error : error.message || '';
+    
+    // Strip out URLs from the error message to avoid showing technical details
+    // Matches URLs like https://... or http://... with query parameters
+    errorMessage = errorMessage.replace(/https?:\/\/[^\s"]+/gi, '');
+    
+    // Also remove common patterns like "while retrieving PDF" that come before URLs
+    errorMessage = errorMessage.replace(/\s*while\s+retrieving\s+[^"]*"/gi, '');
+    errorMessage = errorMessage.replace(/^["']|["']$/g, ''); // Remove leading/trailing quotes
+    
+    const lowerMessage = errorMessage.toLowerCase().trim();
+
+    // Check for HTTP status codes first (most specific)
+    if (lowerMessage.includes('(403)') || lowerMessage.includes('403') || /\(403\)/.test(errorMessage)) {
+      return 'Access denied. The file preview link has expired. Please try again.';
+    }
+    
+    if (lowerMessage.includes('(404)') || lowerMessage.includes('404') || /\(404\)/.test(errorMessage)) {
+      return 'File not found. The file may have been moved or deleted.';
+    }
+    
+    if (lowerMessage.includes('(500)') || lowerMessage.includes('500') || /\(500\)/.test(errorMessage)) {
+      return 'Server error. Please try again later.';
+    }
+
+    // Check for access denied errors
+    if (
+      lowerMessage.includes('access denied') ||
+      lowerMessage.includes('forbidden') ||
+      lowerMessage.includes('accessdenied')
+    ) {
+      return 'Access denied. The file preview link has expired. Please try again.';
+    }
+
+    // Check for file not found errors
+    if (
+      lowerMessage.includes('not found') ||
+      lowerMessage.includes('no such key') ||
+      lowerMessage.includes('nosuchkey') ||
+      lowerMessage.includes('key not found')
+    ) {
+      return 'File not found. The file may have been moved or deleted.';
+    }
+
+    // Check for "unexpected server response" errors
+    if (lowerMessage.includes('unexpected server response')) {
+      // Extract status code if present
+      const statusMatch = errorMessage.match(/\((\d+)\)/);
+      if (statusMatch) {
+        const statusCode = statusMatch[1];
+        if (statusCode === '403') {
+          return 'Access denied. The file preview link has expired. Please try again.';
+        }
+        if (statusCode === '404') {
+          return 'File not found. The file may have been moved or deleted.';
+        }
+        return `Server error (${statusCode}). Please try again.`;
+      }
+      return 'Server error. Please try again.';
+    }
+
+    // Check for network errors
+    if (
+      lowerMessage.includes('network') ||
+      lowerMessage.includes('failed to fetch') ||
+      lowerMessage.includes('networkerror')
+    ) {
+      return 'Network error. Please check your connection and try again.';
+    }
+
+    // Check for CORS errors
+    if (lowerMessage.includes('cors') || lowerMessage.includes('cross-origin')) {
+      return 'Unable to load preview due to security restrictions.';
+    }
+
+    // Check for invalid PDF errors
+    if (
+      lowerMessage.includes('invalid pdf') ||
+      lowerMessage.includes('corrupted') ||
+      lowerMessage.includes('damaged')
+    ) {
+      return 'The file appears to be corrupted or invalid.';
+    }
+
+    // Generic fallback - return a simple message without technical details
+    return 'Unable to load preview. Please try again or contact support if the problem persists.';
   }, []);
+
+  const handleDocumentLoadError = useCallback(
+    (err: Error) => {
+      const friendlyMessage = formatErrorMessage(err);
+      setError(friendlyMessage);
+    },
+    [formatErrorMessage],
+  );
 
   const goToPage = useCallback(
     (page: number) => {

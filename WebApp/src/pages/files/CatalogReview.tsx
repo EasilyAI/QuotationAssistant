@@ -903,9 +903,30 @@ const CatalogReview = () => {
       setCachedPreviewUrlTimestamp(now);
       return response.url;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to build preview URL. Please try again.';
-      setPreviewError(message);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const lowerMessage = errorMessage.toLowerCase();
+
+      // Format user-friendly error messages
+      let friendlyMessage: string;
+      if (
+        lowerMessage.includes('access denied') ||
+        lowerMessage.includes('403') ||
+        lowerMessage.includes('forbidden')
+      ) {
+        friendlyMessage = 'Access denied. Unable to generate preview link.';
+      } else if (
+        lowerMessage.includes('not found') ||
+        lowerMessage.includes('404') ||
+        lowerMessage.includes('no such key')
+      ) {
+        friendlyMessage = 'File not found. The file may have been moved or deleted.';
+      } else if (lowerMessage.includes('network') || lowerMessage.includes('fetch')) {
+        friendlyMessage = 'Network error. Please check your connection and try again.';
+      } else {
+        friendlyMessage = 'Unable to generate preview link. Please try again.';
+      }
+
+      setPreviewError(friendlyMessage);
       return null;
     } finally {
       setIsPreviewLoading(false);
