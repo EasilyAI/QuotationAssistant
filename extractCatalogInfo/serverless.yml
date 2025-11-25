@@ -179,6 +179,20 @@ functions:
           path: /api/products
           method: post
 
+  getProduct:
+    handler: src/get_files.get_product
+    events:
+      - httpApi:
+          path: /api/products/{orderingNumber}
+          method: get
+
+  listProducts:
+    handler: src/get_files.list_products
+    events:
+      - httpApi:
+          path: /api/products
+          method: get
+
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
   processUploadedFile:

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AddToQuotationDialog from '../../components/AddToQuotationDialog';
 import { getSearchResultsByType } from '../../data/mockSearchResults';
 import { ProductCategory } from '../../types/index';
+import { fetchProducts } from '../../services/productsService';
 import './SingleSearch.css';
 
 const SingleSearch = () => {
@@ -16,18 +17,81 @@ const SingleSearch = () => {
   const [lastSearchQuery, setLastSearchQuery] = useState('');
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [showCountDropdown, setShowCountDropdown] = useState(false);
+  const [catalogProducts, setCatalogProducts] = useState([]);
+  const [catalogProductsLoading, setCatalogProductsLoading] = useState(false);
+  const [catalogProductsError, setCatalogProductsError] = useState('');
+  const [catalogProductsCursor, setCatalogProductsCursor] = useState(null);
+  const [catalogProductsHasMore, setCatalogProductsHasMore] = useState(false);
+  const selectedCategory = productType === 'All Types' ? undefined : productType;
 
-  const productTypes = Object.values(ProductCategory);
+  const productTypes = ['All Types', ...Object.values(ProductCategory)];
 
   // Get search results from centralized data
   const allSearchResults = getSearchResultsByType(productType);
   const searchResults = allSearchResults.slice(0, resultsCount);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadCatalogProducts = async () => {
+      setCatalogProductsLoading(true);
+      setCatalogProductsError('');
+      setCatalogProducts([]);
+      setCatalogProductsCursor(null);
+      setCatalogProductsHasMore(false);
+      try {
+        const response = await fetchProducts({
+          productCategory: selectedCategory,
+          limit: 50,
+        });
+        if (!isMounted) return;
+        setCatalogProducts(response.products || []);
+        setCatalogProductsCursor(response.cursor || null);
+        setCatalogProductsHasMore(Boolean(response.hasMore && response.cursor));
+      } catch (error) {
+        if (!isMounted) return;
+        setCatalogProducts([]);
+        setCatalogProductsError(error.message || 'Failed to load catalog products');
+      } finally {
+        if (isMounted) {
+          setCatalogProductsLoading(false);
+        }
+      }
+    };
+
+    loadCatalogProducts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedCategory]);
 
   const handleSearch = () => {
     if (searchQuery.trim()) {
       setHasSearched(true);
       setLastSearchQuery(searchQuery);
       console.log('Searching for:', searchQuery);
+    }
+  };
+
+  const handleLoadMoreCatalogProducts = async () => {
+    if (!catalogProductsCursor || catalogProductsLoading) {
+      return;
+    }
+    setCatalogProductsLoading(true);
+    setCatalogProductsError('');
+    try {
+      const response = await fetchProducts({
+        productCategory: selectedCategory,
+        limit: 50,
+        cursor: catalogProductsCursor,
+      });
+      setCatalogProducts((prev) => [...prev, ...(response.products || [])]);
+      setCatalogProductsCursor(response.cursor || null);
+      setCatalogProductsHasMore(Boolean(response.hasMore && response.cursor));
+    } catch (error) {
+      setCatalogProductsError(error.message || 'Failed to load additional products');
+    } finally {
+      setCatalogProductsLoading(false);
     }
   };
 
@@ -292,6 +356,145 @@ const SingleSearch = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </>
+        )}
+
+        {!hasSearched && (
+          <>
+            <div className="results-header">
+              <div className="results-header-content">
+                <div>
+                  <h2 className="results-title">Catalog Products</h2>
+                  <p className="search-query-display">
+                    {catalogProductsLoading && catalogProducts.length === 0
+                      ? 'Loading products...'
+                      : `Showing ${catalogProducts.length} product${catalogProducts.length === 1 ? '' : 's'}${
+                          selectedCategory ? ` in ${selectedCategory}` : ''
+                        }`}
+                  </p>
+                </div>
+                {catalogProductsHasMore && (
+                  <span className="table-status">More products available</span>
+                )}
+              </div>
+            </div>
+
+            <div className="results-table-section">
+              <div className="results-table-container">
+                {catalogProductsError && (
+                  <div className="catalog-table-error">{catalogProductsError}</div>
+                )}
+                <table className="results-table">
+                  <thead>
+                    <tr>
+                      <th className="col-product-name">Product Summary</th>
+                      <th className="col-ordering-no">Ordering No.</th>
+                      <th className="col-type">Category</th>
+                      <th className="col-source">Source File</th>
+                      <th className="col-updated">Updated</th>
+                      <th className="col-actions">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catalogProductsLoading && catalogProducts.length === 0 && (
+                      <tr>
+                        <td colSpan="6" className="catalog-table-empty">
+                          Loading products...
+                        </td>
+                      </tr>
+                    )}
+                    {!catalogProductsLoading && catalogProducts.length === 0 && (
+                      <tr>
+                        <td colSpan="6" className="catalog-table-empty">
+                          No products available yet.
+                        </td>
+                      </tr>
+                    )}
+                    {catalogProducts.map((product) => {
+                      const snapshot = product.metadata?.catalogProductSnapshot;
+                      const displayName =
+                        snapshot?.description ||
+                        snapshot?.manualInput ||
+                        product.text_description ||
+                        product.orderingNumber;
+                      const secondaryText =
+                        product.text_description && product.text_description !== displayName
+                          ? product.text_description
+                          : snapshot?.manualInput && snapshot.manualInput !== displayName
+                            ? snapshot.manualInput
+                            : '';
+                      const truncatedSecondary =
+                        secondaryText && secondaryText.length > 120
+                          ? `${secondaryText.slice(0, 117)}...`
+                          : secondaryText;
+                      const updatedAt = product.updatedAtIso || product.createdAtIso;
+                      return (
+                        <tr key={product.orderingNumber}>
+                          <td className="col-product-name">
+                            <div className="catalog-description">
+                              <div className="catalog-description-title">{displayName}</div>
+                              {truncatedSecondary && (
+                                <div className="catalog-description-text">{truncatedSecondary}</div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="col-ordering-no">
+                            <button 
+                              className="ordering-link"
+                              onClick={() => handleProductClick(product.orderingNumber)}
+                            >
+                              {product.orderingNumber}
+                            </button>
+                          </td>
+                          <td className="col-type text-secondary">{product.productCategory || '—'}</td>
+                          <td className="col-source text-secondary">
+                            {product.metadata?.sourceFileName || '—'}
+                          </td>
+                          <td className="col-updated text-secondary">
+                            {updatedAt ? new Date(updatedAt).toLocaleDateString() : '—'}
+                          </td>
+                          <td className="col-actions">
+                            <div className="action-buttons-wrapper">
+                              <button 
+                                className="action-btn-primary"
+                                onClick={() =>
+                                  handleAddToQuotation({
+                                    productName: displayName,
+                                    orderingNo: product.orderingNumber
+                                  })
+                                }
+                              >
+                                Add To Quotation
+                              </button>
+                              <div className="action-buttons-secondary">
+                                <button
+                                  className="action-btn-icon"
+                                  title="Open Product"
+                                  onClick={() => handleProductClick(product.orderingNumber)}
+                                >
+                                  🔍
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {catalogProductsHasMore && (
+                <div className="catalog-table-footer">
+                  <button
+                    className="load-more-button"
+                    onClick={handleLoadMoreCatalogProducts}
+                    disabled={catalogProductsLoading}
+                  >
+                    {catalogProductsLoading ? 'Loading...' : 'Load More'}
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}

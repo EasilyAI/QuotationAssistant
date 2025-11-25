@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 
 import boto3
+from boto3.dynamodb.conditions import Attr
 
 from utils.corsHeaders import get_cors_headers
 from utils.helpers import convert_decimals_to_native, convert_floats_to_decimal
@@ -899,6 +900,162 @@ def save_products(event, context):
         }),
         "headers": get_cors_headers(),
     }
+
+
+def get_product(event, context):
+    """
+    Retrieve a single product by ordering number from the Products table.
+    """
+    print("[get_product] Starting request")
+
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+
+    path_params = event.get("pathParameters") or {}
+    ordering_number = path_params.get("orderingNumber")
+    print(f"[get_product] Requested ordering number: {ordering_number}")
+
+    if not ordering_number:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "orderingNumber is required"}),
+            "headers": get_cors_headers(),
+        }
+
+    products_table = dynamodb.Table(PRODUCTS_TABLE)
+
+    try:
+        response = products_table.get_item(Key={"orderingNumber": ordering_number})
+        item = response.get("Item")
+
+        if not item:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Product not found"}),
+                "headers": get_cors_headers(),
+            }
+
+        product = convert_decimals_to_native(item)
+        return {
+            "statusCode": 200,
+            "body": json.dumps(product),
+            "headers": get_cors_headers(),
+        }
+    except Exception as error:
+        print(f"[get_product] ERROR retrieving product {ordering_number}: {error}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to get product"}),
+            "headers": get_cors_headers(),
+        }
+
+
+def list_products(event, context):
+    """
+    List products with optional category filtering and cursor-based pagination.
+    Returns a lightweight page (default 50 items) to avoid scanning the full table.
+    """
+    print("[list_products] Starting request")
+
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+
+    query_params = event.get("queryStringParameters") or {}
+    category = (query_params.get("category") or "").strip() or None
+    cursor_param = query_params.get("cursor") or query_params.get("lastKey")
+    limit_param = query_params.get("limit")
+
+    try:
+        limit = int(limit_param) if limit_param is not None else 50
+    except ValueError:
+        limit = 50
+
+    limit = max(1, min(limit, 200))
+    page_size = min(limit, 200)
+    print(f"[list_products] Params - category: {category}, limit: {limit}")
+
+    scan_kwargs = {
+        "Limit": page_size,
+    }
+
+    if category:
+        scan_kwargs["FilterExpression"] = Attr("productCategory").eq(category)
+
+    if cursor_param:
+        try:
+            scan_kwargs["ExclusiveStartKey"] = json.loads(cursor_param)
+        except json.JSONDecodeError:
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "Invalid cursor parameter"}),
+                "headers": get_cors_headers(),
+            }
+
+    products_table = dynamodb.Table(PRODUCTS_TABLE)
+    products = []
+    last_evaluated_key = None
+
+    try:
+        while len(products) < limit:
+            response = products_table.scan(**scan_kwargs)
+            products.extend(response.get("Items", []))
+            last_evaluated_key = response.get("LastEvaluatedKey")
+
+            print(
+                f"[list_products] Scan page retrieved {len(response.get('Items', []))} items, "
+                f"accumulated {len(products)}"
+            )
+
+            if len(products) >= limit or not last_evaluated_key:
+                break
+
+            remaining = limit - len(products)
+            scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+            scan_kwargs["Limit"] = min(remaining, page_size)
+
+        products = products[:limit]
+        products_native = [convert_decimals_to_native(item) for item in products]
+
+        cursor = None
+        has_more = False
+
+        if last_evaluated_key:
+            cursor = json.dumps(last_evaluated_key, default=str)
+            has_more = True
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "count": len(products_native),
+                    "products": products_native,
+                    "hasMore": has_more,
+                    "cursor": cursor,
+                }
+            ),
+            "headers": get_cors_headers(),
+        }
+    except Exception as error:
+        print(f"[list_products] ERROR listing products: {error}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to list products"}),
+            "headers": get_cors_headers(),
+        }
 
 
 def complete_file_review(event, context):
