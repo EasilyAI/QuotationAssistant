@@ -709,8 +709,6 @@ const CatalogReview = () => {
       }
     },
     [
-      checkExistingProducts,
-      completeFileReview,
       fileId,
       fileInfo,
       fileKey,
@@ -780,7 +778,6 @@ const CatalogReview = () => {
       setIsFinishingReview(false);
     }
   }, [
-    completeFileReview,
     fileId,
     fileInfo,
     fileKey,
@@ -830,12 +827,10 @@ const CatalogReview = () => {
 
     await finalizeFinishReview(productsWithOrdering);
   }, [
-    completeFileReview,
     finalizeFinishReview,
     fileId,
     handleSaveAll,
     hasUnsavedChanges,
-    navigateBackToFiles,
     products,
   ]);
 
