@@ -302,8 +302,22 @@ const Files = () => {
     navigate('/files/upload');
   };
 
-  const handleEdit = (id) => {
-    navigate(`/files/review/${id}`);
+  const handleEdit = (file: DBFile) => {
+    console.log('handle edit for file:', file);
+    if (file.businessFileType === BusinessFileType.Catalog) {
+      console.log('navigate to catalog review');
+      navigate(`/files/review/catalog/${file.fileId}`);
+    } 
+    else if (file.businessFileType === BusinessFileType.SalesDrawing) {
+      console.log('navigate to sales drawing review');
+      navigate(`/files/review/sales-drawing/${file.fileId}`);
+    } 
+    else if (file.businessFileType === BusinessFileType.PriceList) {
+      console.log('navigate to price list review');
+      navigate(`/files/review/price-list/${file.fileId}`);
+    } else {
+      alert('Invalid file type');
+    }
   };
 
   const handleDelete = (file: DBFile) => {
@@ -518,7 +532,7 @@ const Files = () => {
                     </div>
                     <div className="files-table-cell actions">
                       <div className="action-links-inline">
-                        <button className="action-link" onClick={() => handleEdit(upload.fileId)}>Edit</button>
+                        <button className="action-link" onClick={() => handleEdit(upload)}>Edit</button>
                         <span className="action-separator">|</span>
                         <button className="action-link" onClick={() => handleDelete(upload)}>Delete</button>
                       </div>

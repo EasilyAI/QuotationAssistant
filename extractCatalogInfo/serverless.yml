@@ -4,6 +4,15 @@ frameworkVersion: "3"
 
 plugins:
   - serverless-offline
+  - serverless-python-requirements
+
+package:
+  individually: false
+  patterns:
+    - '!node_modules/**'
+    - '!__pycache__/**'
+    - '!.pytest_cache/**'
+    - '!tests/**'
 
 custom:
   # Single environment (no -dev / -prod suffixes)
@@ -12,6 +21,7 @@ custom:
   filesTable: hb-files
   catalogProductsTable: hb-catalog-products
   productsTable: hb-products
+  priceListProductsTable: hb-pricelist-products
 
 provider:
   name: aws
@@ -52,6 +62,7 @@ provider:
     FILES_TABLE: ${self:custom.filesTable}
     CATALOG_PRODUCTS_TABLE: ${self:custom.catalogProductsTable}
     PRODUCTS_TABLE: ${self:custom.productsTable}
+    PRICE_LIST_PRODUCTS_TABLE: ${self:custom.priceListProductsTable}
 
   iamRoleStatements:
     # S3 access for generating presigned URLs and accessing uploaded files
@@ -65,7 +76,7 @@ provider:
         - arn:aws:s3:::${self:custom.uploadBucket}
         - arn:aws:s3:::${self:custom.uploadBucket}/*
 
-    # DynamoDB access for Files, CatalogProducts, and Products tables
+    # DynamoDB access for Files, CatalogProducts, Products, and PriceListProducts tables
     - Effect: Allow
       Action:
         - dynamodb:PutItem
@@ -80,6 +91,7 @@ provider:
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.filesTable}
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.catalogProductsTable}
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.productsTable}
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.priceListProductsTable}
 
     # Textract permissions (for PDFs)
     - Effect: Allow
@@ -131,12 +143,20 @@ functions:
           method: delete
 
 
-  # HTTP API for UI -> get products extracted from a file
-  getFileProducts:
+  # HTTP API for UI -> get catalog products extracted from a file
+  getCatalogProducts:
     handler: src/get_files.get_catalog_products
     events:
       - httpApi:
-          path: /api/files/{fileId}/products
+          path: /api/files/{fileId}/catalog-products
+          method: get
+
+  # HTTP API for UI -> get price list products extracted from a file
+  getPriceListProducts:
+    handler: src/get_files.get_price_list_products
+    events:
+      - httpApi:
+          path: /api/files/{fileId}/price-list-products
           method: get
 
   # HTTP API for UI -> update products after review
@@ -260,3 +280,19 @@ resources:
         KeySchema:
           - AttributeName: orderingNumber
             KeyType: HASH
+
+    PriceListProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.priceListProductsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: fileId
+            AttributeType: S
+          - AttributeName: chunkIndex
+            AttributeType: N
+        KeySchema:
+          - AttributeName: fileId
+            KeyType: HASH
+          - AttributeName: chunkIndex
+            KeyType: RANGE

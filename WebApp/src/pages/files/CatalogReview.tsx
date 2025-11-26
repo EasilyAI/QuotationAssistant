@@ -7,7 +7,7 @@ import { CatalogProduct, CatalogProductStatus } from '../../types/catalogProduct
 import { Product, ProductCategory } from '../../types/products';
 import {
   getFileDownloadUrl,
-  getFileProducts,
+  getCatalogProducts,
   updateFileProducts,
   getFileInfo,
   completeFileReview,
@@ -257,7 +257,7 @@ const CatalogReview = () => {
           return;
         }
 
-        const productsData = await getFileProducts(fileId);
+        const productsData = await getCatalogProducts(fileId);
         if (!isSubscribed) {
           return;
         }

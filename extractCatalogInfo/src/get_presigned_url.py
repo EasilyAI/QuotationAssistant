@@ -38,7 +38,7 @@ def get_presigned_url(event, context):
 
     uploaded_file_name = body.get("fileName")  # Actual file name from upload
     content_type = body.get("contentType") or "application/octet-stream"
-    file_type = body.get("fileType") or ""  # optional extra hint
+    file_type = body.get("BusinessFileType") or ""  # optional extra hint
     
     # Extract form data (optional - may not be present for all requests)
     form_data = body.get("formData") or {}
@@ -82,7 +82,7 @@ def get_presigned_url(event, context):
         "year": form_data.get("year"),
         "orderingNumber": form_data.get("orderingNumber"),
         "manufacturer": form_data.get("manufacturer"),
-        "swaglokLink": form_data.get("swaglokLink"),
+        "SwagelokLink": form_data.get("SwagelokLink"),
         "notes": form_data.get("notes"),
         "description": form_data.get("description"),
         "onlineLink": form_data.get("onlineLink"),
@@ -117,6 +117,7 @@ def get_presigned_url(event, context):
             "Metadata": {
                 "file-id": file_id,  # Store fileId in S3 object metadata
                 "original-filename": uploaded_file_name,
+                "file-type": file_type
             }
         },
         ExpiresIn=3600,  # URL valid for 1 hour

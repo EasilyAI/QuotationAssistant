@@ -5,10 +5,11 @@ import time
 from datetime import datetime
 
 import boto3
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 
 from utils.corsHeaders import get_cors_headers
 from utils.helpers import convert_decimals_to_native, convert_floats_to_decimal
+from utils.file_details import build_file_details
 
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
@@ -16,6 +17,7 @@ s3 = boto3.client("s3")
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")
 PRODUCTS_TABLE = os.environ.get("PRODUCTS_TABLE", "hb-products")
+PRICE_LIST_PRODUCTS_TABLE = os.environ.get("PRICE_LIST_PRODUCTS_TABLE", "hb-price-list-products")
 UPLOAD_BUCKET = os.environ.get("UPLOAD_BUCKET", "hb-files-raw")
 
 
@@ -174,22 +176,48 @@ def get_file_download_url(event, context):
     }
 
 
+def assemble_chunked_products(items):
+    """
+    Assemble products from multiple DynamoDB chunks into a single list.
+    
+    Args:
+        items: List of DynamoDB items, each containing a chunk of products
+    
+    Returns:
+        tuple: (all_products: list, metadata: dict from chunk 0)
+    """
+    # Sort by chunkIndex
+    items.sort(key=lambda x: int(x.get("chunkIndex", 0)))
+    
+    all_products = []
+    metadata = {}
+    
+    for idx, item in enumerate(items):
+        # Convert Decimal types to native Python types
+        item_json = json.loads(json.dumps(item, default=str))
+        products_in_item = item_json.get("products", [])
+
+        all_products.extend(products_in_item)
+        
+        # Get metadata from chunk 0
+        chunk_index = item_json.get("chunkIndex")
+        if chunk_index == 0 or chunk_index == "0":
+            metadata = item_json
+    
+    return all_products, metadata
+
+
 def get_catalog_products(event, context):
     """
-    Get all products for a file from the temporary products table.
-    Returns the products document containing all products for the given fileId.
+    Get all products for a CATALOG file from the catalog products table.
+    Catalog products are stored as a single document per file.
     """
     print(f"[get_catalog_products] Starting request")
     
     # Handle OPTIONS preflight request
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
-        print(f"[get_catalog_products] Handling OPTIONS preflight request")
-        return {
-            "statusCode": 200,
-            "body": "",
-            "headers": get_cors_headers(),
-        }
+        return {"statusCode": 200, "body": "", "headers": get_cors_headers()}
     
     # Extract fileId from path parameters
     path_params = event.get("pathParameters") or {}
@@ -197,21 +225,18 @@ def get_catalog_products(event, context):
     print(f"[get_catalog_products] Extracted fileId: {file_id}")
     
     if not file_id:
-        print(f"[get_catalog_products] ERROR: fileId is required but not provided")
+        print(f"[get_catalog_products] ERROR: fileId is required")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "fileId is required"}),
             "headers": get_cors_headers(),
         }
     
-    # Get products document from temp table (single document with fileId as key)
+    # Get products from catalog products table
     table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
     try:
         print(f"[get_catalog_products] Querying table {CATALOG_PRODUCTS_TABLE} for fileId: {file_id}")
-        # Get the single document by fileId
-        response = table.get_item(
-            Key={"fileId": file_id}
-        )
+        response = table.get_item(Key={"fileId": file_id})
         
         if "Item" not in response:
             print(f"[get_catalog_products] No products found for file {file_id}")
@@ -227,11 +252,7 @@ def get_catalog_products(event, context):
             }
         
         document = response["Item"]
-        print(f"[get_catalog_products] Retrieved document for fileId: {file_id}")
-        
-        # Convert entire document (including Decimal types) to JSON-serializable format
         document_json = json.loads(json.dumps(document, default=str))
-        
         products = document_json.get("products", [])
         
         print(f"[get_catalog_products] Found {len(products)} products for file {file_id}")
@@ -243,12 +264,106 @@ def get_catalog_products(event, context):
                 "products": products,
                 "count": len(products),
                 "sourceFile": document_json.get("sourceFile", ""),
-                "createdAt": document_json.get("createdAt", 0)
+                "createdAt": document_json.get("createdAt", 0),
+                "businessFileType": "Catalog"
             }),
             "headers": get_cors_headers(),
         }
+        
     except Exception as e:
         print(f"[get_catalog_products] ERROR: Failed to get products: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to get products"}),
+            "headers": get_cors_headers(),
+        }
+
+
+def get_price_list_products(event, context):
+    """
+    Get all products for a PRICE LIST file from the price list products table.
+    Price list products are stored in chunks to handle large files.
+    """
+    print(f"[get_price_list_products] Starting request")
+    
+    # Handle OPTIONS preflight request
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {"statusCode": 200, "body": "", "headers": get_cors_headers()}
+    
+    # Extract fileId from path parameters
+    path_params = event.get("pathParameters") or {}
+    file_id = path_params.get("fileId")
+    print(f"[get_price_list_products] Extracted fileId: {file_id}")
+    
+    if not file_id:
+        print(f"[get_price_list_products] ERROR: fileId is required")
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Query all chunks for this fileId from price list products table
+    table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+    try:
+        print(f"[get_price_list_products] Querying all chunks for fileId: {file_id}")
+
+        items = []
+        last_evaluated_key = None
+
+        while True:
+            query_kwargs = {
+                "KeyConditionExpression": Key("fileId").eq(file_id),
+            }
+            if last_evaluated_key:
+                query_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
+            response = table.query(**query_kwargs)
+            batch_items = response.get("Items", [])
+
+            if not batch_items:
+                break
+
+            items.extend(batch_items)
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not last_evaluated_key:
+                break
+
+        if not items:
+            print(f"[get_price_list_products] No products found for file {file_id}")
+            return {
+                "statusCode": 404,
+                "body": json.dumps({
+                    "error": "No products found for this file",
+                    "fileId": file_id,
+                    "products": [],
+                    "count": 0
+                }),
+                "headers": get_cors_headers(),
+            }
+
+        # Assemble products from chunks
+        all_products, metadata = assemble_chunked_products(items)
+
+        print(f"[get_price_list_products] Assembled {len(all_products)} products from {len(items)} chunks")
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "fileId": file_id,
+                "products": all_products,
+                "count": len(all_products),
+                "sourceFile": metadata.get("sourceFile", ""),
+                "createdAt": metadata.get("createdAt", 0),
+                "businessFileType": "Price List",
+                "totalChunks": len(items)
+            }),
+            "headers": get_cors_headers(),
+        }
+
+    except Exception as e:
+        print(f"[get_price_list_products] ERROR: Failed to get products: {e}")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "Failed to get products"}),
@@ -385,6 +500,8 @@ def update_catalog_products(event, context):
         }
 
 
+
+
 def check_file_exists(event, context):
     """
     Check if a file already exists based on duplicate prevention rules.
@@ -402,9 +519,12 @@ def check_file_exists(event, context):
     - catalogSerialNumber: (for Catalog files)
     - orderingNumber: (for SalesDrawing files)
     """
+    print(f"[check_file_exists] Raw event: {json.dumps({'body': event.get('body'), 'method': event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method')})}")
+
     # Handle OPTIONS preflight request
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        print("[check_file_exists] Handling OPTIONS preflight request")
         return {
             "statusCode": 200,
             "body": "",
@@ -414,7 +534,9 @@ def check_file_exists(event, context):
     # Parse request body
     try:
         body = json.loads(event.get("body") or "{}")
+        print(f"[check_file_exists] Parsed body: {json.dumps(body)}")
     except json.JSONDecodeError:
+        print("[check_file_exists] ERROR: Invalid JSON in request body")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "Invalid JSON in request body"}),
@@ -429,6 +551,7 @@ def check_file_exists(event, context):
     
     # Validate required fields
     if not business_file_type:
+        print("[check_file_exists] ERROR: fileType is required but missing")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "fileType is required"}),
@@ -436,6 +559,7 @@ def check_file_exists(event, context):
         }
     
     if not display_name:
+        print("[check_file_exists] ERROR: fileName is required but missing")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "fileName is required"}),
@@ -444,6 +568,7 @@ def check_file_exists(event, context):
     
     # Validate type-specific required fields
     if business_file_type == "Catalog" and not catalog_serial_number:
+        print("[check_file_exists] ERROR: catalogSerialNumber is required for Catalog files")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "catalogSerialNumber is required for Catalog files"}),
@@ -451,6 +576,7 @@ def check_file_exists(event, context):
         }
     
     if business_file_type == "Sales Drawing" and not ordering_number:
+        print("[check_file_exists] ERROR: orderingNumber is required for Sales Drawing files")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "orderingNumber is required for Sales Drawing files"}),
@@ -458,6 +584,7 @@ def check_file_exists(event, context):
         }
     
     if business_file_type == "Price List" and not year:
+        print("[check_file_exists] ERROR: year is required for Price List files")
         return {
             "statusCode": 400,
             "body": json.dumps({"error": "year is required for Price List files"}),
@@ -498,7 +625,7 @@ def check_file_exists(event, context):
                     "statusCode": 200,
                     "body": json.dumps({
                         "exists": True,
-                        "file": _build_file_details(file_item),
+                        "file": build_file_details(file_item),
                         "reason": "A file with the same type, name, and year already exists"
                     }),
                     "headers": get_cors_headers(),
@@ -513,7 +640,7 @@ def check_file_exists(event, context):
                         "statusCode": 200,
                         "body": json.dumps({
                             "exists": True,
-                            "file": _build_file_details(file_item),
+                            "file": build_file_details(file_item),
                             "reason": "A Catalog file with the same serial number already exists"
                         }),
                         "headers": get_cors_headers(),
@@ -528,7 +655,7 @@ def check_file_exists(event, context):
                         "statusCode": 200,
                         "body": json.dumps({
                             "exists": True,
-                            "file": _build_file_details(file_item),
+                            "file": build_file_details(file_item),
                             "reason": "A Sales Drawing file with the same ordering number already exists"
                         }),
                         "headers": get_cors_headers(),
@@ -542,7 +669,7 @@ def check_file_exists(event, context):
                         "statusCode": 200,
                         "body": json.dumps({
                             "exists": True,
-                            "file": _build_file_details(file_item),
+                            "file": build_file_details(file_item),
                             "reason": "A Price List file for this year already exists"
                         }),
                         "headers": get_cors_headers(),
@@ -660,15 +787,56 @@ def delete_file(event, context):
                 # Continue with deletion even if S3 delete fails
         
         # Delete from catalog products table
-        products_table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
-        try:
-            print(f"[delete_file] Deleting products for file {file_id}")
-            products_table.delete_item(Key={"fileId": file_id})
-            print(f"[delete_file] Successfully deleted products for file {file_id}")
-        except Exception as e:
-            print(f"[delete_file] WARNING: Failed to delete products for file {file_id}: {e}")
-            # Continue with deletion even if products delete fails (might not exist)
+        file_business_type = file_info.get("businessFileType", "")
+        if file_business_type == "Catalog":
+            catalog_products_table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
+            try:
+                print(f"[delete_file] Deleting products for file {file_id}")
+                catalog_products_table.delete_item(Key={"fileId": file_id})
+                print(f"[delete_file] Successfully deleted products for file {file_id}")
+            except Exception as e:
+                print(f"[delete_file] WARNING: Failed to delete products for file {file_id}: {e}")
+                # Continue with deletion even if products delete fails (might not exist)
         
+        elif file_business_type == "Price List":
+            price_list_products_table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+            try:
+                print(f"[delete_file] Deleting products for file {file_id}")
+                items_deleted = 0
+                last_evaluated_key = None
+
+                while True:
+                    query_kwargs = {
+                        "KeyConditionExpression": Key("fileId").eq(file_id),
+                    }
+                    if last_evaluated_key:
+                        query_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
+                    response = price_list_products_table.query(**query_kwargs)
+                    items = response.get("Items", [])
+
+                    if not items:
+                        break
+
+                    with price_list_products_table.batch_writer() as batch:
+                        for item in items:
+                            # chunkIndex is the sort key – must match exactly
+                            chunk_index = item.get("chunkIndex")
+                            if chunk_index is None:
+                                continue
+                            batch.delete_item(
+                                Key={"fileId": file_id, "chunkIndex": chunk_index}
+                            )
+                            items_deleted += 1
+
+                    last_evaluated_key = response.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+
+                print(f"[delete_file] Successfully deleted {items_deleted} product chunks for file {file_id}")
+            except Exception as e:
+                print(f"[delete_file] WARNING: Failed to delete products for file {file_id}: {e}")
+                # Continue with deletion even if products delete fails (might not exist)
         # Delete from files table
         try:
             print(f"[delete_file] Deleting file record {file_id}")

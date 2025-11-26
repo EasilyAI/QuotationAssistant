@@ -21,7 +21,7 @@ export interface SalesDrawingFormData {
   fileName: string;
   orderingNumber: string;
   manufacturer: string;
-  swaglokLink?: string;
+  SwagelokLink?: string;
   year: string;
   notes: string;
 }
@@ -66,20 +66,36 @@ export interface PriceListUploadData extends PriceListFormData {
 
 // Processing details shown during file processing
 export interface ProcessingDetails {
+  // Catalog/PDF processing
   pages?: number;
   tables?: number;
   tablesWithProducts?: number;
   products?: number;
+  
+  // Price list processing
+  validProducts?: number;
+  invalidProducts?: number;
+  totalErrors?: number;
+  totalWarnings?: number;
 }
 
 // File status values
 export enum FileStatus {
+  // Catalog/PDF processing statuses
   TEXTRACT_STARTED = 'textract_started',
   TEXTRACT_PROCESSING = 'textract_processing',
   TEXTRACT_COMPLETED = 'textract_completed',
   PARSING_TABLES = 'parsing_tables',
+  
+  // Price list processing statuses
+  PROCESSING = 'processing',
+  VALIDATING_SCHEMA = 'validating_schema',
+  PROCESSING_ROWS = 'processing_rows',
+  
+  // Common statuses
   SAVING_PRODUCTS = 'saving_products',
   PENDING_REVIEW = 'pending_review',
+  PENDING_REVIEW_WITH_ERRORS = 'pending_review_with_errors',
   COMPLETED = 'completed',
   FAILED = 'failed'
 }
@@ -95,6 +111,12 @@ export interface FileInfo {
   tablesWithProducts?: number;
   productsCount?: number;
   error?: string;
+  
+  // Price list specific fields
+  validProductsCount?: number;
+  invalidProductsCount?: number;
+  totalErrors?: number;
+  totalWarnings?: number;
   
   // File name fields
   uploadedFileName?: string;  // Actual file name from S3 upload
@@ -112,7 +134,7 @@ export interface FileInfo {
   // SalesDrawing-specific fields
   orderingNumber?: string;
   manufacturer?: string;
-  swaglokLink?: string;
+  SwagelokLink?: string;
   notes?: string;
   
   // PriceList-specific fields (description is common)
