@@ -21,3 +21,5 @@ wip/
 # Build outputs
 **/build/
 webApp/build/
+
+scripts/*

@@ -1,0 +1,23 @@
+{
+  "name": "quotationassistant",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EasilyAI/QuotationAssistant.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/EasilyAI/QuotationAssistant/issues"
+  },
+  "homepage": "https://github.com/EasilyAI/QuotationAssistant#readme",
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.939.0"
+  }
+}

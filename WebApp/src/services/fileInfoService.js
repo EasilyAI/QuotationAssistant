@@ -78,12 +78,11 @@ export const getFileDownloadUrl = async (key) => {
 };
 
 /**
- * Get products extracted from a file
+ * Get catalog products extracted from a file
  * @param {string} fileId - File ID
  * @returns {Promise<Object>} Products data from the file
  */
-export const getFileProducts = async (fileId) => {
-  // Normalize URL to avoid double slashes
+export const getCatalogProducts = async (fileId) => {
   const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
     ? API_CONFIG.BASE_URL.slice(0, -1) 
     : API_CONFIG.BASE_URL;
@@ -91,21 +90,60 @@ export const getFileProducts = async (fileId) => {
     ? API_CONFIG.FILE_INFO_ENDPOINT
     : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
   
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/products`, {
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/catalog-products`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      // TODO: Add authentication header if needed
-      // 'Authorization': `Bearer ${getAuthToken()}`,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to get products' }));
-    throw new Error(error.message || `Failed to get products: ${response.statusText}`);
+    const error = await response.json().catch(() => ({ message: 'Failed to get catalog products' }));
+    throw new Error(error.message || `Failed to get catalog products: ${response.statusText}`);
   }
 
   return response.json();
+};
+
+/**
+ * Get price list products extracted from a file
+ * @param {string} fileId - File ID
+ * @returns {Promise<Object>} Products data from the file
+ */
+export const getPriceListProducts = async (fileId) => {
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
+    ? API_CONFIG.BASE_URL.slice(0, -1) 
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+  
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/price-list-products`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to get price list products' }));
+    throw new Error(error.message || `Failed to get price list products: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
+ * Get products extracted from a file based on file type
+ * @param {string} fileId - File ID
+ * @param {string} businessFileType - Type of file (Catalog, Price List, etc.)
+ * @returns {Promise<Object>} Products data from the file
+ */
+export const getFileProducts = async (fileId, businessFileType = 'Catalog') => {
+  if (businessFileType === BusinessFileType.PriceList || businessFileType === 'Price List') {
+    return getPriceListProducts(fileId);
+  }
+  return getCatalogProducts(fileId);
 };
 
 /**
@@ -113,7 +151,7 @@ export const getFileProducts = async (fileId) => {
  * @param {string} fileId
  * @param {Array<object>} products
  */
-export const updateFileProducts = async (fileId, products) => {
+export const updateCatalogProducts = async (fileId, products) => {
   const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
     ? API_CONFIG.BASE_URL.slice(0, -1)
     : API_CONFIG.BASE_URL;
@@ -121,22 +159,66 @@ export const updateFileProducts = async (fileId, products) => {
     ? API_CONFIG.FILE_INFO_ENDPOINT
     : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
 
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/products`, {
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/catalog-products`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      // TODO: Add authentication header if needed
-      // 'Authorization': `Bearer ${getAuthToken()}`,
     },
     body: JSON.stringify({ products }),
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update products' }));
-    throw new Error(error.message || `Failed to update products: ${response.statusText}`);
+    const error = await response.json().catch(() => ({ message: 'Failed to update catalog products' }));
+    throw new Error(error.message || `Failed to update catalog products: ${response.statusText}`);
   }
 
   return response.json();
+};
+
+/**
+ * Persist reviewed price list products for a file
+ * @param {string} fileId
+ * @param {Array<object>} products
+ */
+export const updatePriceListProducts = async (fileId, products) => {
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
+    ? API_CONFIG.BASE_URL.slice(0, -1)
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/price-list-products`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ products }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to update price list products' }));
+    throw new Error(error.message || `Failed to update price list products: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
+ * Persist reviewed products for a file (generic - detects type)
+ * @deprecated Use updateCatalogProducts or updatePriceListProducts instead
+ * @param {string} fileId
+ * @param {Array<object>} products
+ */
+export const updateFileProducts = async (fileId, products) => {
+  // For backward compatibility - try to detect type from products
+  // Catalog products have 'specs', price list products have 'price'
+  const isPriceList = products.length > 0 && 'price' in products[0];
+  
+  if (isPriceList) {
+    return updatePriceListProducts(fileId, products);
+  }
+  return updateCatalogProducts(fileId, products);
 };
 
 /**
@@ -188,7 +270,7 @@ export const pollFileStatus = async (fileId, onStatusUpdate, maxAttempts = 60, i
       }
       
       // Check if processing is complete
-      if (status === 'pending_review') {
+      if (status === 'pending_review' || status === 'pending_review_with_errors' || status === 'completed') {
         console.log('[pollFileStatus] Processing completed successfully');
         return fileInfo;
       }
@@ -269,10 +351,17 @@ const buildFileExistsMessage = (file, fileType) => {
  * Check if a file already exists in S3 based on form data
  * @param {Object} formData - Form data containing file information
  * @param {string} fileType - Type of file (BusinessFileType enum)
- * @returns {Promise<{exists: boolean, file?: Object}>} Object with exists flag and file details if exists
+ * @returns {Promise<{exists: boolean, file?: Object, error?: string, status?: number, isClientError?: boolean}>}
+ *          Object with exists flag and file details if exists, or error metadata for client-side validation
  */
 export const checkFileExistsInS3 = async (formData, fileType) => {
   try {
+    console.log('[checkFileExistsInS3] Starting existence check', {
+      fileType,
+      fileName: formData?.fileName,
+      year: formData?.year,
+    });
+
     // Normalize URL to avoid double slashes
     const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
       ? API_CONFIG.BASE_URL.slice(0, -1) 
@@ -283,7 +372,9 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
     
     // Build request body based on file type
     const requestBody = {
-      BusinessFileType: fileType,
+      // IMPORTANT: Align with backend field names
+      // Backend expects: fileType, fileName, year, catalogSerialNumber, orderingNumber
+      fileType,
     };
 
     // Normalize filename to lowercase to avoid case-sensitive duplicates
@@ -297,6 +388,8 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
       requestBody.orderingNumber = formData.orderingNumber;
     }
 
+    console.log('[checkFileExistsInS3] Request payload for backend check_file_exists:', requestBody);
+
     const response = await fetch(`${baseUrl}${endpoint}/check-file-exists`, {
       method: 'POST',
       headers: {
@@ -307,25 +400,65 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
       body: JSON.stringify(requestBody),
     });
 
-    if (!response.ok) {
-      // If endpoint doesn't exist yet, assume file doesn't exist (don't block upload)
-      if (response.status === 404) {
-        console.warn('[checkFileExistsInS3] Check endpoint not implemented, skipping check');
-        return { exists: false };
-      }
-      const error = await response.json().catch(() => ({ message: 'Failed to check file existence' }));
-      throw new Error(error.message || `Failed to check file existence: ${response.statusText}`);
+    const result = await response.json().catch(() => ({}));
+
+    // Endpoint not found -> keep existing behavior (don't block upload)
+    if (response.status === 404) {
+      console.warn('[checkFileExistsInS3] Check endpoint not implemented (404), skipping existence check');
+      return { exists: false };
     }
 
-    const result = await response.json();
+    // 2xx -> normal success path
+    if (response.ok) {
+      const exists = !!result.exists;
+      console.log('[checkFileExistsInS3] Backend responded successfully', {
+        status: response.status,
+        exists,
+        reason: result.reason,
+      });
+      return {
+        exists,
+        file: result.file || null,
+      };
+    }
+
+    // 4xx -> treat as validation / client error that SHOULD block the upload
+    if (response.status >= 400 && response.status < 500) {
+      const message =
+        result.error ||
+        result.message ||
+        `Failed to check file existence: ${response.statusText}`;
+      console.warn('[checkFileExistsInS3] Client/validation error from backend', {
+        status: response.status,
+        message,
+        result,
+      });
+      return {
+        exists: false,
+        error: message,
+        status: response.status,
+        isClientError: true,
+      };
+    }
+
+    // 5xx -> log but do NOT block the upload (treat as best-effort check)
+    const serverMessage =
+      result.error ||
+      result.message ||
+      `Failed to check file existence: ${response.statusText}`;
+    console.warn('[checkFileExistsInS3] Server error during existence check, allowing upload to proceed', {
+      status: response.status,
+      message: serverMessage,
+    });
     return {
-      exists: result.exists || false,
-      file: result.file || null
+      exists: false,
+      error: serverMessage,
+      status: response.status,
     };
   } catch (error) {
     // If check fails, log warning but don't block upload
     // This allows uploads to proceed even if the check endpoint is not yet implemented
-    console.warn('[checkFileExistsInS3] Error checking file existence:', error.message);
+    console.warn('[checkFileExistsInS3] Network or unexpected error checking file existence, allowing upload to proceed:', error.message);
     return { exists: false };
   }
 };
@@ -339,8 +472,19 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
 export const validateFileDoesNotExist = async (formData, fileType) => {
   const fileCheckResult = await checkFileExistsInS3(formData, fileType);
   
+   // If backend reported a client/validation error (e.g. missing year for price list),
+   // surface it as a blocking validation error.
+   if (fileCheckResult.isClientError && fileCheckResult.error) {
+     console.warn('[validateFileDoesNotExist] Blocking upload due to backend validation error:', fileCheckResult.error);
+     return {
+       valid: false,
+       error: fileCheckResult.error,
+     };
+   }
+
   if (fileCheckResult.exists && fileCheckResult.file) {
     const errorMessage = buildFileExistsMessage(fileCheckResult.file, fileType);
+    console.warn('[validateFileDoesNotExist] Blocking upload because a matching file already exists');
     return {
       valid: false,
       error: errorMessage

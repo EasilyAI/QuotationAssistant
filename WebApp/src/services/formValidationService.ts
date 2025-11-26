@@ -48,7 +48,7 @@ export const validateUploadForm = (
       if (!salesDrawingData.year?.trim()) {
         return { valid: false, error: 'Year is required' };
       }
-      // swaglokLink and notes are optional (swaglokLink is explicitly optional in type)
+      // SwagelokLink and notes are optional (SwagelokLink is explicitly optional in type)
       break;
 
     case BusinessFileType.PriceList:

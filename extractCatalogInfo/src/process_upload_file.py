@@ -2,8 +2,12 @@ import json
 import os
 import uuid
 import time
+import re
+import tempfile
+from datetime import datetime
 
 import boto3
+from openpyxl import load_workbook
 
 from utils.incomingEventParser import parse_s3_key
 from utils.corsHeaders import get_cors_headers
@@ -18,6 +22,18 @@ AWS_REGION = "us-east-1"
 # BUCKET = os.environ["UPLOAD_BUCKET"]
 FILES_TABLE = os.environ["FILES_TABLE"]
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")
+PRICE_LIST_PRODUCTS_TABLE = os.environ.get("PRICE_LIST_PRODUCTS_TABLE", "hb-price-list-products")
+
+# Expected schema for price list files
+PRICE_LIST_SCHEMA = {
+    "columns": [
+        {"name": "orderingNumber", "type": "string", "required": True},
+        {"name": "description", "type": "string", "required": True},
+        {"name": "price", "type": "number", "required": True},
+        # Optional Swagelok product link column
+        {"name": "SwagelokLink", "type": "link", "required": False},
+    ]
+}
 
 def update_file_status(file_id, status, **kwargs):
     """
@@ -148,25 +164,630 @@ def save_products_to_catalog_products_table(file_id, s3_key, event_payloads):
         return 0
 
 
+def find_header_row(rows, max_rows_to_scan=20):
+    """
+    Search for the header row in the xlsx file by looking for expected column names.
+    The header row should contain at least the required columns (orderingNumber, description, price).
+    
+    Args:
+        rows: List of rows from the xlsx file
+        max_rows_to_scan: Maximum number of rows to scan for headers
+    
+    Returns:
+        tuple: (header_row_index: int or None, headers: list or None)
+    """
+    expected_col_names = [col["name"].lower() for col in PRICE_LIST_SCHEMA["columns"]]
+    required_col_names = [col["name"].lower() for col in PRICE_LIST_SCHEMA["columns"] if col["required"]]
+    
+    for row_idx, row in enumerate(rows[:max_rows_to_scan]):
+        if row is None:
+            continue
+            
+        # Convert row to lowercase strings for comparison
+        row_values = []
+        for cell in row:
+            if cell is not None:
+                row_values.append(str(cell).strip().lower())
+            else:
+                row_values.append(None)
+        
+        if row_idx < 5:
+            # Log first few rows to help debug header detection issues
+            print(f"[find_header_row] Row {row_idx} values (lowercased): {row_values}")
+        
+        # Check if this row contains the required column names
+        found_required = 0
+        for req_col in required_col_names:
+            if req_col in row_values:
+                found_required += 1
+        
+        # If we found all required columns, this is likely the header row
+        if found_required >= len(required_col_names):
+            print(f"[find_header_row] Found header row at index {row_idx}: {row}")
+            return row_idx, list(row)
+    
+    return None, None
 
 
-def _build_file_details(file_item):
-    """Helper function to build file details dictionary from DynamoDB item."""
+def validate_price_list_schema(headers):
+    """
+    Validate that the price list file has the expected schema.
+    
+    Args:
+        headers: List of header names from the xlsx file
+    
+    Returns:
+        tuple: (is_valid: bool, errors: list of error messages, column_mapping: dict mapping expected names to actual indices)
+    """
+    expected_col_names = [col["name"] for col in PRICE_LIST_SCHEMA["columns"]]
+    required_col_names = [col["name"] for col in PRICE_LIST_SCHEMA["columns"] if col["required"]]
+    errors = []
+    column_mapping = {}
+    
+    # Check if we have headers
+    if not headers:
+        return False, ["No headers found in the file"], {}
+    
+    # Normalize headers for comparison
+    normalized_headers = []
+    for h in headers:
+        if h is not None:
+            normalized_headers.append(str(h).strip().lower())
+        else:
+            normalized_headers.append(None)
+
+    print(f"[validate_price_list_schema] Raw headers: {headers}")
+    print(f"[validate_price_list_schema] Normalized headers: {normalized_headers}")
+    
+    # Find each expected column in the headers (flexible order)
+    for expected_col in expected_col_names:
+        expected_lower = expected_col.lower()
+        found_idx = None
+        
+        for idx, header in enumerate(normalized_headers):
+            if header == expected_lower:
+                found_idx = idx
+                break
+        
+        if found_idx is not None:
+            column_mapping[expected_col] = found_idx
+        elif expected_col in required_col_names:
+            errors.append(f"Required column '{expected_col}' not found in headers")
+    
+    # Check we found all required columns
+    for req_col in required_col_names:
+        if req_col not in column_mapping:
+            if f"Required column '{req_col}' not found in headers" not in errors:
+                errors.append(f"Required column '{req_col}' not found in headers")
+    
+    is_valid = len(errors) == 0
+    if not is_valid:
+        print(f"[validate_price_list_schema] Schema INVALID. Errors: {errors}")
+    else:
+        print(f"[validate_price_list_schema] Schema valid. Column mapping will be based on: {column_mapping}")
+    return is_valid, errors, column_mapping
+
+
+def validate_price_list_row(row_data, row_number):
+    """
+    Validate a single row from the price list.
+    
+    Args:
+        row_data: Dictionary with column values
+        row_number: Row number (1-based) for error messages
+    
+    Returns:
+        tuple: (is_valid: bool, errors: list of error messages, warnings: list of warnings)
+    """
+    errors = []
+    warnings = []
+    
+    # Validate orderingNumber (required, string)
+    ordering_number = row_data.get("orderingNumber")
+    if ordering_number is None or str(ordering_number).strip() == "":
+        errors.append(f"Row {row_number}: orderingNumber is required")
+    else:
+        ordering_number = str(ordering_number).strip()
+        # Additional validation: ordering numbers typically have specific formats
+        if len(ordering_number) < 2:
+            warnings.append(f"Row {row_number}: orderingNumber '{ordering_number}' seems too short")
+    
+    # Validate description (required, string)
+    description = row_data.get("description")
+    if description is None or str(description).strip() == "":
+        errors.append(f"Row {row_number}: description is required")
+    
+    # Validate price (required, number)
+    price = row_data.get("price")
+    if price is None:
+        errors.append(f"Row {row_number}: price is required")
+    else:
+        try:
+            price_value = float(price)
+            if price_value < 0:
+                errors.append(f"Row {row_number}: price cannot be negative (got {price_value})")
+        except (ValueError, TypeError):
+            errors.append(f"Row {row_number}: price must be a number (got '{price}')")
+    
+    # Validate SwagelokLink (optional, link)
+    swagelok_link = row_data.get("SwagelokLink")
+    if swagelok_link is None or str(swagelok_link).strip() == "":
+        # Treat missing SwagelokLink as a warning so it is surfaced to the user,
+        # but does not make the row invalid.
+        warnings.append(f"Row {row_number}: SwagelokLink is missing")
+    else:
+        link_str = str(swagelok_link).strip()
+        # Basic URL validation
+        url_pattern = re.compile(
+            r'^https?://'  # http:// or https://
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain
+            r'localhost|'  # localhost
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # IP
+            r'(?::\d+)?'  # optional port
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        if not url_pattern.match(link_str):
+            warnings.append(f"Row {row_number}: SwagelokLink doesn't appear to be a valid URL: '{link_str}'")
+    
+    is_valid = len(errors) == 0
+    return is_valid, errors, warnings
+
+
+def cleanup_failed_upload(file_id, s3_key, delete_db_record=True):
+    """
+    Clean up S3 file and DynamoDB records when processing fails.
+    
+    Args:
+        file_id: File ID to clean up
+        s3_key: S3 key to delete
+        delete_db_record: Whether to delete the file record from DynamoDB (default True)
+    """
+    print(f"[cleanup_failed_upload] Starting cleanup for file_id={file_id}, s3_key={s3_key}")
+    
+    # Delete S3 file
+    try:
+        s3_client.delete_object(Bucket=BUCKET, Key=s3_key)
+        print(f"[cleanup_failed_upload] Deleted S3 file: {s3_key}")
+    except Exception as e:
+        print(f"[cleanup_failed_upload] WARNING: Failed to delete S3 file: {e}")
+    
+    # Delete file record from DynamoDB
+    if delete_db_record:
+        try:
+            files_table = dynamodb.Table(FILES_TABLE)
+            files_table.delete_item(Key={"fileId": file_id})
+            print(f"[cleanup_failed_upload] Deleted file record: {file_id}")
+        except Exception as e:
+            print(f"[cleanup_failed_upload] WARNING: Failed to delete file record: {e}")
+    
+    # Delete all product chunks from price list products table
+    try:
+        products_table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+        # Query all chunks for this fileId
+        response = products_table.query(
+            KeyConditionExpression="fileId = :fid",
+            ExpressionAttributeValues={":fid": file_id},
+            ProjectionExpression="fileId, chunkIndex"
+        )
+        items = response.get("Items", [])
+        
+        # Delete each chunk
+        for item in items:
+            products_table.delete_item(
+                Key={
+                    "fileId": item["fileId"],
+                    "chunkIndex": item["chunkIndex"]
+                }
+            )
+        print(f"[cleanup_failed_upload] Deleted {len(items)} product chunks for file: {file_id}")
+    except Exception as e:
+        print(f"[cleanup_failed_upload] WARNING: Failed to delete products: {e}")
+
+
+def split_products_into_chunks(products, chunk_size=500):
+    """
+    Split a list of products into chunks for DynamoDB storage.
+    DynamoDB has a 400KB item limit, so we chunk products to stay well under that.
+    
+    Args:
+        products: List of product dictionaries
+        chunk_size: Maximum number of products per chunk (default 500)
+    
+    Returns:
+        list: List of product chunks (each chunk is a list of products)
+    """
+    if not products:
+        return [[]]  # Return one empty chunk for metadata
+    
+    chunks = []
+    for i in range(0, len(products), chunk_size):
+        chunks.append(products[i:i + chunk_size])
+    
+    return chunks
+
+
+def save_price_list_products(file_id, s3_key, products):
+    """
+    Save price list products to DynamoDB using chunked storage.
+    Products are split into chunks to stay within DynamoDB's 400KB item limit.
+    
+    Table structure:
+    - fileId (PK): Partition Key
+    - chunkIndex (SK): Sort Key (0, 1, 2, ...)
+    
+    Chunk 0 contains metadata, all chunks contain products array.
+    
+    Args:
+        file_id: File ID associated with these products
+        s3_key: S3 key of the source file
+        products: List of product dictionaries
+    
+    Returns:
+        tuple: (success: bool, error_message: str or None)
+    """
+    table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+    timestamp = int(time.time() * 1000)
+    timestamp_iso = datetime.utcnow().isoformat() + 'Z'
+    
+    print(f"[save_price_list_products] Saving {len(products)} products for file {file_id}")
+    
+    try:
+        # Convert float values to Decimal for DynamoDB
+        products_for_db = convert_floats_to_decimal(products)
+
+        # Log a small sample of products (without overwhelming logs) to verify SwagelokLink presence
+        sample_count = min(5, len(products_for_db))
+        for idx, p in enumerate(products_for_db[:sample_count]):
+            try:
+                print(
+                    f"[save_price_list_products] Sample product {idx}: "
+                    f"orderingNumber={p.get('orderingNumber')}, "
+                    f"SwagelokLink={p.get('SwagelokLink')}, "
+                    f"swagelokLink={p.get('swagelokLink')}"
+                )
+            except Exception as e:
+                print(f"[save_price_list_products] WARNING: Failed to log sample product {idx}: {e}")
+        
+        # Split products into chunks
+        chunks = split_products_into_chunks(products_for_db)
+        total_chunks = len(chunks)
+        
+        print(f"[save_price_list_products] Splitting {len(products)} products into {total_chunks} chunks")
+        
+        # Save each chunk
+        for chunk_idx, chunk_products in enumerate(chunks):
+            item = {
+                "fileId": file_id,
+                "chunkIndex": chunk_idx,
+                "products": chunk_products,
+                "productsInChunk": len(chunk_products),
+                "updatedAt": timestamp,
+                "updatedAtIso": timestamp_iso,
+            }
+            
+            # Add metadata to chunk 0
+            if chunk_idx == 0:
+                item["sourceFile"] = s3_key
+                item["createdAt"] = timestamp
+                item["createdAtIso"] = timestamp_iso
+                item["totalProductsCount"] = len(products_for_db)
+                item["totalChunks"] = total_chunks
+            
+            table.put_item(Item=item)
+            print(f"[save_price_list_products] Saved chunk {chunk_idx + 1}/{total_chunks} with {len(chunk_products)} products")
+        
+        print(f"[save_price_list_products] SUCCESS: Saved {len(products)} products in {total_chunks} chunks")
+        return True, None
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[save_price_list_products] ERROR: Failed to save products: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return False, error_msg
+
+
+def process_price_list(file_id, s3_key):
+    """
+    Process an uploaded price list (xlsx file) from S3.
+    
+    Workflow:
+    1. Download xlsx file from S3 to temp location
+    2. Validate schema (column names, order, types)
+    3. Validate each row
+    4. Save products to DynamoDB price list products table
+    5. Update file status
+    
+    Args:
+        file_id: File ID from S3 metadata
+        s3_key: S3 key of the uploaded file
+    
+    Returns:
+        dict: Processing result with status and product count
+    """
+    print(f"[process_price_list] Starting processing for file_id={file_id}, s3_key={s3_key}")
+    
+    try:
+        # Step 1: Update status - Processing started
+        update_file_status(
+            file_id=file_id,
+            status="processing",
+            processingStage="Starting price list processing",
+            s3Key=s3_key
+        )
+        
+        # Step 2: Download xlsx file from S3 to temp location
+        print(f"[process_price_list] Downloading file from S3: bucket={BUCKET}, key={s3_key}")
+        
+        # Create temp file
+        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+            s3_client.download_file(BUCKET, s3_key, tmp_path)
+        
+        print(f"[process_price_list] File downloaded to: {tmp_path}")
+        
+        # Step 3: Open xlsx file with openpyxl
+        update_file_status(
+            file_id=file_id,
+            status="validating_schema",
+            processingStage="Validating file schema"
+        )
+        
+        print(f"[process_price_list] Opening xlsx file...")
+        workbook = load_workbook(filename=tmp_path, read_only=True, data_only=True)
+        sheet = workbook.active
+        
+        if sheet is None:
+            raise ValueError("No active sheet found in the xlsx file")
+        
+        # Step 4: Read all rows and find header row
+        rows = list(sheet.iter_rows(values_only=True))
+        
+        if len(rows) < 2:
+            raise ValueError("File must have at least a header row and one data row")
+        
+        # Find the header row (it might not be the first row)
+        header_row_idx, headers = find_header_row(rows)
+        
+        if header_row_idx is None or headers is None:
+            # Couldn't find header row, show what we found in first few rows
+            first_rows_preview = [str(rows[i]) for i in range(min(5, len(rows)))]
+            error_msg = f"Could not find header row with required columns (orderingNumber, description, price). First rows found: {first_rows_preview}"
+            print(f"[process_price_list] {error_msg}")
+            update_file_status(
+                file_id=file_id,
+                status="failed",
+                processingStage="Header row not found",
+                error=error_msg
+            )
+            os.unlink(tmp_path)
+            workbook.close()
+            # Cleanup failed upload
+            cleanup_failed_upload(file_id, s3_key)
+            return {
+                "success": False,
+                "fileId": file_id,
+                "error": error_msg
+            }
+        
+        print(f"[process_price_list] Found header row at index {header_row_idx}: {headers}")
+        
+        # Step 5: Validate schema and get column mapping
+        schema_valid, schema_errors, column_mapping = validate_price_list_schema(headers)
+        
+        if not schema_valid:
+            print(f"[process_price_list] Schema validation failed: {schema_errors}")
+            error_msg = "; ".join(schema_errors)
+            update_file_status(
+                file_id=file_id,
+                status="failed",
+                processingStage="Schema validation failed",
+                error=error_msg
+            )
+            # Clean up temp file
+            os.unlink(tmp_path)
+            workbook.close()
+            # Cleanup failed upload
+            cleanup_failed_upload(file_id, s3_key)
+            return {
+                "success": False,
+                "fileId": file_id,
+                "error": f"Schema validation failed: {error_msg}",
+                "schemaErrors": schema_errors
+            }
+        
+        print(f"[process_price_list] Schema validation passed. Column mapping: {column_mapping}")
+
+        # Extra debug: specifically log where SwagelokLink is mapped (if present)
+        if "SwagelokLink" in column_mapping:
+            print(
+                f"[process_price_list] SwagelokLink column mapped to index {column_mapping['SwagelokLink']}"
+            )
+        else:
+            print(
+                "[process_price_list] WARNING: SwagelokLink column NOT found in column_mapping. "
+                "Links from the file will not be captured."
+            )
+        
+        # Step 6: Process and validate each row (starting after header row)
+        update_file_status(
+            file_id=file_id,
+            status="processing_rows",
+            processingStage="Processing rows"
+        )
+        
+        products = []
+        all_errors = []
+        all_warnings = []
+        expected_col_names = [col["name"] for col in PRICE_LIST_SCHEMA["columns"]]
+        data_start_row = header_row_idx + 1
+        
+        for row_idx, row in enumerate(rows[data_start_row:], start=data_start_row + 1):  # 1-based row numbers
+            # Skip completely empty rows
+            if row is None or all(cell is None or str(cell).strip() == "" for cell in row):
+                continue
+            
+            # Create row data dictionary using column mapping
+            row_data = {}
+            for col_name in expected_col_names:
+                if col_name in column_mapping:
+                    col_idx = column_mapping[col_name]
+                    if col_idx < len(row):
+                        row_data[col_name] = row[col_idx]
+                    else:
+                        row_data[col_name] = None
+                else:
+                    row_data[col_name] = None
+
+            if row_idx <= data_start_row + 5:
+                # Log first few data rows to inspect SwagelokLink values
+                print(
+                    f"[process_price_list] Row {row_idx} mapped data: "
+                    f"orderingNumber={row_data.get('orderingNumber')}, "
+                    f"description={row_data.get('description')}, "
+                    f"price={row_data.get('price')}, "
+                    f"SwagelokLink={row_data.get('SwagelokLink')}"
+                )
+            
+            # Validate row
+            row_valid, row_errors, row_warnings = validate_price_list_row(row_data, row_idx)
+            
+            all_errors.extend(row_errors)
+            all_warnings.extend(row_warnings)
+            
+            # Create product entry
+            product = {
+                "orderingNumber": str(row_data.get("orderingNumber", "")).strip() if row_data.get("orderingNumber") else None,
+                "description": str(row_data.get("description", "")).strip() if row_data.get("description") else None,
+                "price": None,
+                "swagelokLink": str(row_data.get("SwagelokLink", "")).strip() if row_data.get("SwagelokLink") else None,
+                "rowNumber": row_idx,
+                "status": "valid" if row_valid else "invalid",
+                "errors": row_errors if row_errors else None,
+                "warnings": row_warnings if row_warnings else None
+            }
+            
+            # Parse price
+            try:
+                if row_data.get("price") is not None:
+                    product["price"] = float(row_data["price"])
+            except (ValueError, TypeError):
+                product["price"] = None
+            
+            products.append(product)
+
+            if row_idx <= data_start_row + 5:
+                # Log corresponding product representation for early rows
+                print(
+                    f"[process_price_list] Product built from row {row_idx}: "
+                    f"orderingNumber={product.get('orderingNumber')}, "
+                    f"price={product.get('price')}, "
+                    f"swagelokLink={product.get('swagelokLink')}, "
+                    f"status={product.get('status')}"
+                )
+        
+        print(f"[process_price_list] Processed {len(products)} rows, {len(all_errors)} errors, {len(all_warnings)} warnings")
+        
+        # Clean up temp file
+        os.unlink(tmp_path)
+        workbook.close()
+        
+        # Step 7: Save products to DynamoDB
+        valid_products = [p for p in products if p["status"] == "valid"]
+        invalid_products = [p for p in products if p["status"] == "invalid"]
+        
+        update_file_status(
+            file_id=file_id,
+            status="saving_products",
+            processingStage=f"Saving {len(products)} products to database"
+        )
+        
+        save_success, save_error = save_price_list_products(file_id, s3_key, products)
+        
+        if not save_success:
+            error_msg = f"Failed to save products: {save_error}"
+            print(f"[process_price_list] {error_msg}")
+            update_file_status(
+                file_id=file_id,
+                status="failed",
+                processingStage="Failed to save products",
+                error=error_msg
+            )
+            # Cleanup on failure
+            cleanup_failed_upload(file_id, s3_key)
+            return {
+                "success": False,
+                "fileId": file_id,
+                "error": error_msg
+            }
+        
+        # Step 8: Final status update
+        final_status = "pending_review" if len(invalid_products) == 0 else "pending_review_with_errors"
+        
+        update_file_status(
+            file_id=file_id,
+            status=final_status,
+            processingStage="Processing completed",
+            productsCount=len(products),
+            validProductsCount=len(valid_products),
+            invalidProductsCount=len(invalid_products),
+            totalErrors=len(all_errors),
+            totalWarnings=len(all_warnings)
+        )
+        
+        print(f"[process_price_list] Processing completed successfully")
+        
+        return {
+            "success": True,
+            "fileId": file_id,
+            "productsCount": len(products),
+            "validProductsCount": len(valid_products),
+            "invalidProductsCount": len(invalid_products),
+            "totalErrors": len(all_errors),
+            "totalWarnings": len(all_warnings)
+        }
+        
+    except Exception as e:
+        error_message = str(e)
+        print(f"[process_price_list] ERROR: {error_message}")
+        import traceback
+        traceback.print_exc()
+        
+        # Cleanup on failure
+        cleanup_failed_upload(file_id, s3_key)
+        
+        update_file_status(
+            file_id=file_id,
+            status="failed",
+            processingStage="Processing failed",
+            error=error_message
+        )
+        
+        return {
+            "success": False,
+            "fileId": file_id,
+            "error": error_message
+        }
+
+
+def process_sales_drawing(file_id, s3_key):
+    """
+    Placeholder for processing sales drawing files.
+    TODO: Implement when requirements are defined.
+    """
+    print(f"[process_sales_drawing] Processing not implemented yet for file_id={file_id}")
+    
+    update_file_status(
+        file_id=file_id,
+        status="pending_review",
+        processingStage="Sales drawing processing not implemented"
+    )
+    
     return {
-        "fileId": file_item.get("fileId"),
-        "uploadedFileName": file_item.get("uploadedFileName", ""),
-        "displayName": file_item.get("displayName", ""),
-        "fileType": file_item.get("fileType", ""),  # PDF / XLSX / etc
-        "businessFileType": file_item.get("businessFileType", ""),
-        "status": file_item.get("status", "unknown"),
-        "createdAt": file_item.get("createdAt"),
-        "year": file_item.get("year"),
-        "catalogSerialNumber": file_item.get("catalogSerialNumber"),
-        "productCategory": file_item.get("productCategory"),
-        "orderingNumber": file_item.get("orderingNumber"),
-        "manufacturer": file_item.get("manufacturer"),
-        "description": file_item.get("description"),
+        "success": True,
+        "fileId": file_id,
+        "message": "Sales drawing processing not implemented"
     }
+
 
 from utils.textractClient import start_job, is_job_complete, get_job_results
 from utils.textractParser import (
@@ -218,30 +839,43 @@ def process_uploaded_file(event, context):
                 "body": json.dumps({"message": "Skipped JSON file"}),
             }
         
-        if not s3_key.lower().endswith('.pdf'):
-            print(f"[process_uploaded_file] WARNING: Non-PDF file uploaded: {s3_key}")
-            # Continue processing anyway, but log warning
-        
         # Step 3: Get file ID from S3 object metadata
         try:
             s3_response = s3_client.head_object(Bucket=BUCKET, Key=s3_key)
-            file_id = s3_response.get('Metadata', {}).get('file-id')
-            
-            if not file_id:
-                # Fallback: use filename without extension as fileId
-                filename = s3_key.split('/')[-1]
-                file_id = filename.rsplit('.', 1)[0]
-                print(f"[process_uploaded_file] WARNING: No file-id in S3 metadata, using filename as fileId: {file_id}")
-            else:
-                print(f"[process_uploaded_file] Retrieved file ID from S3 metadata: {file_id}")
-                
+            metadata = s3_response.get('Metadata', {})
+            print(f"[process_uploaded_file] S3 head object response metadata: {json.dumps(metadata)}")
+
+            file_id = metadata.get('file-id')
+            file_type = metadata.get('file-type')
+    
         except Exception as e:
             print(f"[process_uploaded_file] ERROR: Failed to get S3 object metadata: {e}")
-            # Fallback: use filename without extension as fileId
-            filename = s3_key.split('/')[-1]
-            file_id = filename.rsplit('.', 1)[0]
-            print(f"[process_uploaded_file] Using filename as fileId: {file_id}")
-        
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "Failed to get S3 object metadata"}),
+            }
+
+        if not file_id or not file_type:       
+            print(f"[process_uploaded_file] ERROR: No file ID or file type found")
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "No file ID or file type found"}),
+            }
+
+        if file_type == 'Price List':
+            result = process_price_list(file_id, s3_key)
+            return {
+                "statusCode": 200 if result['success'] else 500,
+                "body": json.dumps(result),
+            }
+
+        elif file_type == 'Sales Drawing':
+            result = process_sales_drawing(file_id, s3_key)
+            return {
+                "statusCode": 200,
+                "body": json.dumps(result),
+            }
+
         # Step 2: Update status - Textract started
         update_file_status(
             file_id=file_id,

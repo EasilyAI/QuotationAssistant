@@ -199,6 +199,7 @@ const Files = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<string | null>(null);
   const [files, setFiles] = useState<DBFile[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [inProgressPage, setInProgressPage] = useState(1);
   const [completedPage, setCompletedPage] = useState(1);
   const [previewFile, setPreviewFile] = useState<DBFile | null>(null);
@@ -212,12 +213,15 @@ const Files = () => {
   useEffect(() => {
     const fetchFiles = async () => {
       try {
+        setIsLoading(true);
         const response = await getFiles();
         const normalizedFiles = extractApiFiles(response as FilesApiResponse);
         console.log('Files fetched:', normalizedFiles);
         setFiles(normalizedFiles);
       } catch (error: unknown) {
         console.error('Error fetching files:', error);
+      } finally {
+        setIsLoading(false);
       }
     };
     fetchFiles(); 
@@ -302,8 +306,22 @@ const Files = () => {
     navigate('/files/upload');
   };
 
-  const handleEdit = (id) => {
-    navigate(`/files/review/${id}`);
+  const handleEdit = (file: DBFile) => {
+    console.log('handle edit for file:', file);
+    if (file.businessFileType === BusinessFileType.Catalog) {
+      console.log('navigate to catalog review');
+      navigate(`/files/review/catalog/${file.fileId}`);
+    } 
+    else if (file.businessFileType === BusinessFileType.SalesDrawing) {
+      console.log('navigate to sales drawing review');
+      navigate(`/files/review/sales-drawing/${file.fileId}`);
+    } 
+    else if (file.businessFileType === BusinessFileType.PriceList) {
+      console.log('navigate to price list review');
+      navigate(`/files/review/price-list/${file.fileId}`);
+    } else {
+      alert('Invalid file type');
+    }
   };
 
   const handleDelete = (file: DBFile) => {
@@ -476,7 +494,12 @@ const Files = () => {
 
             {/* Table Body */}
             <div className="files-table-body">
-              {inProgressUploads.length === 0 ? (
+              {isLoading ? (
+                <div className="loading-state">
+                  <div className="loading-spinner" />
+                  <p className="loading-state-text">Loading files…</p>
+                </div>
+              ) : inProgressUploads.length === 0 ? (
                 <div className="empty-state">
                   <p className="empty-state-text">No uploads in progress</p>
                 </div>
@@ -518,7 +541,7 @@ const Files = () => {
                     </div>
                     <div className="files-table-cell actions">
                       <div className="action-links-inline">
-                        <button className="action-link" onClick={() => handleEdit(upload.fileId)}>Edit</button>
+                        <button className="action-link" onClick={() => handleEdit(upload)}>Edit</button>
                         <span className="action-separator">|</span>
                         <button className="action-link" onClick={() => handleDelete(upload)}>Delete</button>
                       </div>

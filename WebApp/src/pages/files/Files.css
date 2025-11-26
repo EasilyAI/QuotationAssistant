@@ -499,6 +499,40 @@
   text-align: center;
 }
 
+/* Loading State */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  align-self: stretch;
+  min-height: 200px;
+  gap: 12px;
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 3px solid rgba(15, 23, 42, 0.15);
+  border-top-color: var(--color-primary);
+  animation: files-spin 0.7s linear infinite;
+}
+
+.loading-state-text {
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+@keyframes files-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Progress Bar */
 .progress-container {
   display: flex;

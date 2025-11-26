@@ -60,7 +60,7 @@ const FileUpload = () => {
           fileName: '',
           orderingNumber: '',
           manufacturer: '',
-          swaglokLink: '',
+          SwagelokLink: '',
           year,
           notes: '',
         };
@@ -249,6 +249,10 @@ const FileUpload = () => {
       // Step 0: Check if file already exists in S3
       const fileValidation = await validateFileDoesNotExist(normalizedFormData, fileType);
       if (!fileValidation.valid) {
+        console.warn('[FileUpload] Upload blocked because file already exists or backend validation failed', {
+          fileType,
+          error: fileValidation.error,
+        });
         setUploadError(fileValidation.error || 'File already exists');
         setIsUploading(false);
         return;
@@ -281,26 +285,53 @@ const FileUpload = () => {
         (status: string, info: any) => {
           console.log('Status update:', status, info);
           
-          // Update processing status message
-          const statusMessages: Record<string, string> = {
+          // Update processing status message based on file type
+          const catalogStatusMessages: Record<string, string> = {
             'textract_started': 'Starting document analysis...',
             'textract_processing': `Analyzing document. ${info.processingStage || ''}`,
             'textract_completed': 'Document analysis completed',
             'parsing_tables': `Extracting tables. ${info.processingStage || ''}`,
             'saving_products': `Saving products to database...`,
+            'pending_review': 'Processing completed!',
             'completed': 'Processing completed!'
           };
           
+          const priceListStatusMessages: Record<string, string> = {
+            'processing': 'Starting price list processing...',
+            'validating_schema': 'Validating file schema...',
+            'processing_rows': `Processing rows. ${info.processingStage || ''}`,
+            'saving_products': `Saving products to database...`,
+            'pending_review': 'Processing completed!',
+            'pending_review_with_errors': 'Processing completed with some validation errors',
+            'completed': 'Processing completed!'
+          };
+          
+          const statusMessages = fileType === BusinessFileType.PriceList 
+            ? priceListStatusMessages 
+            : catalogStatusMessages;
+          
           setProcessingStatus(statusMessages[status] || info.processingStage || 'Processing...');
           
-          // Update processing details
-          if (info.pagesCount || info.tablesCount || info.productsCount) {
-            setProcessingDetails({
-              pages: info.pagesCount,
-              tables: info.tablesCount,
-              tablesWithProducts: info.tablesWithProducts,
-              products: info.productsCount
-            });
+          // Update processing details based on file type
+          if (fileType === BusinessFileType.PriceList) {
+            if (info.productsCount || info.validProductsCount !== undefined) {
+              setProcessingDetails({
+                products: info.productsCount,
+                validProducts: info.validProductsCount,
+                invalidProducts: info.invalidProductsCount,
+                totalErrors: info.totalErrors,
+                totalWarnings: info.totalWarnings
+              });
+            }
+          } else {
+            if (info.pagesCount || info.tablesCount || info.productsCount) {
+              setProcessingDetails({
+                pages: info.pagesCount,
+                tables: info.tablesCount,
+                tablesWithProducts: info.tablesWithProducts,
+                products: info.productsCount
+              });
+            }
           }
         },
         60, // max attempts
@@ -310,9 +341,9 @@ const FileUpload = () => {
       console.log('Processing completed:', fileInfo);
       setIsProcessing(false);
 
-      // Step 3: Get the extracted products
+      // Step 3: Get the extracted products based on file type
       console.log('Fetching products...');
-      const productsData: FileProductsResponse = await getFileProducts(fileId);
+      const productsData: FileProductsResponse = await getFileProducts(fileId, fileType);
       console.log('Products fetched:', productsData);
 
       // Step 4: Show completion modal instead of navigating immediately
@@ -389,55 +420,112 @@ const FileUpload = () => {
 
     const { fileInfo, productsData } = completionData;
     const productsCount = productsData.count || fileInfo.productsCount || 0;
+    
+    // Catalog-specific stats
     const pagesCount = fileInfo.pagesCount || processingDetails?.pages || 0;
     const tablesCount = fileInfo.tablesCount || processingDetails?.tables || 0;
     const tablesWithProducts = fileInfo.tablesWithProducts || processingDetails?.tablesWithProducts || 0;
+    
+    // Price list-specific stats
+    const validProductsCount = fileInfo.validProductsCount || processingDetails?.validProducts || 0;
+    const invalidProductsCount = fileInfo.invalidProductsCount || processingDetails?.invalidProducts || 0;
+    const totalErrors = fileInfo.totalErrors || processingDetails?.totalErrors || 0;
+    const totalWarnings = fileInfo.totalWarnings || processingDetails?.totalWarnings || 0;
+    
+    const isPriceList = fileType === BusinessFileType.PriceList;
+    const hasErrors = invalidProductsCount > 0 || totalErrors > 0;
 
     return (
       <div className="completion-modal-overlay" onClick={handleSaveForLater}>
         <div className="completion-modal-content" onClick={(e) => e.stopPropagation()}>
           <div className="completion-modal-header">
             <div className="completion-modal-icon">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="12" cy="12" r="10" stroke="#22c55e" strokeWidth="2" fill="none"/>
-                <path d="M8 12L11 15L16 9" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
+              {hasErrors ? (
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" stroke="#f59e0b" strokeWidth="2" fill="none"/>
+                  <path d="M12 8V12M12 16H12.01" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              ) : (
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="10" stroke="#22c55e" strokeWidth="2" fill="none"/>
+                  <path d="M8 12L11 15L16 9" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
             </div>
-            <h2 className="completion-modal-title">Processing Complete!</h2>
+            <h2 className="completion-modal-title">
+              {hasErrors ? 'Processing Complete with Warnings' : 'Processing Complete!'}
+            </h2>
             <p className="completion-modal-subtitle">
-              Your file has been successfully processed and products have been saved.
+              {isPriceList 
+                ? (hasErrors 
+                    ? 'Your price list has been processed. Some rows have validation issues that need review.'
+                    : 'Your price list has been successfully processed and all products are valid.')
+                : 'Your file has been successfully processed and products have been saved.'}
             </p>
           </div>
 
           <div className="completion-modal-body">
             <div className="completion-stats">
-              <div className="completion-stat-item highlight">
-                <div className="completion-stat-value">{productsCount}</div>
-                <div className="completion-stat-label">Products Found</div>
-              </div>
-              {pagesCount > 0 && (
-                <div className="completion-stat-item">
-                  <div className="completion-stat-value">{pagesCount}</div>
-                  <div className="completion-stat-label">Pages Processed</div>
-                </div>
-              )}
-              {tablesCount > 0 && (
-                <div className="completion-stat-item">
-                  <div className="completion-stat-value">{tablesCount}</div>
-                  <div className="completion-stat-label">Tables Extracted</div>
-                </div>
-              )}
-              {tablesWithProducts > 0 && (
-                <div className="completion-stat-item">
-                  <div className="completion-stat-value">{tablesWithProducts}</div>
-                  <div className="completion-stat-label">Tables with Products</div>
-                </div>
+              {isPriceList ? (
+                // Price list stats
+                <>
+                  <div className="completion-stat-item highlight">
+                    <div className="completion-stat-value">{productsCount}</div>
+                    <div className="completion-stat-label">Total Products</div>
+                  </div>
+                  <div className="completion-stat-item" style={{ borderColor: '#22c55e' }}>
+                    <div className="completion-stat-value" style={{ color: '#22c55e' }}>{validProductsCount}</div>
+                    <div className="completion-stat-label">Valid Products</div>
+                  </div>
+                  {invalidProductsCount > 0 && (
+                    <div className="completion-stat-item" style={{ borderColor: '#ef4444' }}>
+                      <div className="completion-stat-value" style={{ color: '#ef4444' }}>{invalidProductsCount}</div>
+                      <div className="completion-stat-label">Invalid Products</div>
+                    </div>
+                  )}
+                  {totalWarnings > 0 && (
+                    <div className="completion-stat-item" style={{ borderColor: '#f59e0b' }}>
+                      <div className="completion-stat-value" style={{ color: '#f59e0b' }}>{totalWarnings}</div>
+                      <div className="completion-stat-label">Warnings</div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Catalog stats
+                <>
+                  <div className="completion-stat-item highlight">
+                    <div className="completion-stat-value">{productsCount}</div>
+                    <div className="completion-stat-label">Products Found</div>
+                  </div>
+                  {pagesCount > 0 && (
+                    <div className="completion-stat-item">
+                      <div className="completion-stat-value">{pagesCount}</div>
+                      <div className="completion-stat-label">Pages Processed</div>
+                    </div>
+                  )}
+                  {tablesCount > 0 && (
+                    <div className="completion-stat-item">
+                      <div className="completion-stat-value">{tablesCount}</div>
+                      <div className="completion-stat-label">Tables Extracted</div>
+                    </div>
+                  )}
+                  {tablesWithProducts > 0 && (
+                    <div className="completion-stat-item">
+                      <div className="completion-stat-value">{tablesWithProducts}</div>
+                      <div className="completion-stat-label">Tables with Products</div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
             <div className="completion-info">
               <p className="completion-info-text">
-                All products have been saved to the catalog. You can review them now or continue later.
+                {isPriceList 
+                  ? (hasErrors 
+                      ? 'Please review the products and fix any validation errors before finalizing.'
+                      : 'All products have been saved. You can review them now or continue later.')
+                  : 'All products have been saved to the catalog. You can review them now or continue later.'}
               </p>
             </div>
           </div>
@@ -590,10 +678,10 @@ const FileUpload = () => {
               <label className="form-label">Swaglok link</label>
               <input
                 type="url"
-                name="swaglokLink"
+                name="SwagelokLink"
                 className="form-input"
                 placeholder="Enter swaglok link"
-                value={(formData as SalesDrawingFormData).swaglokLink || ''}
+                value={(formData as SalesDrawingFormData).SwagelokLink || ''}
                 onChange={handleInputChange}
               />
             </div>
@@ -673,12 +761,13 @@ const FileUpload = () => {
                 The uploaded file must be an Excel (.xlsx, .xls) or CSV file with the following columns:
               </p>
               <ul className="schema-list">
-                <li><strong>Ordering Number</strong> - Product ordering/part number</li>
+                <li><strong>OrderingNumber</strong> - Product ordering/part number</li>
                 <li><strong>Description</strong> - Product description</li>
                 <li><strong>Price</strong> - Product price (numeric value)</li>
+                <li><strong>SwagelokLink</strong> - Product URL link (optional)</li>
               </ul>
               <p className="schema-note">
-                Additional columns are allowed but these three are mandatory for processing.
+                Additional columns are allowed but the first three are mandatory for processing. The SwagelokLink is optional.
               </p>
             </div>
           </>
@@ -851,9 +940,23 @@ const FileUpload = () => {
                     </div>
                     {processingDetails && (
                       <div style={{ fontSize: '13px', color: '#637887' }}>
-                        {processingDetails.pages && `${processingDetails.pages} pages`}
-                        {processingDetails.tables && ` • ${processingDetails.tables} tables`}
-                        {processingDetails.products && ` • ${processingDetails.products} products`}
+                        {fileType === BusinessFileType.PriceList ? (
+                          // Price list processing details
+                          <>
+                            {processingDetails.products !== undefined && `${processingDetails.products} products`}
+                            {processingDetails.validProducts !== undefined && ` • ${processingDetails.validProducts} valid`}
+                            {processingDetails.invalidProducts !== undefined && processingDetails.invalidProducts > 0 && (
+                              <span style={{ color: '#ef4444' }}> • {processingDetails.invalidProducts} invalid</span>
+                            )}
+                          </>
+                        ) : (
+                          // Catalog processing details
+                          <>
+                            {processingDetails.pages && `${processingDetails.pages} pages`}
+                            {processingDetails.tables && ` • ${processingDetails.tables} tables`}
+                            {processingDetails.products && ` • ${processingDetails.products} products`}
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
