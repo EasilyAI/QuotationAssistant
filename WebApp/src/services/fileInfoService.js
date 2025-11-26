@@ -151,7 +151,7 @@ export const getFileProducts = async (fileId, businessFileType = 'Catalog') => {
  * @param {string} fileId
  * @param {Array<object>} products
  */
-export const updateFileProducts = async (fileId, products) => {
+export const updateCatalogProducts = async (fileId, products) => {
   const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
     ? API_CONFIG.BASE_URL.slice(0, -1)
     : API_CONFIG.BASE_URL;
@@ -159,22 +159,66 @@ export const updateFileProducts = async (fileId, products) => {
     ? API_CONFIG.FILE_INFO_ENDPOINT
     : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
 
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/products`, {
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/catalog-products`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      // TODO: Add authentication header if needed
-      // 'Authorization': `Bearer ${getAuthToken()}`,
     },
     body: JSON.stringify({ products }),
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update products' }));
-    throw new Error(error.message || `Failed to update products: ${response.statusText}`);
+    const error = await response.json().catch(() => ({ message: 'Failed to update catalog products' }));
+    throw new Error(error.message || `Failed to update catalog products: ${response.statusText}`);
   }
 
   return response.json();
+};
+
+/**
+ * Persist reviewed price list products for a file
+ * @param {string} fileId
+ * @param {Array<object>} products
+ */
+export const updatePriceListProducts = async (fileId, products) => {
+  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
+    ? API_CONFIG.BASE_URL.slice(0, -1)
+    : API_CONFIG.BASE_URL;
+  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
+    ? API_CONFIG.FILE_INFO_ENDPOINT
+    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
+
+  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/price-list-products`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ products }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to update price list products' }));
+    throw new Error(error.message || `Failed to update price list products: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
+ * Persist reviewed products for a file (generic - detects type)
+ * @deprecated Use updateCatalogProducts or updatePriceListProducts instead
+ * @param {string} fileId
+ * @param {Array<object>} products
+ */
+export const updateFileProducts = async (fileId, products) => {
+  // For backward compatibility - try to detect type from products
+  // Catalog products have 'specs', price list products have 'price'
+  const isPriceList = products.length > 0 && 'price' in products[0];
+  
+  if (isPriceList) {
+    return updatePriceListProducts(fileId, products);
+  }
+  return updateCatalogProducts(fileId, products);
 };
 
 /**

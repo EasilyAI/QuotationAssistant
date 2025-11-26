@@ -179,6 +179,7 @@ def get_file_download_url(event, context):
 def assemble_chunked_products(items):
     """
     Assemble products from multiple DynamoDB chunks into a single list.
+    Adds chunk metadata to each product for safe updates.
     
     Args:
         items: List of DynamoDB items, each containing a chunk of products
@@ -196,11 +197,16 @@ def assemble_chunked_products(items):
         # Convert Decimal types to native Python types
         item_json = json.loads(json.dumps(item, default=str))
         products_in_item = item_json.get("products", [])
+        chunk_index = item_json.get("chunkIndex")
+
+        # Add chunk metadata to each product for tracking during updates
+        for product in products_in_item:
+            product["_chunkIndex"] = chunk_index
+            product["_fileId"] = item_json.get("fileId")
 
         all_products.extend(products_in_item)
         
         # Get metadata from chunk 0
-        chunk_index = item_json.get("chunkIndex")
         if chunk_index == 0 or chunk_index == "0":
             metadata = item_json
     
@@ -500,6 +506,194 @@ def update_catalog_products(event, context):
         }
 
 
+def update_price_list_products(event, context):
+    """
+    Update price list products for a file after review.
+    Handles the chunked structure of the price-list-products table.
+    """
+    print(f"[update_price_list_products] Starting request")
+
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        print(f"[update_price_list_products] Handling OPTIONS preflight request")
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+
+    path_params = event.get("pathParameters") or {}
+    file_id = path_params.get("fileId")
+    print(f"[update_price_list_products] Extracted fileId: {file_id}")
+
+    if not file_id:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        print("[update_price_list_products] ERROR: Invalid JSON body")
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON body"}),
+            "headers": get_cors_headers(),
+        }
+
+    products = body.get("products")
+    if not isinstance(products, list):
+        print("[update_price_list_products] ERROR: `products` payload missing or invalid")
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "`products` array is required"}),
+            "headers": get_cors_headers(),
+        }
+
+    products_count = len(products)
+    timestamp = int(time.time() * 1000)
+    iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+    
+    print(f"[update_price_list_products] Updating {products_count} products for file {file_id}")
+
+    price_list_table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+    files_table = dynamodb.Table(FILES_TABLE)
+    
+    try:
+        # Step 1: Load all existing chunks for this file
+        print(f"[update_price_list_products] Querying existing chunks for file {file_id}")
+        response = price_list_table.query(
+            KeyConditionExpression=Key("fileId").eq(file_id)
+        )
+        existing_chunks = response.get("Items", [])
+        
+        # Continue paginating if needed
+        while response.get("LastEvaluatedKey"):
+            response = price_list_table.query(
+                KeyConditionExpression=Key("fileId").eq(file_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            existing_chunks.extend(response.get("Items", []))
+        
+        if not existing_chunks:
+            print(f"[update_price_list_products] ERROR: No existing chunks found for file {file_id}")
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": f"No price list data found for file {file_id}"}),
+                "headers": get_cors_headers(),
+            }
+        
+        old_chunk_count = len(existing_chunks)
+        print(f"[update_price_list_products] Found {old_chunk_count} existing chunks")
+        
+        # Step 2: Get metadata from chunk 0
+        chunk_0 = next((c for c in existing_chunks if c.get("chunkIndex") == 0), None)
+        source_file = chunk_0.get("sourceFile", "") if chunk_0 else ""
+        created_at = chunk_0.get("createdAt", timestamp) if chunk_0 else timestamp
+        created_at_iso = chunk_0.get("createdAtIso", iso_timestamp) if chunk_0 else iso_timestamp
+        
+        # Step 3: Convert and re-chunk the updated products
+        # Remove chunk metadata added by GET endpoint (fields starting with _)
+        sanitized_products = convert_floats_to_decimal(products)
+        for product in sanitized_products:
+            product.pop("_chunkIndex", None)
+            product.pop("_fileId", None)
+        
+        # Import split function from process_upload_file
+        from src.process_upload_file import split_products_into_chunks
+        chunks = split_products_into_chunks(sanitized_products)
+        total_chunks = len(chunks)
+        
+        print(f"[update_price_list_products] Saving {total_chunks} new chunks (SAFE: save first, delete extras later)")
+        
+        # Step 4: SAVE NEW CHUNKS FIRST (overwriting existing ones)
+        # This ensures we don't lose data if timeout occurs
+        for chunk_idx, chunk_products in enumerate(chunks):
+            item = {
+                "fileId": file_id,
+                "chunkIndex": chunk_idx,
+                "products": chunk_products,
+                "productsInChunk": len(chunk_products),
+                "updatedAt": timestamp,
+                "updatedAtIso": iso_timestamp,
+            }
+            
+            # Add metadata to chunk 0
+            if chunk_idx == 0:
+                item["sourceFile"] = source_file
+                item["createdAt"] = created_at
+                item["createdAtIso"] = created_at_iso
+                item["totalProductsCount"] = len(sanitized_products)
+                item["totalChunks"] = total_chunks
+            
+            price_list_table.put_item(Item=item)
+            print(f"[update_price_list_products] Saved chunk {chunk_idx + 1}/{total_chunks}")
+        
+        # Step 5: DELETE EXTRA CHUNKS if new count < old count
+        # Only delete after all new chunks are saved successfully
+        if total_chunks < old_chunk_count:
+            extra_chunks_to_delete = old_chunk_count - total_chunks
+            print(f"[update_price_list_products] Deleting {extra_chunks_to_delete} extra old chunks (indices {total_chunks} to {old_chunk_count - 1})")
+            for chunk_idx in range(total_chunks, old_chunk_count):
+                price_list_table.delete_item(
+                    Key={
+                        "fileId": file_id,
+                        "chunkIndex": chunk_idx
+                    }
+                )
+                print(f"[update_price_list_products] Deleted old chunk {chunk_idx}")
+        else:
+            print(f"[update_price_list_products] No extra chunks to delete (new: {total_chunks}, old: {old_chunk_count})")
+        
+        # Step 6: Update FILES_TABLE
+        try:
+            valid_count = sum(1 for p in products if p.get("status") == "valid")
+            invalid_count = sum(1 for p in products if p.get("status") == "invalid")
+            
+            files_table.update_item(
+                Key={"fileId": file_id},
+                UpdateExpression="SET #productsCount = :count, #validProductsCount = :validCount, #invalidProductsCount = :invalidCount, #updatedAt = :updatedAt, #updatedAtIso = :updatedAtIso",
+                ExpressionAttributeNames={
+                    "#productsCount": "productsCount",
+                    "#validProductsCount": "validProductsCount",
+                    "#invalidProductsCount": "invalidProductsCount",
+                    "#updatedAt": "updatedAt",
+                    "#updatedAtIso": "updatedAtIso",
+                },
+                ExpressionAttributeValues={
+                    ":count": products_count,
+                    ":validCount": valid_count,
+                    ":invalidCount": invalid_count,
+                    ":updatedAt": timestamp,
+                    ":updatedAtIso": iso_timestamp,
+                },
+            )
+            print(f"[update_price_list_products] Successfully updated FILES_TABLE")
+        except Exception as files_error:
+            print(f"[update_price_list_products] WARNING: Failed to update FILES_TABLE: {files_error}")
+        
+        print(f"[update_price_list_products] Successfully updated {products_count} products")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Products updated successfully",
+                "productsCount": products_count,
+                "totalChunks": total_chunks,
+            }),
+            "headers": get_cors_headers(),
+        }
+
+    except Exception as error:
+        print(f"[update_price_list_products] ERROR: {error}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to update price list products"}),
+            "headers": get_cors_headers(),
+        }
 
 
 def check_file_exists(event, context):
@@ -948,12 +1142,13 @@ def check_existing_products(event, context):
     }
 
 
-def save_products(event, context):
+def save_products_from_catalog(event, context):
     """
-    Save products to the Products table.
+    Save products from catalog review to the Products table.
+    Uses pointer-based merging: adds catalog product pointer to existing product or creates new one.
     Products are keyed by orderingNumber.
     """
-    print(f"[save_products] Starting request")
+    print(f"[save_products_from_catalog] Starting request")
     
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
@@ -987,7 +1182,7 @@ def save_products(event, context):
             "headers": get_cors_headers(),
         }
     
-    print(f"[save_products] Saving {len(products)} products")
+    print(f"[save_products_from_catalog] Saving {len(products)} catalog products")
     
     products_table = dynamodb.Table(PRODUCTS_TABLE)
     timestamp = int(time.time() * 1000)
@@ -996,7 +1191,7 @@ def save_products(event, context):
     saved_count = 0
     errors = []
     
-    # Convert products to DynamoDB format and save
+    # Process each product
     for product in products:
         ordering_number = product.get("orderingNumber")
         if not ordering_number:
@@ -1008,47 +1203,78 @@ def save_products(event, context):
             if not product_category:
                 errors.append(f"Product {ordering_number} missing productCategory")
                 continue
-            metadata = product.get("metadata", {}) or {}
-            text_description = product.get("text_description", "")
-            product_price_key = product.get("productPriceKey") or ordering_number
-
-            # Prepare product item
-            product_item = {
-                "orderingNumber": ordering_number,
-                "productCategory": product_category,
-                "metadata": convert_floats_to_decimal(metadata),
-                "text_description": text_description,
-                "productPriceKey": product_price_key,
-                "updatedAt": timestamp,
-                "updatedAtIso": iso_timestamp,
-            }
             
-            # Check if product exists to preserve createdAt
-            try:
-                existing = products_table.get_item(Key={"orderingNumber": ordering_number})
-                if "Item" in existing:
-                    product_item["createdAt"] = existing["Item"].get("createdAt", timestamp)
-                    product_item["createdAtIso"] = existing["Item"].get("createdAtIso", iso_timestamp)
-                else:
-                    product_item["createdAt"] = timestamp
-                    product_item["createdAtIso"] = iso_timestamp
-            except Exception as e:
-                print(f"[save_products] WARNING: Could not check existing product {ordering_number}: {e}")
-                product_item["createdAt"] = timestamp
-                product_item["createdAtIso"] = iso_timestamp
+            new_metadata = product.get("metadata", {}) or {}
+            text_description = product.get("text_description", "")
+            
+            # Check if product exists
+            existing_response = products_table.get_item(Key={"orderingNumber": ordering_number})
+            
+            if "Item" in existing_response:
+                # Product exists - merge with existing
+                existing_item = existing_response["Item"]
+                existing_metadata = existing_item.get("metadata", {}) or {}
+                
+                # Get existing catalog products list
+                existing_catalog_products = existing_metadata.get("catalogProducts", [])
+                new_catalog_products = new_metadata.get("catalogProducts", [])
+                
+                # Merge catalog products (add new ones, avoiding duplicates by fileId)
+                merged_catalog_products = list(existing_catalog_products)
+                existing_file_ids = {cp.get("fileId") for cp in existing_catalog_products if isinstance(cp, dict)}
+                
+                for new_cp in new_catalog_products:
+                    if isinstance(new_cp, dict) and new_cp.get("fileId") not in existing_file_ids:
+                        merged_catalog_products.append(new_cp)
+                
+                # Keep existing price list entries and sales drawings
+                merged_metadata = {
+                    "catalogProducts": merged_catalog_products,
+                    "priceListEntries": existing_metadata.get("priceListEntries", []),
+                    "salesDrawings": existing_metadata.get("salesDrawings", []),
+                }
+                
+                # Prepare updated product item
+                product_item = {
+                    "orderingNumber": ordering_number,
+                    "productCategory": product_category,
+                    "metadata": convert_floats_to_decimal(merged_metadata),
+                    "text_description": text_description,
+                    "currentPrice": existing_item.get("currentPrice"),
+                    "currentPriceYear": existing_item.get("currentPriceYear"),
+                    "currentLink": existing_item.get("currentLink"),
+                    "createdAt": existing_item.get("createdAt", timestamp),
+                    "createdAtIso": existing_item.get("createdAtIso", iso_timestamp),
+                    "updatedAt": timestamp,
+                    "updatedAtIso": iso_timestamp,
+                }
+            else:
+                # New product - create with catalog pointer only
+                product_item = {
+                    "orderingNumber": ordering_number,
+                    "productCategory": product_category,
+                    "metadata": convert_floats_to_decimal(new_metadata),
+                    "text_description": text_description,
+                    "createdAt": timestamp,
+                    "createdAtIso": iso_timestamp,
+                    "updatedAt": timestamp,
+                    "updatedAtIso": iso_timestamp,
+                }
             
             # Save product
             products_table.put_item(Item=product_item)
             saved_count += 1
-            print(f"[save_products] Saved product: {ordering_number}")
+            print(f"[save_products_from_catalog] Saved product: {ordering_number}")
             
         except Exception as e:
             error_msg = f"Failed to save product {ordering_number}: {str(e)}"
             errors.append(error_msg)
-            print(f"[save_products] ERROR: {error_msg}")
+            print(f"[save_products_from_catalog] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
     
     if errors:
-        print(f"[save_products] Completed with {len(errors)} errors")
+        print(f"[save_products_from_catalog] Completed with {len(errors)} errors")
         return {
             "statusCode": 207,  # Multi-Status
             "body": json.dumps({
@@ -1059,7 +1285,385 @@ def save_products(event, context):
             "headers": get_cors_headers(),
         }
     
-    print(f"[save_products] Successfully saved {saved_count} products")
+    print(f"[save_products_from_catalog] Successfully saved {saved_count} products")
+    return {
+        "statusCode": 200,
+        "body": json.dumps({
+            "saved": saved_count,
+            "message": f"Successfully saved {saved_count} products"
+        }),
+        "headers": get_cors_headers(),
+    }
+
+
+def save_products_from_price_list(event, context):
+    """
+    Save products from price list review to the Products table.
+    Uses pointer-based merging: adds price list pointer to existing product or creates new one.
+    Backend queries price-list-products table to find chunks and resolve actual data.
+    Handles multiple price sources - keeps latest by year.
+    Products are keyed by orderingNumber.
+    """
+    print(f"[save_products_from_price_list] Starting request")
+    
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON body"}),
+            "headers": get_cors_headers(),
+        }
+    
+    products = body.get("products", [])
+    if not isinstance(products, list):
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "products must be an array"}),
+            "headers": get_cors_headers(),
+        }
+    
+    if not products:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "products array cannot be empty"}),
+            "headers": get_cors_headers(),
+        }
+    
+    print(f"[save_products_from_price_list] Saving {len(products)} price list products")
+    
+    products_table = dynamodb.Table(PRODUCTS_TABLE)
+    price_list_table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+    timestamp = int(time.time() * 1000)
+    iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+    
+    saved_count = 0
+    errors = []
+    items_to_write = []  # Collect items for batch writing
+    
+    # Group products by fileId to minimize queries
+    products_by_file = {}
+    for product in products:
+        pointer_data = product.get("priceListPointerData", {})
+        file_id = pointer_data.get("fileId")
+        if file_id:
+            if file_id not in products_by_file:
+                products_by_file[file_id] = []
+            products_by_file[file_id].append(product)
+    
+    # For each file, query all chunks and build an index
+    file_chunk_index = {}  # {fileId: {orderingNumber: {chunkIndex, price, description, link}}}
+    
+    for file_id in products_by_file.keys():
+        print(f"[save_products_from_price_list] Querying chunks for fileId: {file_id}")
+        try:
+            # Query all chunks for this file
+            response = price_list_table.query(
+                KeyConditionExpression=Key("fileId").eq(file_id)
+            )
+            chunks = response.get("Items", [])
+            
+            # Continue paginating if needed
+            while response.get("LastEvaluatedKey"):
+                response = price_list_table.query(
+                    KeyConditionExpression=Key("fileId").eq(file_id),
+                    ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                chunks.extend(response.get("Items", []))
+            
+            print(f"[save_products_from_price_list] Found {len(chunks)} chunks for file {file_id}")
+            
+            # Build index: orderingNumber -> {chunkIndex, product data}
+            file_chunk_index[file_id] = {}
+            for chunk in chunks:
+                chunk_index = chunk.get("chunkIndex")
+                chunk_products = chunk.get("products", [])
+                
+                for prod in chunk_products:
+                    ordering_num = prod.get("orderingNumber")
+                    if ordering_num:
+                        file_chunk_index[file_id][ordering_num] = {
+                            "chunkIndex": chunk_index,
+                            "price": prod.get("price"),
+                            "description": prod.get("description"),
+                            "link": prod.get("SwagelokLink"),
+                        }
+        except Exception as e:
+            print(f"[save_products_from_price_list] ERROR querying chunks for file {file_id}: {e}")
+            errors.append(f"Failed to query price list chunks for file {file_id}: {str(e)}")
+            continue
+    
+    # Step 1: Batch fetch all existing products (much faster than individual get_item calls)
+    print(f"[save_products_from_price_list] Fetching existing products in batches")
+    ordering_numbers = [p.get("orderingNumber") for p in products if p.get("orderingNumber")]
+    existing_products_map = {}  # {orderingNumber: existing_item}
+    
+    # Batch get existing products (max 100 per batch)
+    batch_get_size = 100
+    for i in range(0, len(ordering_numbers), batch_get_size):
+        batch_ordering_nums = ordering_numbers[i:i + batch_get_size]
+        keys_to_get = [{"orderingNumber": on} for on in batch_ordering_nums]
+        
+        try:
+            response = dynamodb.batch_get_item(
+                RequestItems={
+                    PRODUCTS_TABLE: {
+                        "Keys": keys_to_get
+                    }
+                }
+            )
+            
+            # Process responses
+            items = response.get("Responses", {}).get(PRODUCTS_TABLE, [])
+            for item in items:
+                existing_products_map[item["orderingNumber"]] = item
+            
+            # Handle unprocessed keys (retry once)
+            unprocessed = response.get("UnprocessedKeys", {})
+            if unprocessed and PRODUCTS_TABLE in unprocessed:
+                retry_response = dynamodb.batch_get_item(RequestItems={PRODUCTS_TABLE: unprocessed[PRODUCTS_TABLE]})
+                retry_items = retry_response.get("Responses", {}).get(PRODUCTS_TABLE, [])
+                for item in retry_items:
+                    existing_products_map[item["orderingNumber"]] = item
+            
+            if (i // batch_get_size) % 10 == 0:  # Log every 10 batches
+                print(f"[save_products_from_price_list] Fetched batch {i//batch_get_size + 1}/{(len(ordering_numbers) + batch_get_size - 1)//batch_get_size}")
+                
+        except Exception as e:
+            print(f"[save_products_from_price_list] ERROR in batch_get_item: {e}")
+            # Continue processing - missing products will be treated as new
+    
+    print(f"[save_products_from_price_list] Found {len(existing_products_map)} existing products, preparing items for batch write")
+    
+    # Step 2: Process each product and prepare items for batch write
+    for product in products:
+        ordering_number = product.get("orderingNumber")
+        if not ordering_number:
+            errors.append("Product missing orderingNumber")
+            continue
+        
+        try:
+            pointer_data = product.get("priceListPointerData")
+            if not pointer_data:
+                errors.append(f"Product {ordering_number} missing priceListPointerData")
+                continue
+            
+            file_id = pointer_data.get("fileId")
+            year = pointer_data.get("year")
+            added_at = pointer_data.get("addedAt")
+            added_at_iso = pointer_data.get("addedAtIso")
+            
+            # Look up chunk index and actual product data from our index
+            if file_id not in file_chunk_index or ordering_number not in file_chunk_index[file_id]:
+                errors.append(f"Product {ordering_number} not found in price list file {file_id}")
+                continue
+            
+            chunk_data = file_chunk_index[file_id][ordering_number]
+            chunk_index = chunk_data["chunkIndex"]
+            price = chunk_data["price"]
+            description = chunk_data["description"]
+            link = chunk_data["link"]
+            
+            # Create pointer (not full data)
+            new_pointer = {
+                "fileId": file_id,
+                "chunkIndex": chunk_index,
+                "year": year,
+                "addedAt": added_at,
+                "addedAtIso": added_at_iso,
+            }
+            
+            # Check if product exists in our fetched map
+            existing_item = existing_products_map.get(ordering_number)
+            
+            if existing_item:
+                # Product exists - merge with existing
+                existing_metadata = existing_item.get("metadata", {}) or {}
+                
+                # Get existing price list pointers
+                existing_pointers = existing_metadata.get("priceListPointers", [])
+                
+                # Add new pointer (avoiding duplicate by fileId)
+                merged_pointers = list(existing_pointers)
+                existing_file_ids = {p.get("fileId") for p in existing_pointers if isinstance(p, dict)}
+                
+                if file_id not in existing_file_ids:
+                    merged_pointers.append(new_pointer)
+                else:
+                    # Replace existing pointer from same file with updated one
+                    merged_pointers = [
+                        p for p in merged_pointers 
+                        if not isinstance(p, dict) or p.get("fileId") != file_id
+                    ]
+                    merged_pointers.append(new_pointer)
+                
+                # Sort pointers by year (latest first), handling missing years
+                def get_year_sort_key(pointer):
+                    if not isinstance(pointer, dict):
+                        return 0
+                    ptr_year = pointer.get("year")
+                    try:
+                        return int(ptr_year) if ptr_year else 0
+                    except (ValueError, TypeError):
+                        return 0
+                
+                merged_pointers.sort(key=get_year_sort_key, reverse=True)
+                
+                # Update denormalized fields from the latest (first) pointer
+                # Use the actual data we resolved from the chunk
+                latest_is_current = merged_pointers[0].get("fileId") == file_id if merged_pointers else False
+                
+                if latest_is_current:
+                    # The new pointer is the latest, use its data for denormalized fields
+                    current_price_val = price
+                    current_price_year_val = year
+                    current_price_file_id_val = file_id
+                    current_link_val = link
+                else:
+                    # Keep existing denormalized values (they're from a newer price list)
+                    current_price_val = existing_item.get("currentPrice")
+                    current_price_year_val = existing_item.get("currentPriceYear")
+                    current_price_file_id_val = existing_item.get("currentPriceFileId")
+                    current_link_val = existing_item.get("currentLink")
+                
+                # Merge metadata with pointers
+                merged_metadata = {
+                    "catalogProducts": existing_metadata.get("catalogProducts", []),
+                    "priceListPointers": merged_pointers,
+                    "salesDrawings": existing_metadata.get("salesDrawings", []),
+                }
+                
+                # Prepare updated product item
+                product_item = {
+                    "orderingNumber": ordering_number,
+                    "productCategory": existing_item.get("productCategory", ""),
+                    "metadata": convert_floats_to_decimal(merged_metadata),
+                    "text_description": existing_item.get("text_description", ""),
+                    "createdAt": existing_item.get("createdAt", timestamp),
+                    "createdAtIso": existing_item.get("createdAtIso", iso_timestamp),
+                    "updatedAt": timestamp,
+                    "updatedAtIso": iso_timestamp,
+                }
+                
+                # Add denormalized fields (cached for quick access)
+                if current_price_val is not None:
+                    product_item["currentPrice"] = convert_floats_to_decimal(current_price_val)
+                if current_price_year_val:
+                    product_item["currentPriceYear"] = current_price_year_val
+                if current_price_file_id_val:
+                    product_item["currentPriceFileId"] = current_price_file_id_val
+                if current_link_val:
+                    product_item["currentLink"] = current_link_val
+                    
+            else:
+                # New product - create with price list pointer only
+                # We don't have product category from price list, so we need to infer or leave empty
+                
+                product_item = {
+                    "orderingNumber": ordering_number,
+                    "productCategory": "",  # Will need to be filled in from catalog later
+                    "metadata": convert_floats_to_decimal({
+                        "priceListPointers": [new_pointer],
+                    }),
+                    "text_description": description or "",
+                    "createdAt": timestamp,
+                    "createdAtIso": iso_timestamp,
+                    "updatedAt": timestamp,
+                    "updatedAtIso": iso_timestamp,
+                }
+                
+                # Add denormalized fields (cached for quick access)
+                if price is not None:
+                    product_item["currentPrice"] = convert_floats_to_decimal(price)
+                if year:
+                    product_item["currentPriceYear"] = year
+                if file_id:
+                    product_item["currentPriceFileId"] = file_id
+                if link:
+                    product_item["currentLink"] = link
+            
+            # Add product to batch write queue
+            items_to_write.append(product_item)
+            
+        except Exception as e:
+            error_msg = f"Failed to prepare product {ordering_number}: {str(e)}"
+            errors.append(error_msg)
+            print(f"[save_products_from_price_list] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
+    
+    # Batch write all items (DynamoDB batch_write_item supports up to 25 items per batch)
+    print(f"[save_products_from_price_list] Writing {len(items_to_write)} items in batches of 25")
+    batch_size = 25
+    
+    for i in range(0, len(items_to_write), batch_size):
+        batch = items_to_write[i:i + batch_size]
+        batch_requests = [{"PutRequest": {"Item": item}} for item in batch]
+        
+        try:
+            response = dynamodb.batch_write_item(
+                RequestItems={
+                    PRODUCTS_TABLE: batch_requests
+                }
+            )
+            
+            # Handle unprocessed items (retry once)
+            unprocessed = response.get("UnprocessedItems", {})
+            if unprocessed and PRODUCTS_TABLE in unprocessed:
+                unprocessed_requests = unprocessed[PRODUCTS_TABLE]
+                print(f"[save_products_from_price_list] Retrying {len(unprocessed_requests)} unprocessed items")
+                
+                retry_response = dynamodb.batch_write_item(
+                    RequestItems={
+                        PRODUCTS_TABLE: unprocessed_requests
+                    }
+                )
+                
+                # Check if there are still unprocessed items after retry
+                still_unprocessed = retry_response.get("UnprocessedItems", {})
+                if still_unprocessed and PRODUCTS_TABLE in still_unprocessed:
+                    failed_count = len(still_unprocessed[PRODUCTS_TABLE])
+                    errors.append(f"Failed to write {failed_count} items after retry in batch {i//batch_size + 1}")
+                    print(f"[save_products_from_price_list] WARNING: {failed_count} items still unprocessed after retry")
+                else:
+                    saved_count += len(unprocessed_requests)
+            
+            # Count successfully written items (batch size minus any failures)
+            batch_saved = len(batch)
+            if unprocessed and PRODUCTS_TABLE in unprocessed:
+                batch_saved -= len(unprocessed[PRODUCTS_TABLE])
+            saved_count += batch_saved
+            
+            print(f"[save_products_from_price_list] Batch {i//batch_size + 1}/{(len(items_to_write) + batch_size - 1)//batch_size}: Saved {batch_saved}/{len(batch)} items")
+            
+        except Exception as e:
+            error_msg = f"Failed to write batch {i//batch_size + 1}: {str(e)}"
+            errors.append(error_msg)
+            print(f"[save_products_from_price_list] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
+    
+    if errors:
+        print(f"[save_products_from_price_list] Completed with {len(errors)} errors")
+        return {
+            "statusCode": 207,  # Multi-Status
+            "body": json.dumps({
+                "saved": saved_count,
+                "errors": errors,
+                "message": f"Saved {saved_count} products with {len(errors)} errors"
+            }),
+            "headers": get_cors_headers(),
+        }
+    
+    print(f"[save_products_from_price_list] Successfully saved {saved_count} products")
     return {
         "statusCode": 200,
         "body": json.dumps({

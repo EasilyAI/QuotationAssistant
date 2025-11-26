@@ -199,6 +199,7 @@ const Files = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<string | null>(null);
   const [files, setFiles] = useState<DBFile[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [inProgressPage, setInProgressPage] = useState(1);
   const [completedPage, setCompletedPage] = useState(1);
   const [previewFile, setPreviewFile] = useState<DBFile | null>(null);
@@ -212,12 +213,15 @@ const Files = () => {
   useEffect(() => {
     const fetchFiles = async () => {
       try {
+        setIsLoading(true);
         const response = await getFiles();
         const normalizedFiles = extractApiFiles(response as FilesApiResponse);
         console.log('Files fetched:', normalizedFiles);
         setFiles(normalizedFiles);
       } catch (error: unknown) {
         console.error('Error fetching files:', error);
+      } finally {
+        setIsLoading(false);
       }
     };
     fetchFiles(); 
@@ -490,7 +494,12 @@ const Files = () => {
 
             {/* Table Body */}
             <div className="files-table-body">
-              {inProgressUploads.length === 0 ? (
+              {isLoading ? (
+                <div className="loading-state">
+                  <div className="loading-spinner" />
+                  <p className="loading-state-text">Loading files…</p>
+                </div>
+              ) : inProgressUploads.length === 0 ? (
                 <div className="empty-state">
                   <p className="empty-state-text">No uploads in progress</p>
                 </div>

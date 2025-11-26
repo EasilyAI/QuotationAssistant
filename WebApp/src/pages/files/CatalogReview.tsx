@@ -8,11 +8,11 @@ import { Product, ProductCategory } from '../../types/products';
 import {
   getFileDownloadUrl,
   getCatalogProducts,
-  updateFileProducts,
+  updateCatalogProducts,
   getFileInfo,
   completeFileReview,
 } from '../../services/fileInfoService';
-import { checkExistingProducts, saveProducts } from '../../services/productsService';
+import { checkExistingProducts, saveProductsFromCatalog } from '../../services/productsService';
 
 import './CatalogReview.css';
 
@@ -401,7 +401,7 @@ const CatalogReview = () => {
     setSaveSuccess(null);
     try {
       const payload = buildPersistableProducts(products);
-      await updateFileProducts(fileId, payload);
+      await updateCatalogProducts(fileId, payload);
       setLastSavedSnapshot(JSON.stringify(payload));
       setProducts((prev) =>
         prev.map((product) => ({
@@ -576,24 +576,27 @@ const CatalogReview = () => {
         orderingNumber: catalogProduct.orderingNumber,
         productCategory,
         metadata: {
-          sourceFileId: fileId,
-          sourceFileKey: fileKey ?? undefined,
-          sourceFileName: fileName,
-          catalogProductId: catalogProduct.id,
-          catalogProductTableIndex: catalogProduct.tindex,
-          catalogProductSnapshot: {
-            id: catalogProduct.id,
-            orderingNumber: catalogProduct.orderingNumber,
-            description: catalogProduct.description,
-            manualInput: catalogProduct.manualInput,
-            specs: catalogProduct.specs,
-            location: catalogProduct.location,
-            status: catalogProduct.status,
-            tindex: catalogProduct.tindex,
-          },
+          catalogProducts: [
+            {
+              fileId,
+              fileKey: fileKey ?? undefined,
+              fileName,
+              productId: catalogProduct.id,
+              tableIndex: catalogProduct.tindex,
+              snapshot: {
+                id: catalogProduct.id,
+                orderingNumber: catalogProduct.orderingNumber,
+                description: catalogProduct.description,
+                manualInput: catalogProduct.manualInput,
+                specs: catalogProduct.specs,
+                location: catalogProduct.location,
+                status: catalogProduct.status,
+                tindex: catalogProduct.tindex,
+              },
+            },
+          ],
         },
         text_description: buildProductTextDescription(catalogProduct),
-        productPriceKey: catalogProduct.orderingNumber,
       };
     },
     [buildProductTextDescription],
@@ -707,7 +710,7 @@ const CatalogReview = () => {
           ),
         );
 
-        await saveProducts(productsToSave);
+        await saveProductsFromCatalog(productsToSave);
 
         await completeFileReview(fileId);
 
@@ -777,7 +780,7 @@ const CatalogReview = () => {
         );
       });
 
-      await saveProducts(productsToSave);
+      await saveProductsFromCatalog(productsToSave);
       await completeFileReview(fileId);
       setShowConsolidationDialog(false);
       setConsolidationConflicts([]);

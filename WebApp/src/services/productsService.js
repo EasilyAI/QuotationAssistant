@@ -30,14 +30,15 @@ export const checkExistingProducts = async (orderingNumbers) => {
 };
 
 /**
- * Save products to the products table
- * @param {Array<Object>} products - Array of products to save
+ * Save catalog products to the products table
+ * This function is specifically for saving products extracted from catalog files
+ * @param {Array<Object>} products - Array of products from catalog review to save
  * @returns {Promise<Object>} Save result
  */
-export const saveProducts = async (products) => {
+export const saveProductsFromCatalog = async (products) => {
   const baseUrl = getBaseUrl();
 
-  const response = await fetch(`${baseUrl}/api/products`, {
+  const response = await fetch(`${baseUrl}/api/products/from-catalog`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -46,8 +47,33 @@ export const saveProducts = async (products) => {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to save products' }));
-    throw new Error(error.message || `Failed to save products: ${response.statusText}`);
+    const error = await response.json().catch(() => ({ message: 'Failed to save products from catalog' }));
+    throw new Error(error.message || `Failed to save products from catalog: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
+ * Save price list products to the products table
+ * This function is specifically for saving products from price list files
+ * @param {Array<Object>} products - Array of products from price list review to save
+ * @returns {Promise<Object>} Save result
+ */
+export const saveProductsFromPriceList = async (products) => {
+  const baseUrl = getBaseUrl();
+
+  const response = await fetch(`${baseUrl}/api/products/from-price-list`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ products }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to save products from price list' }));
+    throw new Error(error.message || `Failed to save products from price list: ${response.statusText}`);
   }
 
   return response.json();

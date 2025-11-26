@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useSearchParams, useParams } from 'react-router-dom';
-import { getFileInfo, getPriceListProducts, updateFileProducts, completeFileReview } from '../../services/fileInfoService';
+import { getFileInfo, getPriceListProducts, updatePriceListProducts, completeFileReview } from '../../services/fileInfoService';
+import { saveProductsFromPriceList } from '../../services/productsService';
 import './PriceListReview.css';
 
 const PriceListReview = () => {
@@ -17,6 +18,8 @@ const PriceListReview = () => {
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
   const [error, setError] = useState(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -190,7 +193,7 @@ const PriceListReview = () => {
         })),
       );
 
-      await updateFileProducts(fileId, productsToSave);
+      await updatePriceListProducts(fileId, productsToSave);
       
       // Update original products to match saved state
       setOriginalProducts(JSON.parse(JSON.stringify(productsToSave)));
@@ -207,12 +210,19 @@ const PriceListReview = () => {
     }
   };
 
-  const handleComplete = async () => {
+  const handleCompleteClick = () => {
+    // Show confirmation dialog
+    setShowCompleteConfirm(true);
+  };
+
+  const handleConfirmComplete = async () => {
+    setShowCompleteConfirm(false);
+    
     try {
-      setIsSaving(true);
+      setIsCompleting(true);
       setError(null);
 
-      // First save any changes, normalizing SwagelokLink field
+      // First save any changes to the file's price list products, normalizing SwagelokLink field
       const productsToSave = products.map(p => {
         const { _modified, _new, ...productData } = p;
 
@@ -233,19 +243,50 @@ const PriceListReview = () => {
           SwagelokLink: normalizedLink,
         };
       });
-      await updateFileProducts(fileId, productsToSave);
+      
+      // Only update if there were changes
+      if (stats.modified > 0) {
+        await updatePriceListProducts(fileId, productsToSave);
+      }
 
-      // Then mark as complete
+      // Transform price list products to Products table format
+      // Send minimal data - backend will find chunks and resolve actual data
+      const productsForProductsTable = productsToSave
+        .filter(p => p.orderingNumber && p.orderingNumber.trim()) // Only products with ordering numbers
+        .map(priceListProduct => {
+          const year = fileInfo?.year || new Date().getFullYear().toString();
+          
+          return {
+            orderingNumber: priceListProduct.orderingNumber.trim(),
+            priceListPointerData: {
+              fileId: fileId,
+              year: year,
+              addedAt: Date.now(),
+              addedAtIso: new Date().toISOString(),
+            },
+          };
+        });
+
+      console.log(`[PriceListReview] Saving ${productsForProductsTable.length} products to Products table`);
+      
+      // Save to Products table (will upsert with price list pointers)
+      await saveProductsFromPriceList(productsForProductsTable);
+
+      // Then mark file as complete
       await completeFileReview(fileId);
       
-      console.log('[PriceListReview] Review completed');
+      console.log('[PriceListReview] Review completed successfully');
       navigate('/files');
     } catch (err) {
       console.error('[PriceListReview] Error completing review:', err);
       setError(err.message || 'Failed to complete review');
     } finally {
-      setIsSaving(false);
+      setIsCompleting(false);
     }
+  };
+
+  const handleCancelComplete = () => {
+    setShowCompleteConfirm(false);
   };
 
   const handleCancel = () => {
@@ -335,8 +376,8 @@ const PriceListReview = () => {
             </button>
             <button 
               className="btn-primary" 
-              onClick={handleComplete}
-              disabled={isSaving || stats.invalid > 0}
+              onClick={handleCompleteClick}
+              disabled={isSaving || isCompleting || stats.invalid > 0}
             >
               Complete Review
             </button>
@@ -522,6 +563,40 @@ const PriceListReview = () => {
             + Add New Product
           </button>
         </div>
+
+        {/* Confirmation Modal */}
+        {showCompleteConfirm && (
+          <div className="modal-overlay">
+            <div className="modal-content">
+              <h2>Complete Review?</h2>
+              <p>
+                This will save {products.filter(p => p.orderingNumber && p.orderingNumber.trim()).length} products 
+                to the Products table. This process may take a few minutes.
+              </p>
+              <p>Are you sure you want to continue?</p>
+              <div className="modal-actions">
+                <button className="btn-secondary" onClick={handleCancelComplete}>
+                  Cancel
+                </button>
+                <button className="btn-primary" onClick={handleConfirmComplete}>
+                  Yes, Complete Review
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Loading Overlay */}
+        {isCompleting && (
+          <div className="modal-overlay">
+            <div className="modal-content loading-modal">
+              <div className="loading-spinner"></div>
+              <h2>Processing Review...</h2>
+              <p>Saving products to the database. This may take a few minutes.</p>
+              <p className="loading-detail">Please do not close this window.</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -159,12 +159,21 @@ functions:
           path: /api/files/{fileId}/price-list-products
           method: get
 
-  # HTTP API for UI -> update products after review
-  updateFileProducts:
+  # HTTP API for UI -> update catalog products after review
+  updateCatalogProducts:
     handler: src/get_files.update_catalog_products
     events:
       - httpApi:
-          path: /api/files/{fileId}/products
+          path: /api/files/{fileId}/catalog-products
+          method: put
+
+  # HTTP API for UI -> update price list products after review
+  updatePriceListProducts:
+    handler: src/get_files.update_price_list_products
+    timeout: 25  # Extended timeout for large price list updates (5558 products)
+    events:
+      - httpApi:
+          path: /api/files/{fileId}/price-list-products
           method: put
 
   # HTTP API for UI -> check if a file already exists
@@ -191,12 +200,21 @@ functions:
           path: /api/products/check-existing
           method: post
 
-  # HTTP API for UI -> save products to products table
-  saveProducts:
-    handler: src/get_files.save_products
+  # HTTP API for UI -> save products from catalog to products table
+  saveProductsFromCatalog:
+    handler: src/get_files.save_products_from_catalog
     events:
       - httpApi:
-          path: /api/products
+          path: /api/products/from-catalog
+          method: post
+
+  # HTTP API for UI -> save products from price list to products table
+  saveProductsFromPriceList:
+    handler: src/get_files.save_products_from_price_list
+    timeout: 120  # Extended timeout for saving thousands of products with batch writes
+    events:
+      - httpApi:
+          path: /api/products/from-price-list
           method: post
 
   getProduct:
