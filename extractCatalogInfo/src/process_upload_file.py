@@ -801,6 +801,7 @@ from utils.textractParser import (
 )
 from decimal import Decimal
 
+
 def process_uploaded_file(event, context):
     """
     Process uploaded PDF file through AWS Textract to extract catalog product tables.
@@ -820,176 +821,198 @@ def process_uploaded_file(event, context):
     11. Save products to temp table
     12. Update status: completed with full metadata
     """
+    
+    # Check if this is a mid-process event (from the body)
+    body = event.get('body')
     file_id = None
     s3_key = None
     
-    try:
-        print(f"[process_uploaded_file] Starting file processing")
-        print(f"[process_uploaded_file] Event: {json.dumps(event)}")
-        
-        # Step 1: Parse S3 key
-        s3_key = parse_s3_key(event)
-        print(f"[process_uploaded_file] Parsed S3 key: {s3_key}")
-        
-        # Step 2: Filter - Only process PDF files, skip JSON results
-        if s3_key.endswith('.json'):
-            print(f"[process_uploaded_file] Skipping JSON file: {s3_key}")
-            return {
-                "statusCode": 200,
-                "body": json.dumps({"message": "Skipped JSON file"}),
-            }
-        
-        # Step 3: Get file ID from S3 object metadata
+    if body:
         try:
-            s3_response = s3_client.head_object(Bucket=BUCKET, Key=s3_key)
-            metadata = s3_response.get('Metadata', {})
-            print(f"[process_uploaded_file] S3 head object response metadata: {json.dumps(metadata)}")
-
-            file_id = metadata.get('file-id')
-            file_type = metadata.get('file-type')
-    
-        except Exception as e:
-            print(f"[process_uploaded_file] ERROR: Failed to get S3 object metadata: {e}")
-            return {
-                "statusCode": 500,
-                "body": json.dumps({"error": "Failed to get S3 object metadata"}),
-            }
-
-        if not file_id or not file_type:       
-            print(f"[process_uploaded_file] ERROR: No file ID or file type found")
-            return {
-                "statusCode": 500,
-                "body": json.dumps({"error": "No file ID or file type found"}),
-            }
-
-        if file_type == 'Price List':
-            result = process_price_list(file_id, s3_key)
-            return {
-                "statusCode": 200 if result['success'] else 500,
-                "body": json.dumps(result),
-            }
-
-        elif file_type == 'Sales Drawing':
-            result = process_sales_drawing(file_id, s3_key)
-            return {
-                "statusCode": 200,
-                "body": json.dumps(result),
-            }
-
-        # Step 2: Update status - Textract started
-        update_file_status(
-            file_id=file_id,
-            status="textract_started",
-            processingStage="Starting Textract analysis",
-            s3Key=s3_key
-        )
+            body_data = json.loads(body) if isinstance(body, str) else body
+            start_from_mid_process = body_data.get('startFromMidProcess')
+            if start_from_mid_process:
+                s3_key = body_data.get('s3Key')
+                file_id = body_data.get('fileId')
+                textract_results_key = body_data.get('textractResultsKey')
+                print(f"[process_uploaded_file] Mid-process event - s3Key: {s3_key}, fileId: {file_id}, textractResultsKey: {textract_results_key}")
         
-        # Step 3: Start Textract job
-        print(f"[process_uploaded_file] Starting Textract job for bucket={BUCKET}, key={s3_key}")
-        job_id = start_job(BUCKET, s3_key, features=['TABLES'], region=AWS_REGION)
-        print(f"[process_uploaded_file] Textract job started with JobId: {job_id}")
-        
-        update_file_status(
-            file_id=file_id,
-            status="textract_processing",
-            processingStage="Textract analysis in progress",
-            textractJobId=job_id
-        )
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"[process_uploaded_file] No body, full process event: {event}")
 
-        # Step 4: Wait for job completion with polling
-        max_attempts = 60  # Increased for production (60 attempts * 2 seconds = 2 minutes max)
-        attempt = 0
-        status = is_job_complete(job_id, region=AWS_REGION)
-        print(f"[process_uploaded_file] Initial job status: {status}")
+    try:
+        if start_from_mid_process and textract_results_key:
+            textract_results = s3_client.get_object(Bucket=BUCKET, Key=textract_results_key)
+            results_pages = json.loads(textract_results['Body'].read())
+            print(f"[process_uploaded_file] Retrieved Textract results from S3: {textract_results_key}")
         
-        while status != "SUCCEEDED" and attempt < max_attempts:
-            if status == "FAILED":
-                print(f"[process_uploaded_file] ERROR: Textract job failed after {attempt} attempts")
+        else:
+            print(f"[process_uploaded_file] Starting file processing")
+            print(f"[process_uploaded_file] Event: {json.dumps(event)}")
+            
+            # Step 1: Parse S3 key
+            s3_key = parse_s3_key(event)
+            print(f"[process_uploaded_file] Parsed S3 key: {s3_key}")
+            
+            # Step 2: Filter - Only process PDF files, skip JSON results
+            if s3_key.endswith('.json'):
+                print(f"[process_uploaded_file] Skipping JSON file: {s3_key}")
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({"message": "Skipped JSON file"}),
+                }
+            
+            # Step 3: Get file ID from S3 object metadata
+            try:
+                s3_response = s3_client.head_object(Bucket=BUCKET, Key=s3_key)
+                metadata = s3_response.get('Metadata', {})
+                print(f"[process_uploaded_file] S3 head object response metadata: {json.dumps(metadata)}")
+
+                file_id = metadata.get('file-id')
+                file_type = metadata.get('file-type')
+        
+            except Exception as e:
+                print(f"[process_uploaded_file] ERROR: Failed to get S3 object metadata: {e}")
+                return {
+                    "statusCode": 500,
+                    "body": json.dumps({"error": "Failed to get S3 object metadata"}),
+                }
+
+            if not file_id or not file_type:       
+                print(f"[process_uploaded_file] ERROR: No file ID or file type found")
+                return {
+                    "statusCode": 500,
+                    "body": json.dumps({"error": "No file ID or file type found"}),
+                }
+
+            if file_type == 'Price List':
+                result = process_price_list(file_id, s3_key)
+                return {
+                    "statusCode": 200 if result['success'] else 500,
+                    "body": json.dumps(result),
+                }
+
+            elif file_type == 'Sales Drawing':
+                result = process_sales_drawing(file_id, s3_key)
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps(result),
+                }
+
+            # Step 2: Update status - Textract started
+            update_file_status(
+                file_id=file_id,
+                status="textract_started",
+                processingStage="Starting Textract analysis",
+                s3Key=s3_key
+            )
+            
+            # Step 3: Start Textract job
+            print(f"[process_uploaded_file] Starting Textract job for bucket={BUCKET}, key={s3_key}")
+            job_id = start_job(BUCKET, s3_key, features=['TABLES'], region=AWS_REGION)
+            print(f"[process_uploaded_file] Textract job started with JobId: {job_id}")
+            
+            update_file_status(
+                file_id=file_id,
+                status="textract_processing",
+                processingStage="Textract analysis in progress",
+                textractJobId=job_id
+            )
+
+            # Step 4: Wait for job completion with polling
+            max_attempts = 60  # Increased for production (60 attempts * 2 seconds = 2 minutes max)
+            attempt = 0
+            status = is_job_complete(job_id, region=AWS_REGION)
+            print(f"[process_uploaded_file] Initial job status: {status}")
+            
+            while status != "SUCCEEDED" and attempt < max_attempts:
+                if status == "FAILED":
+                    print(f"[process_uploaded_file] ERROR: Textract job failed after {attempt} attempts")
+                    update_file_status(
+                        file_id=file_id,
+                        status="failed",
+                        processingStage="Textract analysis failed",
+                        error="Textract job failed"
+                    )
+                    return {
+                        "statusCode": 500,
+                        "body": json.dumps({"error": "Textract job failed", "fileId": file_id}),
+                    }
+                
+                # Update status every 5 attempts (every 10 seconds)
+                if attempt > 0 and attempt % 5 == 0:
+                    update_file_status(
+                        file_id=file_id,
+                        status="textract_processing",
+                        processingStage=f"Textract analysis in progress (attempt {attempt}/{max_attempts})"
+                    )
+                
+                print(f"[process_uploaded_file] Waiting for job completion (attempt {attempt + 1}/{max_attempts})...")
+                time.sleep(2)
+                status = is_job_complete(job_id, region=AWS_REGION)
+                print(f"[process_uploaded_file] Job status: {status}")
+                attempt += 1
+
+            if status != "SUCCEEDED":
+                print(f"[process_uploaded_file] ERROR: Job timed out after {max_attempts} attempts")
                 update_file_status(
                     file_id=file_id,
                     status="failed",
-                    processingStage="Textract analysis failed",
-                    error="Textract job failed"
+                    processingStage="Textract analysis timed out",
+                    error=f"Job timed out after {max_attempts} attempts"
                 )
                 return {
                     "statusCode": 500,
-                    "body": json.dumps({"error": "Textract job failed", "fileId": file_id}),
+                    "body": json.dumps({"error": "Job timed out", "fileId": file_id}),
                 }
-            
-            # Update status every 5 attempts (every 10 seconds)
-            if attempt > 0 and attempt % 5 == 0:
-                update_file_status(
-                    file_id=file_id,
-                    status="textract_processing",
-                    processingStage=f"Textract analysis in progress (attempt {attempt}/{max_attempts})"
-                )
-            
-            print(f"[process_uploaded_file] Waiting for job completion (attempt {attempt + 1}/{max_attempts})...")
-            time.sleep(2)
-            status = is_job_complete(job_id, region=AWS_REGION)
-            print(f"[process_uploaded_file] Job status: {status}")
-            attempt += 1
 
-        if status != "SUCCEEDED":
-            print(f"[process_uploaded_file] ERROR: Job timed out after {max_attempts} attempts")
+            print(f"[process_uploaded_file] Textract job completed successfully")
+            
+            # Step 5: Update status - Textract completed
             update_file_status(
                 file_id=file_id,
-                status="failed",
-                processingStage="Textract analysis timed out",
-                error=f"Job timed out after {max_attempts} attempts"
+                status="textract_completed",
+                processingStage="Textract analysis completed, retrieving results"
             )
-            return {
-                "statusCode": 500,
-                "body": json.dumps({"error": "Job timed out", "fileId": file_id}),
-            }
+            
+            # Step 6: Retrieve Textract results
+            print(f"[process_uploaded_file] Retrieving Textract results...")
+            results_pages = get_job_results(job_id, region=AWS_REGION)
+            pages_count = len(results_pages)
+            print(f"[process_uploaded_file] Retrieved {pages_count} result pages from Textract")
 
-        print(f"[process_uploaded_file] Textract job completed successfully")
-        
-        # Step 5: Update status - Textract completed
-        update_file_status(
-            file_id=file_id,
-            status="textract_completed",
-            processingStage="Textract analysis completed, retrieving results"
-        )
-        
-        # Step 6: Retrieve Textract results
-        print(f"[process_uploaded_file] Retrieving Textract results...")
-        results_pages = get_job_results(job_id, region=AWS_REGION)
-        pages_count = len(results_pages)
-        print(f"[process_uploaded_file] Retrieved {pages_count} result pages from Textract")
+            # Step 7: Save Textract results to S3 as JSON
+            # Format: uploads/{file_name_no_extension}_textract_results.json
+            # Example: uploads/ms-02-89.pdf -> uploads/ms-02-89_textract_results.json
+            base_name = s3_key.rsplit('.', 1)[0]  # Remove extension
+            textract_results_key = f"{base_name}_textract_results.json"
+            print(f"[process_uploaded_file] Saving Textract results to S3: bucket={BUCKET}, key={textract_results_key}")
+            
+            try:
+                s3_client.put_object(
+                    Bucket=BUCKET,
+                    Key=textract_results_key,
+                    Body=json.dumps(results_pages, indent=2),
+                    ContentType="application/json",
+                    Metadata={
+                        "description": "AWS Textract analysis results",
+                        "original-file": s3_key,
+                        "job-id": job_id
+                    }
+                )
+                print(f"[process_uploaded_file] Successfully saved Textract results to S3")
+            except Exception as e:
+                print(f"[process_uploaded_file] WARNING: Failed to save Textract results to S3: {e}")
 
-        # Step 7: Save Textract results to S3 as JSON
-        # Format: uploads/{file_name_no_extension}_textract_results.json
-        # Example: uploads/ms-02-89.pdf -> uploads/ms-02-89_textract_results.json
-        base_name = s3_key.rsplit('.', 1)[0]  # Remove extension
-        textract_results_key = f"{base_name}_textract_results.json"
-        print(f"[process_uploaded_file] Saving Textract results to S3: bucket={BUCKET}, key={textract_results_key}")
-        
-        try:
-            s3_client.put_object(
-                Bucket=BUCKET,
-                Key=textract_results_key,
-                Body=json.dumps(results_pages, indent=2),
-                ContentType="application/json",
-                Metadata={
-                    "description": "AWS Textract analysis results",
-                    "original-file": s3_key,
-                    "job-id": job_id
-                }
+            # Step 8: Update status - Parsing tables
+            update_file_status(
+                file_id=file_id,
+                status="parsing_tables",
+                processingStage="Parsing tables from Textract results",
+                pagesCount=pages_count,
+                textractResultsKey=textract_results_key
             )
-            print(f"[process_uploaded_file] Successfully saved Textract results to S3")
-        except Exception as e:
-            print(f"[process_uploaded_file] WARNING: Failed to save Textract results to S3: {e}")
-
-        # Step 8: Update status - Parsing tables
-        update_file_status(
-            file_id=file_id,
-            status="parsing_tables",
-            processingStage="Parsing tables from Textract results",
-            pagesCount=pages_count,
-            textractResultsKey=textract_results_key
-        )
-
+        
         # Step 9: Parse blocks from Textract results
         print(f"[process_uploaded_file] Parsing blocks from Textract results...")
         all_blocks = convert_pages_to_blocks(results_pages)
