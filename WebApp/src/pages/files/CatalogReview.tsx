@@ -688,13 +688,19 @@ const CatalogReview = () => {
         for (const orderingNumber of orderingNumbers) {
           const existing = existingProducts[orderingNumber];
           if (existing) {
-            const newProduct = productsToFinalize.find((p) => p.orderingNumber === orderingNumber);
-            if (newProduct) {
-              conflicts.push({
-                orderingNumber,
-                existing,
-                new: newProduct,
-              });
+            // Only create a conflict if the existing product has catalog data
+            // If it only has price list data, allow the catalog to be added without conflict
+            const hasCatalogData = existing.catalogProducts && existing.catalogProducts.length > 0;
+            
+            if (hasCatalogData) {
+              const newProduct = productsToFinalize.find((p) => p.orderingNumber === orderingNumber);
+              if (newProduct) {
+                conflicts.push({
+                  orderingNumber,
+                  existing,
+                  new: newProduct,
+                });
+              }
             }
           }
         }

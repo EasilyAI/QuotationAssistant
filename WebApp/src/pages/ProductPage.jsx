@@ -65,17 +65,28 @@ const buildProductDetailsFromRecord = (record, specs) => {
   const priceYear = currentPrice.year || null;
   const swagelokLink = currentPrice.SwagelokLink || null;
 
+  // Extract review status from catalog product
+  const isReviewed = firstCatalogProduct.status === 'reviewed' || firstCatalogProduct.isReviewed === true;
+
+  // Separate descriptions
+  const catalogDescription = firstCatalogProduct.description || null;
+  const priceListDescription = currentPrice.description || null;
+  const manualInput = firstCatalogProduct.manualInput || null;
+
   return {
     orderingNo: record.orderingNumber || '',
     productName:
-      firstCatalogProduct.manualInput ||
-      firstCatalogProduct.description ||
-      currentPrice.description ||
+      manualInput ||
+      catalogDescription ||
+      priceListDescription ||
       record.orderingNumber ||
       'Product',
     type: record.productCategory || 'Unknown',
     manufacturer: firstCatalogProduct._fileName || 'Unknown Source',
-    description: firstCatalogProduct.description || currentPrice.description || 'Product details not available.',
+    catalogDescription: catalogDescription,
+    priceListDescription: priceListDescription,
+    manualInput: manualInput,
+    isReviewed: isReviewed,
     specifications: derivedSpecs,
     price: price,
     priceYear: priceYear,
@@ -96,7 +107,10 @@ const buildProductDetailsFromMock = (mock, specs) => {
     productName: mock.productName,
     type: mock.type,
     manufacturer: mock.manufacturer,
-    description: mock.description,
+    catalogDescription: mock.description || null,
+    priceListDescription: null,
+    manualInput: null,
+    isReviewed: false,
     specifications: derivedSpecs,
     price: mock.price,
     catalogPage: mock.catalogPage,
@@ -113,7 +127,10 @@ const buildDefaultProductDetails = (orderingNo, specs) => ({
   productName: 'Product Not Found',
   type: 'Unknown',
   manufacturer: 'Unknown',
-  description: 'Product details not available.',
+  catalogDescription: null,
+  priceListDescription: null,
+  manualInput: null,
+  isReviewed: false,
   specifications: specs || {},
   price: null,
   catalogPage: 'N/A',
@@ -329,6 +346,15 @@ const ProductPage = () => {
             <p className="product-ordering-no">{productDetails.productName}</p>
             <div className="product-badges">
               <span className="product-badge type-badge">{productDetails.type}</span>
+              {productDetails.isReviewed ? (
+                <span className="product-badge reviewed-badge" style={{ backgroundColor: '#10b981', color: 'white' }}>
+                  ✓ Reviewed
+                </span>
+              ) : (
+                <span className="product-badge pending-badge" style={{ backgroundColor: '#f59e0b', color: 'white' }}>
+                  Pending Review
+                </span>
+              )}
             </div>
           </div>
           <div className="product-price-section">
@@ -368,10 +394,35 @@ const ProductPage = () => {
               )}
             </div>
             
-            <div className="info-card">
-              <h3 className="info-card-title">Description</h3>
-              <p className="product-description">{productDetails.description}</p>
-            </div>
+            {productDetails.catalogDescription && (
+              <div className="info-card">
+                <h3 className="info-card-title">Catalog Description</h3>
+                <p className="product-description">{productDetails.catalogDescription}</p>
+              </div>
+            )}
+
+            {productDetails.priceListDescription && (
+              <div className="info-card">
+                <h3 className="info-card-title">Price List Description</h3>
+                <p className="product-description">{productDetails.priceListDescription}</p>
+              </div>
+            )}
+
+            {productDetails.manualInput && (
+              <div className="info-card">
+                <h3 className="info-card-title">User Notes & Additional Information</h3>
+                <p className="product-description" style={{ fontStyle: 'italic', color: '#4b5563' }}>
+                  {productDetails.manualInput}
+                </p>
+              </div>
+            )}
+
+            {!productDetails.catalogDescription && !productDetails.priceListDescription && !productDetails.manualInput && (
+              <div className="info-card">
+                <h3 className="info-card-title">Description</h3>
+                <p className="product-description">Product details not available.</p>
+              </div>
+            )}
           </div>
 
           {/* Product Info */}
