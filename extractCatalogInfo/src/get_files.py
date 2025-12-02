@@ -1715,9 +1715,247 @@ def save_products_from_price_list(event, context):
     }
 
 
+def resolve_catalog_product_pointers(catalog_product_pointers: List[Dict[str, Any]], ordering_number: str) -> List[Dict[str, Any]]:
+    """
+    Resolve catalog product pointers by fetching actual current data from catalog-products table.
+    IMPORTANT: Do NOT use snapshots! Fetch live data as users can edit specs after initial save.
+    ordering_number is used to match the product by ordering number.
+    
+    Matching Strategy:
+    1. Primary: Match by orderingNumber (most reliable)
+    2. Fallback: Match by tableIndex 
+    3. Last Resort: Match by productId (legacy, less reliable due to id generation issues)
+    
+    Args:
+        catalog_product_pointers: List of catalog product pointers from Product
+        
+    Returns:
+        List of resolved catalog products with current data from catalog-products table
+    """ 
+    if not catalog_product_pointers:
+        return []
+    
+    catalog_products_table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
+    resolved_products = []
+    
+    # Group pointers by fileId to minimize DB calls
+    pointers_by_file = {}
+    for pointer in catalog_product_pointers:
+        file_id = pointer.get("fileId")
+        if file_id:
+            if file_id not in pointers_by_file:
+                pointers_by_file[file_id] = []
+            pointers_by_file[file_id].append(pointer)
+    
+    # Fetch catalog products for each file
+    for file_id, pointers in pointers_by_file.items():
+        try:
+            response = catalog_products_table.get_item(Key={"fileId": file_id})
+            catalog_doc = response.get("Item")
+            
+            if not catalog_doc:
+                print(f"[resolve_catalog_product_pointers] Catalog document not found: fileId={file_id}")
+                # Add pointers as-is if document not found
+                resolved_products.extend(pointers)
+                continue
+            
+            # Convert to native types
+            catalog_data = convert_decimals_to_native(catalog_doc)
+            products_list = catalog_data.get("products", [])
+            
+            # Resolve each pointer by finding the matching product in the document
+            for pointer in pointers:
+                # Get identifiers from pointer - prioritize ordering number
+                table_index = pointer.get("tableIndex")
+                product_id = pointer.get("productId")
+                
+                # Find the matching product in the products list
+                matched_product = None
+                
+                # Primary: Try to match by ordering number (most reliable)
+                matched_product = next(
+                    (p for p in products_list if p.get("orderingNumber") == ordering_number),
+                    None
+                )
+                
+                # Fallback 1: Try to match by tableIndex
+                if not matched_product and table_index is not None:
+                    matched_product = next(
+                        (p for p in products_list if p.get("tableIndex") == table_index),
+                        None
+                    )
+                
+                # Fallback 2: Try to match by product id (legacy, less reliable)
+                if not matched_product and product_id is not None:
+                    matched_product = next(
+                        (p for p in products_list if p.get("id") == product_id),
+                        None
+                    )
+                
+                if matched_product:
+                    # Return the actual current product data with pointer metadata
+                    resolved_products.append({
+                        **matched_product,
+                        "_fileId": file_id,
+                        "_fileName": pointer.get("fileName"),
+                        "_fileKey": pointer.get("fileKey"),
+                    })
+                else:
+                    print(f"[resolve_catalog_product_pointers] Product not found in catalog: fileId={file_id}, orderingNumber={ordering_number}, tableIndex={table_index}, productId={product_id}")
+                    # Return pointer as-is if product not found
+                    resolved_products.append(pointer)
+                    
+        except Exception as error:
+            print(f"[resolve_catalog_product_pointers] ERROR resolving pointers for fileId={file_id}: {error}")
+            import traceback
+            traceback.print_exc()
+            # Add pointers as-is if error occurs
+            resolved_products.extend(pointers)
+    
+    return resolved_products
+
+
+def resolve_price_list_pointers(price_list_pointers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Resolve price list pointers by fetching actual price data from price-list-products table.
+    
+    Args:
+        price_list_pointers: List of price list pointers from Product
+        
+    Returns:
+        List of resolved price list pointers with price data attached
+    """
+    if not price_list_pointers:
+        return []
+    
+    price_list_table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+    resolved_pointers = []
+    
+    for pointer in price_list_pointers:
+        file_id = pointer.get("fileId")
+        chunk_index = pointer.get("chunkIndex")
+        
+        if not file_id or chunk_index is None:
+            print(f"[resolve_price_list_pointers] Invalid pointer: {pointer}")
+            resolved_pointers.append(pointer)
+            continue
+        
+        try:
+            # Fetch the specific chunk from price list products table
+            response = price_list_table.get_item(
+                Key={
+                    "fileId": file_id,
+                    "chunkIndex": chunk_index
+                }
+            )
+            
+            chunk = response.get("Item")
+            if chunk:
+                # Convert to native types
+                chunk_data = convert_decimals_to_native(chunk)
+                
+                # Create resolved pointer with metadata and price data reference
+                resolved_pointer = {
+                    **pointer,
+                    "sourceFile": chunk_data.get("sourceFile"),
+                    "createdAt": chunk_data.get("createdAt"),
+                    "createdAtIso": chunk_data.get("createdAtIso"),
+                    # Note: Individual price data will be in chunk's products array
+                    # UI will need to search for matching orderingNumber if needed
+                }
+                resolved_pointers.append(resolved_pointer)
+            else:
+                print(f"[resolve_price_list_pointers] Chunk not found: fileId={file_id}, chunkIndex={chunk_index}")
+                resolved_pointers.append(pointer)
+                
+        except Exception as error:
+            print(f"[resolve_price_list_pointers] ERROR resolving pointer {pointer}: {error}")
+            resolved_pointers.append(pointer)
+    
+    return resolved_pointers
+
+
+def fetch_price_for_product(ordering_number: str, price_list_pointers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Fetch the most recent price for a product from price list pointers.
+    
+    Args:
+        ordering_number: Product ordering number to look for
+        price_list_pointers: List of price list pointers
+        
+    Returns:
+        Dict with price information or None if not found
+    """
+    if not price_list_pointers:
+        return None
+    
+    price_list_table = dynamodb.Table(PRICE_LIST_PRODUCTS_TABLE)
+    
+    # Sort pointers by year (most recent first) and addedAt
+    sorted_pointers = sorted(
+        price_list_pointers,
+        key=lambda p: (p.get("year") or "", p.get("addedAt") or 0),
+        reverse=True
+    )
+    
+    for pointer in sorted_pointers:
+        file_id = pointer.get("fileId")
+        chunk_index = pointer.get("chunkIndex")
+        
+        if not file_id or chunk_index is None:
+            continue
+        
+        try:
+            # Fetch the chunk
+            response = price_list_table.get_item(
+                Key={
+                    "fileId": file_id,
+                    "chunkIndex": chunk_index
+                }
+            )
+            
+            chunk = response.get("Item")
+            if not chunk:
+                continue
+            
+            chunk_data = convert_decimals_to_native(chunk)
+            products = chunk_data.get("products", [])
+            
+            # Search for the product in this chunk
+            for product in products:
+                if product.get("orderingNumber") == ordering_number:
+                    # Found the product with price
+                    return {
+                        "price": product.get("price"),
+                        "description": product.get("description"),
+                        "SwagelokLink": product.get("SwagelokLink"),
+                        "year": pointer.get("year"),
+                        "fileId": file_id,
+                        "sourceFile": chunk_data.get("sourceFile"),
+                        "addedAt": pointer.get("addedAt"),
+                        "addedAtIso": pointer.get("addedAtIso"),
+                    }
+            
+        except Exception as error:
+            print(f"[fetch_price_for_product] ERROR fetching price from fileId={file_id}, chunk={chunk_index}: {error}")
+            continue
+    
+    return None
+
+
 def get_product(event, context):
     """
     Retrieve a single product by ordering number from the Products table.
+    Resolves pointers to fetch catalog and price list data asynchronously.
+    
+    IMPORTANT: Fetches live data from catalog-products table, NOT snapshots!
+    Users can edit specs after initial save, so we need current data.
+    
+    Returns a consolidated product object with:
+    - Product base fields (orderingNumber, productCategory, timestamps)
+    - catalogProducts array with RESOLVED data from catalog-products table
+    - priceListPointers array (resolved with metadata)
+    - currentPrice object (fetched from most recent price list)
     """
     print("[get_product] Starting request")
 
@@ -1743,6 +1981,7 @@ def get_product(event, context):
     products_table = dynamodb.Table(PRODUCTS_TABLE)
 
     try:
+        # Step 1: Fetch the product from Products table
         response = products_table.get_item(Key={"orderingNumber": ordering_number})
         item = response.get("Item")
 
@@ -1753,12 +1992,42 @@ def get_product(event, context):
                 "headers": get_cors_headers(),
             }
 
+        # Convert Decimal types to native types
         product = convert_decimals_to_native(item)
+        print(f"[get_product] Found product: {ordering_number}")
+        
+        # Step 2: Resolve catalog product pointers - fetch LIVE data from catalog-products table
+        # DO NOT use snapshots! Users can edit specs after initial save.
+        catalog_product_pointers = product.get("catalogProducts", [])
+        print(f"[get_product] Product has {len(catalog_product_pointers)} catalog product pointers: {json.dumps(catalog_product_pointers)}")
+        
+        resolved_catalog_products = resolve_catalog_product_pointers(catalog_product_pointers, ordering_number)
+        print(f"[get_product] Resolved {len(resolved_catalog_products)} catalog products")
+        
+        # Step 3: Resolve price list pointers (fetch metadata from chunks)
+        price_list_pointers = product.get("priceListPointers", [])
+        print(f"[get_product] Product has {len(price_list_pointers)} price list pointers")
+        
+        resolved_price_list_pointers = resolve_price_list_pointers(price_list_pointers)
+        
+        # Step 4: Fetch current price from most recent price list
+        current_price = fetch_price_for_product(ordering_number, price_list_pointers)
+        
+        # Step 5: Build consolidated response with RESOLVED catalog products
+        response_product = {
+            **product,
+            "catalogProducts": resolved_catalog_products,
+            "priceListPointers": resolved_price_list_pointers,
+            "currentPrice": current_price,
+        }
+        
+        print(f"[get_product] Successfully resolved product {ordering_number}")
         return {
             "statusCode": 200,
-            "body": json.dumps(product),
+            "body": json.dumps(response_product),
             "headers": get_cors_headers(),
         }
+        
     except Exception as error:
         print(f"[get_product] ERROR retrieving product {ordering_number}: {error}")
         import traceback

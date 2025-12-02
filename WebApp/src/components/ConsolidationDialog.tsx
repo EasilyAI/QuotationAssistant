@@ -52,37 +52,64 @@ const ConsolidationDialog: React.FC<ConsolidationDialogProps> = ({
                   <div className="product-preview">
                     <p>
                       <strong>Description:</strong>{' '}
-                      {conflict.existing.catalogProducts?.[0]?.snapshot?.description || '—'}
+                      {(() => {
+                        const catalogProduct = conflict.existing.catalogProducts?.[0];
+                        if (!catalogProduct) return '—';
+                        // Check if it's a resolved product (has _fileId) or a pointer (has snapshot)
+                        if ('_fileId' in catalogProduct) {
+                          return catalogProduct.description || '—';
+                        }
+                        return (catalogProduct as any).snapshot?.description || '—';
+                      })()}
                     </p>
                     <p>
                       <strong>Source:</strong>{' '}
-                      {conflict.existing.catalogProducts?.[0]?.fileName ||
-                        conflict.existing.catalogProducts?.[0]?.fileId ||
-                        (conflict.existing.priceListPointers?.[0] 
-                          ? `Price List (File: ${conflict.existing.priceListPointers[0].fileId})`
-                          : '—')}
+                      {(() => {
+                        const catalogProduct = conflict.existing.catalogProducts?.[0];
+                        if (!catalogProduct) {
+                          return conflict.existing.priceListPointers?.[0] 
+                            ? `Price List (File: ${conflict.existing.priceListPointers[0].fileId})`
+                            : '—';
+                        }
+                        // Check if it's a resolved product or a pointer
+                        if ('_fileId' in catalogProduct) {
+                          return catalogProduct._fileName || catalogProduct._fileId || '—';
+                        }
+                        return (catalogProduct as any).fileName || (catalogProduct as any).fileId || '—';
+                      })()}
                     </p>
-                    {conflict.existing.catalogProducts?.[0]?.snapshot?.specs &&
-                      Object.keys(conflict.existing.catalogProducts[0].snapshot.specs).length > 0 && (
-                      <div className="specs-preview">
-                        <strong>Specs:</strong>
-                        <ul>
-                          {Object.entries(conflict.existing.catalogProducts[0].snapshot.specs)
-                            .slice(0, 3)
-                            .map(([key, value]) => (
-                              <li key={key}>
-                                {String(key)}: {String(value)}
+                    {(() => {
+                      const catalogProduct = conflict.existing.catalogProducts?.[0];
+                      if (!catalogProduct) return null;
+                      
+                      // Get specs from resolved product or pointer snapshot
+                      const specs = ('_fileId' in catalogProduct)
+                        ? catalogProduct.specs
+                        : (catalogProduct as any).snapshot?.specs;
+                      
+                      if (!specs || Object.keys(specs).length === 0) return null;
+                      
+                      return (
+                        <div className="specs-preview">
+                          <strong>Specs:</strong>
+                          <ul>
+                            {Object.entries(specs)
+                              .slice(0, 3)
+                              .map(([key, value]) => (
+                                <li key={key}>
+                                  {String(key)}: {String(value)}
+                                </li>
+                              ))}
+                            {Object.keys(specs).length > 3 && (
+                              <li>
+                                ... and{' '}
+                                {Object.keys(specs).length - 3} more
                               </li>
-                            ))}
-                          {Object.keys(conflict.existing.catalogProducts[0].snapshot.specs).length > 3 && (
-                            <li>
-                              ... and{' '}
-                              {Object.keys(conflict.existing.catalogProducts[0].snapshot.specs).length - 3} more
-                            </li>
-                          )}
-                        </ul>
-                      </div>
-                    )}
+                            )}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

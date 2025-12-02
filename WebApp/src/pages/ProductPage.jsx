@@ -16,28 +16,33 @@ const formatLabel = (key = '') => {
 const buildSourcesFromPointers = (record = {}) => {
   const sources = [];
 
-  // Build sources from catalog product pointers
+  // Build sources from RESOLVED catalog products (fetched from catalog-products table)
   const catalogProducts = record.catalogProducts || [];
-  catalogProducts.forEach(pointer => {
-    const snapshot = pointer.snapshot || {};
+  catalogProducts.forEach(product => {
+    // Resolved products have _fileId, _fileName from the resolver
+    const fileName = product._fileName || 'Catalog';
+    const fileId = product._fileId || product.fileId;
+    const page = product.location?.page;
+    
     sources.push({
-      type: pointer.fileName || 'Catalog',
-      year: snapshot.location?.page
-        ? `Page ${snapshot.location.page}`
-        : pointer.fileId || 'Catalog Source',
-      pages: snapshot?.location?.page ? `Page ${snapshot.location.page}` : undefined,
+      type: fileName,
+      year: page ? `Page ${page}` : fileId || 'Catalog Source',
+      pages: page ? `Page ${page}` : undefined,
       hasPrice: false,
+      fileId: fileId,
     });
   });
 
-  // Build sources from price list pointers
+  // Build sources from price list pointers (resolved with metadata)
   const priceListPointers = record.priceListPointers || [];
   priceListPointers.forEach(pointer => {
     sources.push({
       type: 'Price List',
       year: pointer.year || 'Unknown',
-      pages: pointer.fileId,
+      pages: pointer.sourceFile || pointer.fileId,
       hasPrice: true,
+      fileId: pointer.fileId,
+      link: pointer.SwagelokLink,
     });
   });
 
@@ -45,29 +50,39 @@ const buildSourcesFromPointers = (record = {}) => {
 };
 
 const buildProductDetailsFromRecord = (record, specs) => {
-  // Get first catalog product pointer with snapshot (if any)
+  // Get first RESOLVED catalog product (fetched from catalog-products table, NOT snapshot!)
   const catalogProducts = record.catalogProducts || [];
-  const firstCatalogPointer = catalogProducts[0] || {};
-  const snapshot = firstCatalogPointer.snapshot || {};
-  const derivedSpecs = Object.keys(specs || {}).length > 0 ? specs : snapshot.specs || {};
+  const firstCatalogProduct = catalogProducts[0] || {};
+  
+  // Use current specs from user's editing or fall back to resolved catalog product specs
+  const derivedSpecs = Object.keys(specs || {}).length > 0 ? specs : firstCatalogProduct.specs || {};
+
+  // Get current price from resolved price data (most recent)
+  const currentPrice = record.currentPrice || {};
+  const price = currentPrice.price ?? null;
+  const priceYear = currentPrice.year || null;
+  const swagelokLink = currentPrice.SwagelokLink || null;
 
   return {
     orderingNo: record.orderingNumber || '',
     productName:
-      snapshot.manualInput ||
-      snapshot.description ||
+      firstCatalogProduct.manualInput ||
+      firstCatalogProduct.description ||
+      currentPrice.description ||
       record.orderingNumber ||
       'Product',
     type: record.productCategory || 'Unknown',
-    manufacturer: firstCatalogPointer.fileName || 'Unknown Source',
-    description: snapshot.description || 'Product details not available.',
+    manufacturer: firstCatalogProduct._fileName || 'Unknown Source',
+    description: firstCatalogProduct.description || currentPrice.description || 'Product details not available.',
     specifications: derivedSpecs,
-    price: snapshot.price ?? null,
-    catalogPage: snapshot.location?.page ? `Page ${snapshot.location.page}` : 'N/A',
-    image: snapshot.image || null,
+    price: price,
+    priceYear: priceYear,
+    swagelokLink: swagelokLink,
+    catalogPage: firstCatalogProduct.location?.page ? `Page ${firstCatalogProduct.location.page}` : 'N/A',
+    image: firstCatalogProduct.image || null,
     sources: buildSourcesFromPointers(record),
-    sourceFileName: firstCatalogPointer.fileName || '—',
-    sourceFileId: firstCatalogPointer.fileId || '—',
+    sourceFileName: firstCatalogProduct._fileName || '—',
+    sourceFileId: firstCatalogProduct._fileId || '—',
     lastUpdated: record.updatedAtIso || record.createdAtIso || null,
   };
 };
@@ -141,10 +156,10 @@ const ProductPage = () => {
         const product = await fetchProductByOrderingNumber(orderingNo);
         if (!isMounted) return;
         setProductRecord(product);
-        // Get specs from first catalog product pointer snapshot
+        // Get specs from first RESOLVED catalog product (live data from catalog-products table)
         const catalogProducts = product?.catalogProducts || [];
-        const snapshotSpecs = catalogProducts[0]?.snapshot?.specs || {};
-        setSpecifications({ ...snapshotSpecs });
+        const catalogProductSpecs = catalogProducts[0]?.specs || {};
+        setSpecifications({ ...catalogProductSpecs });
       } catch (error) {
         console.error('[ProductPage] Failed to fetch product', error);
         if (!isMounted) return;
@@ -210,7 +225,7 @@ const ProductPage = () => {
       ? `$${productDetails.price.toFixed(2)}`
       : 'Price not available';
   const priceSourceText = priceSource
-    ? `Source: ${priceSource.type}${priceSource.year ? ` (${priceSource.year})` : ''}`
+    ? `Source: ${priceSource.type}${productDetails.priceYear ? ` (${productDetails.priceYear})` : ''}`
     : 'No pricing source available';
   const hasSpecifications = Object.keys(specifications || {}).length > 0;
 
@@ -247,6 +262,17 @@ const ProductPage = () => {
             <p className="product-price-label">Manufacturer's Price</p>
             <p className="product-price">{priceDisplay}</p>
             <p className="product-price-source">{priceSourceText}</p>
+            {productDetails.swagelokLink && (
+              <a 
+                href={productDetails.swagelokLink} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="product-price-link"
+                style={{ fontSize: '0.85rem', color: '#2563eb', marginTop: '4px', display: 'inline-block' }}
+              >
+                View on Swagelok →
+              </a>
+            )}
           </div>
         </div>
 

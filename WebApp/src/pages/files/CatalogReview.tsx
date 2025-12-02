@@ -588,8 +588,9 @@ const CatalogReview = () => {
             fileId,
             fileKey: fileKey ?? undefined,
             fileName,
-            productId: catalogProduct.id,
-            tableIndex: catalogProduct.tindex,
+            orderingNumber: catalogProduct.orderingNumber, // Primary key for matching
+            productId: catalogProduct.id, // Legacy field
+            tableIndex: catalogProduct.tindex, // Fallback identifier
             snapshot: {
               id: catalogProduct.id,
               orderingNumber: catalogProduct.orderingNumber,
