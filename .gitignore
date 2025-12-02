@@ -23,3 +23,6 @@ wip/
 webApp/build/
 
 scripts/*
+
+# LLM-generated documentation and summaries
+.llm-summaries/
