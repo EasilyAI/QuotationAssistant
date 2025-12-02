@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getProductByOrderingNo } from '../data/mockProducts';
 import { fetchProductByOrderingNumber } from '../services/productsService';
+import { getFileDownloadUrl } from '../services/fileInfoService';
+import CatalogPreviewDialog from '../components/CatalogPreviewDialog';
 import './ProductPage.css';
 
 const formatLabel = (key = '') => {
@@ -135,6 +137,12 @@ const ProductPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [imageError, setImageError] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [filePreviewUrl, setFilePreviewUrl] = useState(null);
+  const [cachedPreviewUrlKey, setCachedPreviewUrlKey] = useState(null);
+  const [cachedPreviewUrlTimestamp, setCachedPreviewUrlTimestamp] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -219,6 +227,71 @@ const ProductPage = () => {
     }
   };
 
+  const ensurePreviewUrl = useCallback(async (fileKey) => {
+    if (!fileKey) {
+      setPreviewError('No source file available for preview.');
+      return null;
+    }
+
+    // Check if we have a valid cached URL for this file key
+    const PRESIGNED_URL_TTL_MS = 50 * 60 * 1000; // 50 minutes
+    const now = Date.now();
+    const isCachedUrlValid =
+      filePreviewUrl &&
+      cachedPreviewUrlKey === fileKey &&
+      cachedPreviewUrlTimestamp &&
+      now - cachedPreviewUrlTimestamp < PRESIGNED_URL_TTL_MS;
+
+    if (isCachedUrlValid) {
+      return filePreviewUrl;
+    }
+
+    // Cache is invalid or missing - fetch a fresh URL
+    setPreviewError(null);
+    setIsPreviewLoading(true);
+    try {
+      const response = await getFileDownloadUrl(fileKey);
+      if (!response?.url) {
+        throw new Error('Missing download URL for this file.');
+      }
+      setFilePreviewUrl(response.url);
+      setCachedPreviewUrlKey(fileKey);
+      setCachedPreviewUrlTimestamp(now);
+      return response.url;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setPreviewError('Unable to generate preview link. Please try again.');
+      return null;
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }, [filePreviewUrl, cachedPreviewUrlKey, cachedPreviewUrlTimestamp]);
+
+  const handleViewInCatalog = useCallback(async () => {
+    const catalogProducts = productRecord?.catalogProducts || [];
+    const firstCatalogProduct = catalogProducts[0];
+    
+    if (!firstCatalogProduct) {
+      alert('No catalog information available for this product.');
+      return;
+    }
+
+    const fileKey = firstCatalogProduct.fileKey || firstCatalogProduct._fileKey;
+    if (!fileKey) {
+      alert('No catalog file reference available for this product.');
+      return;
+    }
+
+    const url = await ensurePreviewUrl(fileKey);
+    if (url) {
+      setIsPreviewOpen(true);
+    }
+  }, [productRecord, ensurePreviewUrl]);
+
+  const closePreview = () => {
+    setIsPreviewOpen(false);
+  };
+
   const priceSource = productDetails.sources.find((source) => source.hasPrice);
   const priceDisplay =
     typeof productDetails.price === 'number'
@@ -252,8 +325,8 @@ const ProductPage = () => {
         {/* Product Header */}
         <div className="product-header">
           <div className="product-title-section">
-            <h1 className="product-title">{productDetails.productName}</h1>
-            <p className="product-ordering-no">Ordering No: <span>{productDetails.orderingNo}</span></p>
+            <h1 className="product-title">{productDetails.orderingNo}</h1>
+            <p className="product-ordering-no">{productDetails.productName}</p>
             <div className="product-badges">
               <span className="product-badge type-badge">{productDetails.type}</span>
             </div>
@@ -433,14 +506,31 @@ const ProductPage = () => {
           <button className="btn-primary-large">
             Add to Quotation
           </button>
-          <button className="btn-secondary-large">
-            View in Catalog
-          </button>
-          <button className="btn-secondary-large">
-            Download Specifications
+          <button 
+            className="btn-secondary-large"
+            onClick={handleViewInCatalog}
+            disabled={isPreviewLoading}
+          >
+            {isPreviewLoading ? 'Loading Preview...' : 'View in Catalog'}
           </button>
         </div>
+
+        {previewError && (
+          <div className="product-alert error">
+            <p>{previewError}</p>
+          </div>
+        )}
       </div>
+
+      <CatalogPreviewDialog
+        isOpen={isPreviewOpen}
+        onClose={closePreview}
+        catalogKey={productRecord?.catalogProducts?.[0]?.fileKey || productRecord?.catalogProducts?.[0]?._fileKey}
+        fileUrl={filePreviewUrl}
+        product={productRecord?.catalogProducts?.[0]}
+        highlightTerm={productDetails.orderingNo}
+        title="Catalog Preview"
+      />
     </div>
   );
 };
