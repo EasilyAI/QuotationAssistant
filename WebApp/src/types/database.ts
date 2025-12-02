@@ -5,7 +5,7 @@
 
 import { CatalogProduct } from './catalogProduct';
 import { Product, CatalogProductPointer, PriceListPointer, SalesDrawingPointer } from './products';
-
+import { FileStatus } from './files';
 // ============================================================================
 // CATALOG PRODUCTS TABLE (hb-catalog-products)
 // Temporary table for review before saving to Products table
@@ -80,11 +80,6 @@ export type {
 // ============================================================================
 // FILES TABLE (hb-files)
 // ============================================================================
-
-// Import FileStatus from files.ts to avoid duplicate exports
-// We don't re-export these - they're already exported from files.ts via index.ts
-import { FileStatus } from './files';
-
 // Define FileType locally for database table
 // (different from BusinessFileType in files.ts which is for forms)
 export type DBFileType = 'Catalog' | 'Price List' | 'Sales Drawing';
