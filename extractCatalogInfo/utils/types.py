@@ -103,8 +103,9 @@ class CatalogProductPointer(TypedDict, total=False):
     fileId: str
     fileKey: Optional[str]
     fileName: Optional[str]
-    productId: Optional[int]
-    tableIndex: Optional[int]
+    orderingNumber: str  # Primary key for matching in catalog-products table
+    productId: Optional[int]  # Legacy field, less reliable
+    tableIndex: Optional[int]  # Fallback identifier
     snapshot: Optional[CatalogProductSnapshot]
 
 

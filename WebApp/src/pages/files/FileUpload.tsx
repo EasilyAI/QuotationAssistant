@@ -149,12 +149,27 @@ const FileUpload = () => {
       setUploadError(null);
       setUploadSuccess(false);
       
-      // Auto-populate file name if not already set (normalize to lowercase)
+      // Auto-populate file name and catalog serial number if not already set
       setFormData(prev => {
+        const updates: any = {};
+        
+        // Auto-populate file name if not already set (normalize to lowercase)
         if (!prev.fileName) {
+          updates.fileName = file.name.toLowerCase();
+        }
+        
+        // Auto-populate catalog serial number if file type is Catalog and field is empty
+        if (fileType === BusinessFileType.Catalog && 
+            (prev as CatalogFormData).catalogSerialNumber === '') {
+          // Extract filename without extension and convert to uppercase
+          const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+          updates.catalogSerialNumber = fileNameWithoutExt.toUpperCase();
+        }
+        
+        if (Object.keys(updates).length > 0) {
           return {
             ...prev,
-            fileName: file.name.toLowerCase()
+            ...updates
           };
         }
         return prev;
@@ -187,12 +202,27 @@ const FileUpload = () => {
       setUploadError(null);
       setUploadSuccess(false);
       
-      // Auto-populate file name if not already set (normalize to lowercase)
+      // Auto-populate file name and catalog serial number if not already set
       setFormData(prev => {
+        const updates: any = {};
+        
+        // Auto-populate file name if not already set (normalize to lowercase)
         if (!prev.fileName) {
+          updates.fileName = file.name.toLowerCase();
+        }
+        
+        // Auto-populate catalog serial number if file type is Catalog and field is empty
+        if (fileType === BusinessFileType.Catalog && 
+            (prev as CatalogFormData).catalogSerialNumber === '') {
+          // Extract filename without extension and convert to uppercase
+          const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+          updates.catalogSerialNumber = fileNameWithoutExt.toUpperCase();
+        }
+        
+        if (Object.keys(updates).length > 0) {
           return {
             ...prev,
-            fileName: file.name.toLowerCase()
+            ...updates
           };
         }
         return prev;

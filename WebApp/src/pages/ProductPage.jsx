@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getProductByOrderingNo } from '../data/mockProducts';
 import { fetchProductByOrderingNumber } from '../services/productsService';
+import { getFileDownloadUrl } from '../services/fileInfoService';
+import CatalogPreviewDialog from '../components/CatalogPreviewDialog';
 import './ProductPage.css';
 
 const formatLabel = (key = '') => {
@@ -16,28 +18,33 @@ const formatLabel = (key = '') => {
 const buildSourcesFromPointers = (record = {}) => {
   const sources = [];
 
-  // Build sources from catalog product pointers
+  // Build sources from RESOLVED catalog products (fetched from catalog-products table)
   const catalogProducts = record.catalogProducts || [];
-  catalogProducts.forEach(pointer => {
-    const snapshot = pointer.snapshot || {};
+  catalogProducts.forEach(product => {
+    // Resolved products have _fileId, _fileName from the resolver
+    const fileName = product._fileName || 'Catalog';
+    const fileId = product._fileId || product.fileId;
+    const page = product.location?.page;
+    
     sources.push({
-      type: pointer.fileName || 'Catalog',
-      year: snapshot.location?.page
-        ? `Page ${snapshot.location.page}`
-        : pointer.fileId || 'Catalog Source',
-      pages: snapshot?.location?.page ? `Page ${snapshot.location.page}` : undefined,
+      type: fileName,
+      year: page ? `Page ${page}` : fileId || 'Catalog Source',
+      pages: page ? `Page ${page}` : undefined,
       hasPrice: false,
+      fileId: fileId,
     });
   });
 
-  // Build sources from price list pointers
+  // Build sources from price list pointers (resolved with metadata)
   const priceListPointers = record.priceListPointers || [];
   priceListPointers.forEach(pointer => {
     sources.push({
       type: 'Price List',
       year: pointer.year || 'Unknown',
-      pages: pointer.fileId,
+      pages: pointer.sourceFile || pointer.fileId,
       hasPrice: true,
+      fileId: pointer.fileId,
+      link: pointer.SwagelokLink,
     });
   });
 
@@ -45,29 +52,50 @@ const buildSourcesFromPointers = (record = {}) => {
 };
 
 const buildProductDetailsFromRecord = (record, specs) => {
-  // Get first catalog product pointer with snapshot (if any)
+  // Get first RESOLVED catalog product (fetched from catalog-products table, NOT snapshot!)
   const catalogProducts = record.catalogProducts || [];
-  const firstCatalogPointer = catalogProducts[0] || {};
-  const snapshot = firstCatalogPointer.snapshot || {};
-  const derivedSpecs = Object.keys(specs || {}).length > 0 ? specs : snapshot.specs || {};
+  const firstCatalogProduct = catalogProducts[0] || {};
+  
+  // Use current specs from user's editing or fall back to resolved catalog product specs
+  const derivedSpecs = Object.keys(specs || {}).length > 0 ? specs : firstCatalogProduct.specs || {};
+
+  // Get current price from resolved price data (most recent)
+  const currentPrice = record.currentPrice || {};
+  const price = currentPrice.price ?? null;
+  const priceYear = currentPrice.year || null;
+  const swagelokLink = currentPrice.SwagelokLink || null;
+
+  // Extract review status from catalog product
+  const isReviewed = firstCatalogProduct.status === 'reviewed' || firstCatalogProduct.isReviewed === true;
+
+  // Separate descriptions
+  const catalogDescription = firstCatalogProduct.description || null;
+  const priceListDescription = currentPrice.description || null;
+  const manualInput = firstCatalogProduct.manualInput || null;
 
   return {
     orderingNo: record.orderingNumber || '',
     productName:
-      snapshot.manualInput ||
-      snapshot.description ||
+      manualInput ||
+      catalogDescription ||
+      priceListDescription ||
       record.orderingNumber ||
       'Product',
     type: record.productCategory || 'Unknown',
-    manufacturer: firstCatalogPointer.fileName || 'Unknown Source',
-    description: snapshot.description || 'Product details not available.',
+    manufacturer: firstCatalogProduct._fileName || 'Unknown Source',
+    catalogDescription: catalogDescription,
+    priceListDescription: priceListDescription,
+    manualInput: manualInput,
+    isReviewed: isReviewed,
     specifications: derivedSpecs,
-    price: snapshot.price ?? null,
-    catalogPage: snapshot.location?.page ? `Page ${snapshot.location.page}` : 'N/A',
-    image: snapshot.image || null,
+    price: price,
+    priceYear: priceYear,
+    swagelokLink: swagelokLink,
+    catalogPage: firstCatalogProduct.location?.page ? `Page ${firstCatalogProduct.location.page}` : 'N/A',
+    image: firstCatalogProduct.image || null,
     sources: buildSourcesFromPointers(record),
-    sourceFileName: firstCatalogPointer.fileName || '—',
-    sourceFileId: firstCatalogPointer.fileId || '—',
+    sourceFileName: firstCatalogProduct._fileName || '—',
+    sourceFileId: firstCatalogProduct._fileId || '—',
     lastUpdated: record.updatedAtIso || record.createdAtIso || null,
   };
 };
@@ -79,7 +107,10 @@ const buildProductDetailsFromMock = (mock, specs) => {
     productName: mock.productName,
     type: mock.type,
     manufacturer: mock.manufacturer,
-    description: mock.description,
+    catalogDescription: mock.description || null,
+    priceListDescription: null,
+    manualInput: null,
+    isReviewed: false,
     specifications: derivedSpecs,
     price: mock.price,
     catalogPage: mock.catalogPage,
@@ -96,7 +127,10 @@ const buildDefaultProductDetails = (orderingNo, specs) => ({
   productName: 'Product Not Found',
   type: 'Unknown',
   manufacturer: 'Unknown',
-  description: 'Product details not available.',
+  catalogDescription: null,
+  priceListDescription: null,
+  manualInput: null,
+  isReviewed: false,
   specifications: specs || {},
   price: null,
   catalogPage: 'N/A',
@@ -120,6 +154,12 @@ const ProductPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [imageError, setImageError] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [filePreviewUrl, setFilePreviewUrl] = useState(null);
+  const [cachedPreviewUrlKey, setCachedPreviewUrlKey] = useState(null);
+  const [cachedPreviewUrlTimestamp, setCachedPreviewUrlTimestamp] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -141,10 +181,10 @@ const ProductPage = () => {
         const product = await fetchProductByOrderingNumber(orderingNo);
         if (!isMounted) return;
         setProductRecord(product);
-        // Get specs from first catalog product pointer snapshot
+        // Get specs from first RESOLVED catalog product (live data from catalog-products table)
         const catalogProducts = product?.catalogProducts || [];
-        const snapshotSpecs = catalogProducts[0]?.snapshot?.specs || {};
-        setSpecifications({ ...snapshotSpecs });
+        const catalogProductSpecs = catalogProducts[0]?.specs || {};
+        setSpecifications({ ...catalogProductSpecs });
       } catch (error) {
         console.error('[ProductPage] Failed to fetch product', error);
         if (!isMounted) return;
@@ -204,13 +244,78 @@ const ProductPage = () => {
     }
   };
 
+  const ensurePreviewUrl = useCallback(async (fileKey) => {
+    if (!fileKey) {
+      setPreviewError('No source file available for preview.');
+      return null;
+    }
+
+    // Check if we have a valid cached URL for this file key
+    const PRESIGNED_URL_TTL_MS = 50 * 60 * 1000; // 50 minutes
+    const now = Date.now();
+    const isCachedUrlValid =
+      filePreviewUrl &&
+      cachedPreviewUrlKey === fileKey &&
+      cachedPreviewUrlTimestamp &&
+      now - cachedPreviewUrlTimestamp < PRESIGNED_URL_TTL_MS;
+
+    if (isCachedUrlValid) {
+      return filePreviewUrl;
+    }
+
+    // Cache is invalid or missing - fetch a fresh URL
+    setPreviewError(null);
+    setIsPreviewLoading(true);
+    try {
+      const response = await getFileDownloadUrl(fileKey);
+      if (!response?.url) {
+        throw new Error('Missing download URL for this file.');
+      }
+      setFilePreviewUrl(response.url);
+      setCachedPreviewUrlKey(fileKey);
+      setCachedPreviewUrlTimestamp(now);
+      return response.url;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setPreviewError('Unable to generate preview link. Please try again.');
+      return null;
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }, [filePreviewUrl, cachedPreviewUrlKey, cachedPreviewUrlTimestamp]);
+
+  const handleViewInCatalog = useCallback(async () => {
+    const catalogProducts = productRecord?.catalogProducts || [];
+    const firstCatalogProduct = catalogProducts[0];
+    
+    if (!firstCatalogProduct) {
+      alert('No catalog information available for this product.');
+      return;
+    }
+
+    const fileKey = firstCatalogProduct.fileKey || firstCatalogProduct._fileKey;
+    if (!fileKey) {
+      alert('No catalog file reference available for this product.');
+      return;
+    }
+
+    const url = await ensurePreviewUrl(fileKey);
+    if (url) {
+      setIsPreviewOpen(true);
+    }
+  }, [productRecord, ensurePreviewUrl]);
+
+  const closePreview = () => {
+    setIsPreviewOpen(false);
+  };
+
   const priceSource = productDetails.sources.find((source) => source.hasPrice);
   const priceDisplay =
     typeof productDetails.price === 'number'
       ? `$${productDetails.price.toFixed(2)}`
       : 'Price not available';
   const priceSourceText = priceSource
-    ? `Source: ${priceSource.type}${priceSource.year ? ` (${priceSource.year})` : ''}`
+    ? `Source: ${priceSource.type}${productDetails.priceYear ? ` (${productDetails.priceYear})` : ''}`
     : 'No pricing source available';
   const hasSpecifications = Object.keys(specifications || {}).length > 0;
 
@@ -237,16 +342,36 @@ const ProductPage = () => {
         {/* Product Header */}
         <div className="product-header">
           <div className="product-title-section">
-            <h1 className="product-title">{productDetails.productName}</h1>
-            <p className="product-ordering-no">Ordering No: <span>{productDetails.orderingNo}</span></p>
+            <h1 className="product-title">{productDetails.orderingNo}</h1>
+            <p className="product-ordering-no">{productDetails.productName}</p>
             <div className="product-badges">
               <span className="product-badge type-badge">{productDetails.type}</span>
+              {productDetails.isReviewed ? (
+                <span className="product-badge reviewed-badge" style={{ backgroundColor: '#10b981', color: 'white' }}>
+                  ✓ Reviewed
+                </span>
+              ) : (
+                <span className="product-badge pending-badge" style={{ backgroundColor: '#f59e0b', color: 'white' }}>
+                  Pending Review
+                </span>
+              )}
             </div>
           </div>
           <div className="product-price-section">
             <p className="product-price-label">Manufacturer's Price</p>
             <p className="product-price">{priceDisplay}</p>
             <p className="product-price-source">{priceSourceText}</p>
+            {productDetails.swagelokLink && (
+              <a 
+                href={productDetails.swagelokLink} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="product-price-link"
+                style={{ fontSize: '0.85rem', color: '#2563eb', marginTop: '4px', display: 'inline-block' }}
+              >
+                View on Swagelok →
+              </a>
+            )}
           </div>
         </div>
 
@@ -269,10 +394,35 @@ const ProductPage = () => {
               )}
             </div>
             
-            <div className="info-card">
-              <h3 className="info-card-title">Description</h3>
-              <p className="product-description">{productDetails.description}</p>
-            </div>
+            {productDetails.catalogDescription && (
+              <div className="info-card">
+                <h3 className="info-card-title">Catalog Description</h3>
+                <p className="product-description">{productDetails.catalogDescription}</p>
+              </div>
+            )}
+
+            {productDetails.priceListDescription && (
+              <div className="info-card">
+                <h3 className="info-card-title">Price List Description</h3>
+                <p className="product-description">{productDetails.priceListDescription}</p>
+              </div>
+            )}
+
+            {productDetails.manualInput && (
+              <div className="info-card">
+                <h3 className="info-card-title">User Notes & Additional Information</h3>
+                <p className="product-description" style={{ fontStyle: 'italic', color: '#4b5563' }}>
+                  {productDetails.manualInput}
+                </p>
+              </div>
+            )}
+
+            {!productDetails.catalogDescription && !productDetails.priceListDescription && !productDetails.manualInput && (
+              <div className="info-card">
+                <h3 className="info-card-title">Description</h3>
+                <p className="product-description">Product details not available.</p>
+              </div>
+            )}
           </div>
 
           {/* Product Info */}
@@ -407,14 +557,31 @@ const ProductPage = () => {
           <button className="btn-primary-large">
             Add to Quotation
           </button>
-          <button className="btn-secondary-large">
-            View in Catalog
-          </button>
-          <button className="btn-secondary-large">
-            Download Specifications
+          <button 
+            className="btn-secondary-large"
+            onClick={handleViewInCatalog}
+            disabled={isPreviewLoading}
+          >
+            {isPreviewLoading ? 'Loading Preview...' : 'View in Catalog'}
           </button>
         </div>
+
+        {previewError && (
+          <div className="product-alert error">
+            <p>{previewError}</p>
+          </div>
+        )}
       </div>
+
+      <CatalogPreviewDialog
+        isOpen={isPreviewOpen}
+        onClose={closePreview}
+        catalogKey={productRecord?.catalogProducts?.[0]?.fileKey || productRecord?.catalogProducts?.[0]?._fileKey}
+        fileUrl={filePreviewUrl}
+        product={productRecord?.catalogProducts?.[0]}
+        highlightTerm={productDetails.orderingNo}
+        title="Catalog Preview"
+      />
     </div>
   );
 };
