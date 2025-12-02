@@ -3,6 +3,7 @@ import os
 import uuid
 import time
 from datetime import datetime
+from typing import Dict, List, Any, Optional
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
@@ -10,6 +11,13 @@ from boto3.dynamodb.conditions import Attr, Key
 from utils.corsHeaders import get_cors_headers
 from utils.helpers import convert_decimals_to_native, convert_floats_to_decimal
 from utils.file_details import build_file_details
+from utils.types import (
+    Product,
+    CatalogProductPointer,
+    PriceListPointer,
+    create_product_item,
+    validate_product_structure,
+)
 
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
@@ -1065,6 +1073,74 @@ def delete_file(event, context):
         }
 
 
+def batch_write_products(items_to_write, log_prefix="batch_write_products"):
+    """
+    Helper function to batch write products to the Products table.
+    Handles batching, retries, and error reporting.
+    
+    Args:
+        items_to_write: List of product items to write
+        log_prefix: Prefix for log messages
+    
+    Returns:
+        tuple: (saved_count, errors_list)
+    """
+    saved_count = 0
+    errors = []
+    batch_size = 25  # DynamoDB batch_write_item limit
+    
+    print(f"[{log_prefix}] Writing {len(items_to_write)} items in batches of {batch_size}")
+    
+    for i in range(0, len(items_to_write), batch_size):
+        batch = items_to_write[i:i + batch_size]
+        batch_requests = [{"PutRequest": {"Item": item}} for item in batch]
+        
+        try:
+            response = dynamodb.batch_write_item(
+                RequestItems={
+                    PRODUCTS_TABLE: batch_requests
+                }
+            )
+            
+            # Handle unprocessed items (retry once)
+            unprocessed = response.get("UnprocessedItems", {})
+            if unprocessed and PRODUCTS_TABLE in unprocessed:
+                unprocessed_requests = unprocessed[PRODUCTS_TABLE]
+                print(f"[{log_prefix}] Retrying {len(unprocessed_requests)} unprocessed items")
+                
+                retry_response = dynamodb.batch_write_item(
+                    RequestItems={
+                        PRODUCTS_TABLE: unprocessed_requests
+                    }
+                )
+                
+                # Check if there are still unprocessed items after retry
+                still_unprocessed = retry_response.get("UnprocessedItems", {})
+                if still_unprocessed and PRODUCTS_TABLE in still_unprocessed:
+                    failed_count = len(still_unprocessed[PRODUCTS_TABLE])
+                    errors.append(f"Failed to write {failed_count} items after retry in batch {i//batch_size + 1}")
+                    print(f"[{log_prefix}] WARNING: {failed_count} items still unprocessed after retry")
+                else:
+                    saved_count += len(unprocessed_requests)
+            
+            # Count successfully written items (batch size minus any failures)
+            batch_saved = len(batch)
+            if unprocessed and PRODUCTS_TABLE in unprocessed:
+                batch_saved -= len(unprocessed[PRODUCTS_TABLE])
+            saved_count += batch_saved
+            
+            print(f"[{log_prefix}] Batch {i//batch_size + 1}/{(len(items_to_write) + batch_size - 1)//batch_size}: Saved {batch_saved}/{len(batch)} items")
+            
+        except Exception as e:
+            error_msg = f"Failed to write batch {i//batch_size + 1}: {str(e)}"
+            errors.append(error_msg)
+            print(f"[{log_prefix}] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
+    
+    return saved_count, errors
+
+
 def check_existing_products(event, context):
     """
     Check for existing products by ordering numbers.
@@ -1147,6 +1223,7 @@ def save_products_from_catalog(event, context):
     Save products from catalog review to the Products table.
     Uses pointer-based merging: adds catalog product pointer to existing product or creates new one.
     Products are keyed by orderingNumber.
+    Uses batch writing to prevent lambda timeouts.
     """
     print(f"[save_products_from_catalog] Starting request")
     
@@ -1188,10 +1265,52 @@ def save_products_from_catalog(event, context):
     timestamp = int(time.time() * 1000)
     iso_timestamp = datetime.utcnow().isoformat() + 'Z'
     
-    saved_count = 0
     errors = []
+    items_to_write = []  # Collect items for batch writing
     
-    # Process each product
+    # Step 1: Batch fetch all existing products (much faster than individual get_item calls)
+    print(f"[save_products_from_catalog] Fetching existing products in batches")
+    ordering_numbers = [p.get("orderingNumber") for p in products if p.get("orderingNumber")]
+    existing_products_map = {}  # {orderingNumber: existing_item}
+    
+    # Batch get existing products (max 100 per batch)
+    batch_get_size = 100
+    for i in range(0, len(ordering_numbers), batch_get_size):
+        batch_ordering_nums = ordering_numbers[i:i + batch_get_size]
+        keys_to_get = [{"orderingNumber": on} for on in batch_ordering_nums]
+        
+        try:
+            response = dynamodb.batch_get_item(
+                RequestItems={
+                    PRODUCTS_TABLE: {
+                        "Keys": keys_to_get
+                    }
+                }
+            )
+            
+            # Process responses
+            items = response.get("Responses", {}).get(PRODUCTS_TABLE, [])
+            for item in items:
+                existing_products_map[item["orderingNumber"]] = item
+            
+            # Handle unprocessed keys (retry once)
+            unprocessed = response.get("UnprocessedKeys", {})
+            if unprocessed and PRODUCTS_TABLE in unprocessed:
+                retry_response = dynamodb.batch_get_item(RequestItems={PRODUCTS_TABLE: unprocessed[PRODUCTS_TABLE]})
+                retry_items = retry_response.get("Responses", {}).get(PRODUCTS_TABLE, [])
+                for item in retry_items:
+                    existing_products_map[item["orderingNumber"]] = item
+            
+            if (i // batch_get_size) % 10 == 0:  # Log every 10 batches
+                print(f"[save_products_from_catalog] Fetched batch {i//batch_get_size + 1}/{(len(ordering_numbers) + batch_get_size - 1)//batch_get_size}")
+                
+        except Exception as e:
+            print(f"[save_products_from_catalog] ERROR in batch_get_item: {e}")
+            # Continue processing - missing products will be treated as new
+    
+    print(f"[save_products_from_catalog] Found {len(existing_products_map)} existing products, preparing items for batch write")
+    
+    # Step 2: Process each product and prepare items for batch write
     for product in products:
         ordering_number = product.get("orderingNumber")
         if not ordering_number:
@@ -1204,20 +1323,27 @@ def save_products_from_catalog(event, context):
                 errors.append(f"Product {ordering_number} missing productCategory")
                 continue
             
-            new_metadata = product.get("metadata", {}) or {}
-            text_description = product.get("text_description", "")
+            # Get new catalog products pointer array (no metadata wrapper)
+            new_catalog_products = product.get("catalogProducts", [])
             
-            # Check if product exists
-            existing_response = products_table.get_item(Key={"orderingNumber": ordering_number})
+            # Check if product exists in our fetched map
+            existing_item = existing_products_map.get(ordering_number)
             
-            if "Item" in existing_response:
+            if existing_item:
                 # Product exists - merge with existing
-                existing_item = existing_response["Item"]
-                existing_metadata = existing_item.get("metadata", {}) or {}
                 
-                # Get existing catalog products list
-                existing_catalog_products = existing_metadata.get("catalogProducts", [])
-                new_catalog_products = new_metadata.get("catalogProducts", [])
+                # Get existing pointer arrays (supporting old metadata structure for migration)
+                if "metadata" in existing_item:
+                    # Old structure - migrate
+                    existing_metadata = existing_item.get("metadata", {})
+                    existing_catalog_products = existing_metadata.get("catalogProducts", [])
+                    existing_price_list_pointers = existing_metadata.get("priceListPointers", [])
+                    existing_sales_drawings = existing_metadata.get("salesDrawings", [])
+                else:
+                    # New structure - direct pointers
+                    existing_catalog_products = existing_item.get("catalogProducts", [])
+                    existing_price_list_pointers = existing_item.get("priceListPointers", [])
+                    existing_sales_drawings = existing_item.get("salesDrawings", [])
                 
                 # Merge catalog products (add new ones, avoiding duplicates by fileId)
                 merged_catalog_products = list(existing_catalog_products)
@@ -1227,51 +1353,50 @@ def save_products_from_catalog(event, context):
                     if isinstance(new_cp, dict) and new_cp.get("fileId") not in existing_file_ids:
                         merged_catalog_products.append(new_cp)
                 
-                # Keep existing price list entries and sales drawings
-                merged_metadata = {
-                    "catalogProducts": merged_catalog_products,
-                    "priceListEntries": existing_metadata.get("priceListEntries", []),
-                    "salesDrawings": existing_metadata.get("salesDrawings", []),
-                }
-                
-                # Prepare updated product item
-                product_item = {
-                    "orderingNumber": ordering_number,
-                    "productCategory": product_category,
-                    "metadata": convert_floats_to_decimal(merged_metadata),
-                    "text_description": text_description,
-                    "currentPrice": existing_item.get("currentPrice"),
-                    "currentPriceYear": existing_item.get("currentPriceYear"),
-                    "currentLink": existing_item.get("currentLink"),
-                    "createdAt": existing_item.get("createdAt", timestamp),
-                    "createdAtIso": existing_item.get("createdAtIso", iso_timestamp),
-                    "updatedAt": timestamp,
-                    "updatedAtIso": iso_timestamp,
-                }
+                # Prepare updated product item - ONLY pointers, no denormalized data
+                product_item: Product = create_product_item(
+                    ordering_number=ordering_number,
+                    product_category=product_category,
+                    catalog_products=convert_floats_to_decimal(merged_catalog_products),
+                    price_list_pointers=existing_price_list_pointers,
+                    sales_drawings=existing_sales_drawings,
+                    created_at=existing_item.get("createdAt", timestamp),
+                    created_at_iso=existing_item.get("createdAtIso", iso_timestamp),
+                    updated_at=timestamp,
+                    updated_at_iso=iso_timestamp,
+                )
             else:
                 # New product - create with catalog pointer only
-                product_item = {
-                    "orderingNumber": ordering_number,
-                    "productCategory": product_category,
-                    "metadata": convert_floats_to_decimal(new_metadata),
-                    "text_description": text_description,
-                    "createdAt": timestamp,
-                    "createdAtIso": iso_timestamp,
-                    "updatedAt": timestamp,
-                    "updatedAtIso": iso_timestamp,
-                }
+                product_item: Product = create_product_item(
+                    ordering_number=ordering_number,
+                    product_category=product_category,
+                    catalog_products=convert_floats_to_decimal(new_catalog_products),
+                    created_at=timestamp,
+                    created_at_iso=iso_timestamp,
+                    updated_at=timestamp,
+                    updated_at_iso=iso_timestamp,
+                )
             
-            # Save product
-            products_table.put_item(Item=product_item)
-            saved_count += 1
-            print(f"[save_products_from_catalog] Saved product: {ordering_number}")
+            # Validate structure before adding to batch
+            if not validate_product_structure(product_item):
+                error_msg = f"Product {ordering_number} failed structure validation"
+                errors.append(error_msg)
+                print(f"[save_products_from_catalog] ERROR: {error_msg}")
+                continue
+            
+            # Add product to batch write queue
+            items_to_write.append(product_item)
             
         except Exception as e:
-            error_msg = f"Failed to save product {ordering_number}: {str(e)}"
+            error_msg = f"Failed to prepare product {ordering_number}: {str(e)}"
             errors.append(error_msg)
             print(f"[save_products_from_catalog] ERROR: {error_msg}")
             import traceback
             traceback.print_exc()
+    
+    # Step 3: Batch write all items using shared helper function
+    saved_count, write_errors = batch_write_products(items_to_write, "save_products_from_catalog")
+    errors.extend(write_errors)
     
     if errors:
         print(f"[save_products_from_catalog] Completed with {len(errors)} errors")
@@ -1473,7 +1598,7 @@ def save_products_from_price_list(event, context):
             link = chunk_data["link"]
             
             # Create pointer (not full data)
-            new_pointer = {
+            new_pointer: PriceListPointer = {
                 "fileId": file_id,
                 "chunkIndex": chunk_index,
                 "year": year,
@@ -1486,10 +1611,19 @@ def save_products_from_price_list(event, context):
             
             if existing_item:
                 # Product exists - merge with existing
-                existing_metadata = existing_item.get("metadata", {}) or {}
                 
-                # Get existing price list pointers
-                existing_pointers = existing_metadata.get("priceListPointers", [])
+                # Get existing pointer arrays (supporting old metadata structure for migration)
+                if "metadata" in existing_item:
+                    # Old structure - migrate
+                    existing_metadata = existing_item.get("metadata", {})
+                    existing_catalog_products = existing_metadata.get("catalogProducts", [])
+                    existing_pointers = existing_metadata.get("priceListPointers", [])
+                    existing_sales_drawings = existing_metadata.get("salesDrawings", [])
+                else:
+                    # New structure - direct pointers
+                    existing_catalog_products = existing_item.get("catalogProducts", [])
+                    existing_pointers = existing_item.get("priceListPointers", [])
+                    existing_sales_drawings = existing_item.get("salesDrawings", [])
                 
                 # Add new pointer (avoiding duplicate by fileId)
                 merged_pointers = list(existing_pointers)
@@ -1517,78 +1651,32 @@ def save_products_from_price_list(event, context):
                 
                 merged_pointers.sort(key=get_year_sort_key, reverse=True)
                 
-                # Update denormalized fields from the latest (first) pointer
-                # Use the actual data we resolved from the chunk
-                latest_is_current = merged_pointers[0].get("fileId") == file_id if merged_pointers else False
-                
-                if latest_is_current:
-                    # The new pointer is the latest, use its data for denormalized fields
-                    current_price_val = price
-                    current_price_year_val = year
-                    current_price_file_id_val = file_id
-                    current_link_val = link
-                else:
-                    # Keep existing denormalized values (they're from a newer price list)
-                    current_price_val = existing_item.get("currentPrice")
-                    current_price_year_val = existing_item.get("currentPriceYear")
-                    current_price_file_id_val = existing_item.get("currentPriceFileId")
-                    current_link_val = existing_item.get("currentLink")
-                
-                # Merge metadata with pointers
-                merged_metadata = {
-                    "catalogProducts": existing_metadata.get("catalogProducts", []),
-                    "priceListPointers": merged_pointers,
-                    "salesDrawings": existing_metadata.get("salesDrawings", []),
-                }
-                
-                # Prepare updated product item
-                product_item = {
-                    "orderingNumber": ordering_number,
-                    "productCategory": existing_item.get("productCategory", ""),
-                    "metadata": convert_floats_to_decimal(merged_metadata),
-                    "text_description": existing_item.get("text_description", ""),
-                    "createdAt": existing_item.get("createdAt", timestamp),
-                    "createdAtIso": existing_item.get("createdAtIso", iso_timestamp),
-                    "updatedAt": timestamp,
-                    "updatedAtIso": iso_timestamp,
-                }
-                
-                # Add denormalized fields (cached for quick access)
-                if current_price_val is not None:
-                    product_item["currentPrice"] = convert_floats_to_decimal(current_price_val)
-                if current_price_year_val:
-                    product_item["currentPriceYear"] = current_price_year_val
-                if current_price_file_id_val:
-                    product_item["currentPriceFileId"] = current_price_file_id_val
-                if current_link_val:
-                    product_item["currentLink"] = current_link_val
+                # Prepare updated product item - ONLY pointers, no denormalized data
+                product_item: Product = create_product_item(
+                    ordering_number=ordering_number,
+                    product_category=existing_item.get("productCategory", ""),
+                    catalog_products=existing_catalog_products,
+                    price_list_pointers=convert_floats_to_decimal(merged_pointers),
+                    sales_drawings=existing_sales_drawings,
+                    created_at=existing_item.get("createdAt", timestamp),
+                    created_at_iso=existing_item.get("createdAtIso", iso_timestamp),
+                    updated_at=timestamp,
+                    updated_at_iso=iso_timestamp,
+                )
                     
             else:
                 # New product - create with price list pointer only
-                # We don't have product category from price list, so we need to infer or leave empty
+                # We don't have product category from price list, so leave empty
                 
-                product_item = {
-                    "orderingNumber": ordering_number,
-                    "productCategory": "",  # Will need to be filled in from catalog later
-                    "metadata": convert_floats_to_decimal({
-                        "priceListPointers": [new_pointer],
-                    }),
-                    "text_description": description or "",
-                    "createdAt": timestamp,
-                    "createdAtIso": iso_timestamp,
-                    "updatedAt": timestamp,
-                    "updatedAtIso": iso_timestamp,
-                }
-                
-                # Add denormalized fields (cached for quick access)
-                if price is not None:
-                    product_item["currentPrice"] = convert_floats_to_decimal(price)
-                if year:
-                    product_item["currentPriceYear"] = year
-                if file_id:
-                    product_item["currentPriceFileId"] = file_id
-                if link:
-                    product_item["currentLink"] = link
+                product_item: Product = create_product_item(
+                    ordering_number=ordering_number,
+                    product_category="",  # Will need to be filled in from catalog later
+                    price_list_pointers=convert_floats_to_decimal([new_pointer]),
+                    created_at=timestamp,
+                    created_at_iso=iso_timestamp,
+                    updated_at=timestamp,
+                    updated_at_iso=iso_timestamp,
+                )
             
             # Add product to batch write queue
             items_to_write.append(product_item)
@@ -1600,56 +1688,9 @@ def save_products_from_price_list(event, context):
             import traceback
             traceback.print_exc()
     
-    # Batch write all items (DynamoDB batch_write_item supports up to 25 items per batch)
-    print(f"[save_products_from_price_list] Writing {len(items_to_write)} items in batches of 25")
-    batch_size = 25
-    
-    for i in range(0, len(items_to_write), batch_size):
-        batch = items_to_write[i:i + batch_size]
-        batch_requests = [{"PutRequest": {"Item": item}} for item in batch]
-        
-        try:
-            response = dynamodb.batch_write_item(
-                RequestItems={
-                    PRODUCTS_TABLE: batch_requests
-                }
-            )
-            
-            # Handle unprocessed items (retry once)
-            unprocessed = response.get("UnprocessedItems", {})
-            if unprocessed and PRODUCTS_TABLE in unprocessed:
-                unprocessed_requests = unprocessed[PRODUCTS_TABLE]
-                print(f"[save_products_from_price_list] Retrying {len(unprocessed_requests)} unprocessed items")
-                
-                retry_response = dynamodb.batch_write_item(
-                    RequestItems={
-                        PRODUCTS_TABLE: unprocessed_requests
-                    }
-                )
-                
-                # Check if there are still unprocessed items after retry
-                still_unprocessed = retry_response.get("UnprocessedItems", {})
-                if still_unprocessed and PRODUCTS_TABLE in still_unprocessed:
-                    failed_count = len(still_unprocessed[PRODUCTS_TABLE])
-                    errors.append(f"Failed to write {failed_count} items after retry in batch {i//batch_size + 1}")
-                    print(f"[save_products_from_price_list] WARNING: {failed_count} items still unprocessed after retry")
-                else:
-                    saved_count += len(unprocessed_requests)
-            
-            # Count successfully written items (batch size minus any failures)
-            batch_saved = len(batch)
-            if unprocessed and PRODUCTS_TABLE in unprocessed:
-                batch_saved -= len(unprocessed[PRODUCTS_TABLE])
-            saved_count += batch_saved
-            
-            print(f"[save_products_from_price_list] Batch {i//batch_size + 1}/{(len(items_to_write) + batch_size - 1)//batch_size}: Saved {batch_saved}/{len(batch)} items")
-            
-        except Exception as e:
-            error_msg = f"Failed to write batch {i//batch_size + 1}: {str(e)}"
-            errors.append(error_msg)
-            print(f"[save_products_from_price_list] ERROR: {error_msg}")
-            import traceback
-            traceback.print_exc()
+    # Batch write all items using shared helper function
+    saved_count, write_errors = batch_write_products(items_to_write, "save_products_from_price_list")
+    errors.extend(write_errors)
     
     if errors:
         print(f"[save_products_from_price_list] Completed with {len(errors)} errors")
@@ -1733,6 +1774,7 @@ def list_products(event, context):
     """
     List products with optional category filtering and cursor-based pagination.
     Returns a lightweight page (default 50 items) to avoid scanning the full table.
+    When category is specified, uses ProductCategoryIndex GSI for efficient querying.
     """
     print("[list_products] Starting request")
 
@@ -1758,44 +1800,80 @@ def list_products(event, context):
     page_size = min(limit, 200)
     print(f"[list_products] Params - category: {category}, limit: {limit}")
 
-    scan_kwargs = {
-        "Limit": page_size,
-    }
-
-    if category:
-        scan_kwargs["FilterExpression"] = Attr("productCategory").eq(category)
-
-    if cursor_param:
-        try:
-            scan_kwargs["ExclusiveStartKey"] = json.loads(cursor_param)
-        except json.JSONDecodeError:
-            return {
-                "statusCode": 400,
-                "body": json.dumps({"error": "Invalid cursor parameter"}),
-                "headers": get_cors_headers(),
-            }
-
     products_table = dynamodb.Table(PRODUCTS_TABLE)
     products = []
     last_evaluated_key = None
 
     try:
-        while len(products) < limit:
-            response = products_table.scan(**scan_kwargs)
-            products.extend(response.get("Items", []))
-            last_evaluated_key = response.get("LastEvaluatedKey")
+        # Use Query on ProductCategoryIndex GSI when category is specified
+        if category:
+            print(f"[list_products] Using ProductCategoryIndex GSI to query category: {category}")
+            query_kwargs = {
+                "IndexName": "ProductCategoryIndex",
+                "KeyConditionExpression": Key("productCategory").eq(category),
+                "Limit": page_size,
+            }
 
-            print(
-                f"[list_products] Scan page retrieved {len(response.get('Items', []))} items, "
-                f"accumulated {len(products)}"
-            )
+            if cursor_param:
+                try:
+                    query_kwargs["ExclusiveStartKey"] = json.loads(cursor_param)
+                except json.JSONDecodeError:
+                    return {
+                        "statusCode": 400,
+                        "body": json.dumps({"error": "Invalid cursor parameter"}),
+                        "headers": get_cors_headers(),
+                    }
 
-            if len(products) >= limit or not last_evaluated_key:
-                break
+            while len(products) < limit:
+                response = products_table.query(**query_kwargs)
+                products.extend(response.get("Items", []))
+                last_evaluated_key = response.get("LastEvaluatedKey")
 
-            remaining = limit - len(products)
-            scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
-            scan_kwargs["Limit"] = min(remaining, page_size)
+                print(
+                    f"[list_products] Query page retrieved {len(response.get('Items', []))} items, "
+                    f"accumulated {len(products)}"
+                )
+
+                if len(products) >= limit or not last_evaluated_key:
+                    break
+
+                remaining = limit - len(products)
+                query_kwargs["ExclusiveStartKey"] = last_evaluated_key
+                query_kwargs["Limit"] = min(remaining, page_size)
+
+        # Use Scan when no category is specified
+        else:
+            print("[list_products] Using Scan to retrieve all products")
+            scan_kwargs = {
+                "Limit": page_size,
+            }
+
+            if cursor_param:
+                try:
+                    scan_kwargs["ExclusiveStartKey"] = json.loads(cursor_param)
+                except json.JSONDecodeError:
+                    return {
+                        "statusCode": 400,
+                        "body": json.dumps({"error": "Invalid cursor parameter"}),
+                        "headers": get_cors_headers(),
+                    }
+
+            while len(products) < limit:
+                response = products_table.scan(**scan_kwargs)
+                products.extend(response.get("Items", []))
+                last_evaluated_key = response.get("LastEvaluatedKey")
+
+                print(
+                    f"[list_products] Scan page retrieved {len(response.get('Items', []))} items, "
+                    f"accumulated {len(products)}"
+                )
+
+                if len(products) >= limit or not last_evaluated_key:
+                    break
+
+                remaining = limit - len(products)
+                scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+                scan_kwargs["Limit"] = min(remaining, page_size)
 
         products = products[:limit]
         products_native = [convert_decimals_to_native(item) for item in products]

@@ -3,4 +3,5 @@ export * from './products';
 export * from './quotataions';
 export * from './catalogProduct';    
 export * from './files';
+export * from './database';
 

@@ -544,7 +544,8 @@ def convert_grid_to_catalog_products(
     tblock: Dict[str, Any] = None, 
     id_map: Dict[str, Any] = None,
     tindex: int = None,
-    ordering_number_index: int = None
+    ordering_number_index: int = None,
+    start_id: int = 1
 ) -> Dict[str, Dict[str, Any]]:
     """
     Convert table grid result to catalog products dictionary keyed by ordering number.
@@ -563,6 +564,7 @@ def convert_grid_to_catalog_products(
         id_map: Optional dictionary mapping block Ids to blocks. Required for location information.
         tindex: Optional index of the table block in the table blocks list. Required for location information.
         ordering_number_index: Optional index of the ordering number column in the headers. Required for location information.
+        start_id: Starting ID for product counter (default 1). Use this to maintain unique IDs across multiple tables.
     Returns:
         Dictionary mapping ordering numbers to product objects:
         {
@@ -647,7 +649,7 @@ def convert_grid_to_catalog_products(
                 }
     
     products = {}
-    product_id_counter = 1
+    product_id_counter = start_id
     
     for row_idx, row in enumerate(rows):
         # Skip empty rows

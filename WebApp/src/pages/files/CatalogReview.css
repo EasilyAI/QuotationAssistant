@@ -245,7 +245,7 @@
 /* Table Header */
 .review-table-header {
   display: grid;
-  grid-template-columns: 150px 2fr 120px 120px 240px;
+  grid-template-columns: 150px 2fr 120px 120px 260px;
   gap: 16px;
   padding: 10px 16px;
   background: var(--color-background-gray);
@@ -292,7 +292,7 @@
 /* Collapsed Row */
 .row-collapsed {
   display: grid;
-  grid-template-columns: 150px 2fr 120px 120px 240px;
+  grid-template-columns: 150px 2fr 120px 120px 260px;
   gap: 16px;
   padding: 12px 16px;
   cursor: pointer;
@@ -406,28 +406,31 @@
 }
 
 .reviewed-btn {
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  color: #047857;
-  min-width: 100px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  min-width: 95px;
+  font-weight: 600;
 }
 
 .reviewed-btn:hover {
-  background: rgba(16, 185, 129, 0.2);
-  border-color: rgba(16, 185, 129, 0.5);
+  background: var(--color-background-hover);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .unreviewed-btn {
-  background: rgba(107, 114, 128, 0.1);
-  border: 1px solid rgba(107, 114, 128, 0.3);
-  color: #374151;
-  min-width: 100px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  min-width: 95px;
+  font-weight: 600;
 }
 
 .unreviewed-btn:hover {
-  background: rgba(107, 114, 128, 0.2);
-  border-color: rgba(107, 114, 128, 0.5);
-  color: #1f2937;
+  background: var(--color-background-hover);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 /* Expanded Row */
@@ -720,7 +723,7 @@
 @media (max-width: 1200px) {
   .review-table-header,
   .row-collapsed {
-    grid-template-columns: 130px 2fr 100px 100px 200px;
+    grid-template-columns: 130px 2fr 100px 100px 220px;
   }
 
   .expanded-content {

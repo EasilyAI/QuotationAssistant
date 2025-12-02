@@ -9,6 +9,7 @@ export enum ProductCategory {
   TUBING = 'Tubing',
   FILTER = 'Filter',
   QUICK_CONNECT = 'Quick-Connect',
+  UNCATEGORIZED = 'UNCATEGORIZED',
 }
 
 /** Pointer to a catalog product source */
@@ -46,10 +47,14 @@ export interface SalesDrawingPointer {
 }
 
 /**
- * Metadata containing pointers to all product information sources
- * All data is referenced by pointers and resolved on fetch
+ * Final product stored in the Products table
+ * Canonical product record with pointers to all related information
+ * NO data is stored directly - everything is referenced via pointers
  */
-export interface ProductMetadata {
+export interface Product {
+  orderingNumber: string; // Primary key (SKU)
+  productCategory: ProductCategory; // GSI
+  
   // Catalog product sources
   catalogProducts?: CatalogProductPointer[];
   
@@ -58,24 +63,6 @@ export interface ProductMetadata {
   
   // Sales drawing sources
   salesDrawings?: SalesDrawingPointer[];
-}
-
-/**
- * Final product stored in the Products table
- * Canonical product record with pointers to all related information
- */
-export interface Product {
-  orderingNumber: string; // Primary key (SKU)
-  productCategory: ProductCategory;
-  metadata: ProductMetadata;
-  text_description: string;
-  
-  // Denormalized fields for quick access and listing (updated when pointers change)
-  // These are cached values - actual data lives in source tables
-  currentPrice?: number;
-  currentPriceYear?: string;
-  currentPriceFileId?: string; // Which file has the current price
-  currentLink?: string;
 
   // Timestamps
   createdAt?: number;

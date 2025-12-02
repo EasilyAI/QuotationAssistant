@@ -13,35 +13,42 @@ const formatLabel = (key = '') => {
     .replace(/^./, (str) => str.toUpperCase());
 };
 
-const buildSourcesFromMetadata = (metadata = {}, snapshot = {}) => {
+const buildSourcesFromPointers = (record = {}) => {
   const sources = [];
 
-  if (metadata.sourceFileName) {
+  // Build sources from catalog product pointers
+  const catalogProducts = record.catalogProducts || [];
+  catalogProducts.forEach(pointer => {
+    const snapshot = pointer.snapshot || {};
     sources.push({
-      type: metadata.sourceFileName,
-      year: metadata.catalogProductSnapshot?.location?.page
-        ? `Page ${metadata.catalogProductSnapshot.location.page}`
-        : metadata.sourceFileId || 'Source file',
+      type: pointer.fileName || 'Catalog',
+      year: snapshot.location?.page
+        ? `Page ${snapshot.location.page}`
+        : pointer.fileId || 'Catalog Source',
       pages: snapshot?.location?.page ? `Page ${snapshot.location.page}` : undefined,
       hasPrice: false,
     });
-  }
+  });
 
-  if (snapshot?.location?.page) {
+  // Build sources from price list pointers
+  const priceListPointers = record.priceListPointers || [];
+  priceListPointers.forEach(pointer => {
     sources.push({
-      type: 'Catalog Location',
-      year: snapshot.location.page,
-      pages: `Page ${snapshot.location.page}`,
-      hasPrice: false,
+      type: 'Price List',
+      year: pointer.year || 'Unknown',
+      pages: pointer.fileId,
+      hasPrice: true,
     });
-  }
+  });
 
   return sources;
 };
 
 const buildProductDetailsFromRecord = (record, specs) => {
-  const metadata = record.metadata || {};
-  const snapshot = metadata.catalogProductSnapshot || {};
+  // Get first catalog product pointer with snapshot (if any)
+  const catalogProducts = record.catalogProducts || [];
+  const firstCatalogPointer = catalogProducts[0] || {};
+  const snapshot = firstCatalogPointer.snapshot || {};
   const derivedSpecs = Object.keys(specs || {}).length > 0 ? specs : snapshot.specs || {};
 
   return {
@@ -49,19 +56,18 @@ const buildProductDetailsFromRecord = (record, specs) => {
     productName:
       snapshot.manualInput ||
       snapshot.description ||
-      record.text_description ||
       record.orderingNumber ||
       'Product',
     type: record.productCategory || 'Unknown',
-    manufacturer: metadata.sourceFileName || 'Unknown Source',
-    description: record.text_description || snapshot.description || 'Product details not available.',
+    manufacturer: firstCatalogPointer.fileName || 'Unknown Source',
+    description: snapshot.description || 'Product details not available.',
     specifications: derivedSpecs,
-    price: snapshot.price ?? record.price ?? null,
+    price: snapshot.price ?? null,
     catalogPage: snapshot.location?.page ? `Page ${snapshot.location.page}` : 'N/A',
     image: snapshot.image || null,
-    sources: buildSourcesFromMetadata(metadata, snapshot),
-    sourceFileName: metadata.sourceFileName || '—',
-    sourceFileId: metadata.sourceFileId || '—',
+    sources: buildSourcesFromPointers(record),
+    sourceFileName: firstCatalogPointer.fileName || '—',
+    sourceFileId: firstCatalogPointer.fileId || '—',
     lastUpdated: record.updatedAtIso || record.createdAtIso || null,
   };
 };
@@ -135,7 +141,9 @@ const ProductPage = () => {
         const product = await fetchProductByOrderingNumber(orderingNo);
         if (!isMounted) return;
         setProductRecord(product);
-        const snapshotSpecs = product?.metadata?.catalogProductSnapshot?.specs || {};
+        // Get specs from first catalog product pointer snapshot
+        const catalogProducts = product?.catalogProducts || [];
+        const snapshotSpecs = catalogProducts[0]?.snapshot?.specs || {};
         setSpecifications({ ...snapshotSpecs });
       } catch (error) {
         console.error('[ProductPage] Failed to fetch product', error);

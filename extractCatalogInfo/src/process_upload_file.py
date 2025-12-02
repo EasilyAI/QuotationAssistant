@@ -826,6 +826,8 @@ def process_uploaded_file(event, context):
     body = event.get('body')
     file_id = None
     s3_key = None
+    start_from_mid_process = False
+    textract_results_key = None
     
     if body:
         try:
@@ -1027,6 +1029,8 @@ def process_uploaded_file(event, context):
 
         # Step 10: Process each table block
         event_payloads = []
+        next_product_id = 1  # Track product ID across all tables to ensure uniqueness
+        
         for tindex, tblock in enumerate(table_blocks):
             print(f"[process_uploaded_file] Processing table {tindex + 1}/{tables_count}")
             
@@ -1057,14 +1061,16 @@ def process_uploaded_file(event, context):
             
             if ordering_number_index is not None:
                 print(f"[process_uploaded_file] Table {tindex} contains ordering number at column index {ordering_number_index}")
-                print(f"[process_uploaded_file] Converting table {tindex} to catalog products...")
+                print(f"[process_uploaded_file] Converting table {tindex} to catalog products (starting from ID {next_product_id})...")
                 
-                event_payload = convert_grid_to_catalog_products(table_grid, tblock, id_map, tindex, ordering_number_index)
+                event_payload = convert_grid_to_catalog_products(table_grid, tblock, id_map, tindex, ordering_number_index, next_product_id)
                 product_count = len(event_payload) if event_payload else 0
                 print(f"[process_uploaded_file] Table {tindex} extracted {product_count} products")
                 
                 if event_payload:
                     event_payloads.append(event_payload)
+                    # Update next_product_id to continue from where this table left off
+                    next_product_id += product_count
             else:
                 print(f"[process_uploaded_file] Table {tindex} does NOT contain ordering number header (Title: {table_title}) - skipping")
 

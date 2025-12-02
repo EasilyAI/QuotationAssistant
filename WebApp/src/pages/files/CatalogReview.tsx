@@ -5,6 +5,7 @@ import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
 import ConsolidationDialog, { ConsolidationConflict, ConsolidationAction } from '../../components/ConsolidationDialog';
 import { CatalogProduct, CatalogProductStatus } from '../../types/catalogProduct';
 import { Product, ProductCategory } from '../../types/products';
+import { validateProductForSave } from '../../types/database';
 import {
   getFileDownloadUrl,
   getCatalogProducts,
@@ -136,14 +137,19 @@ const CatalogReview = () => {
   }, []);
 
   const transformBackendProducts = useCallback(
-    (backendProducts: CatalogProduct[]): ReviewProduct[] =>
-      backendProducts.map((product, index) => {
+    (backendProducts: CatalogProduct[]): ReviewProduct[] => {
+      // Generate a base timestamp to ensure unique IDs across all products
+      const baseTimestamp = Date.now();
+      
+      return backendProducts.map((product, index) => {
         const specsList = loadSpecsList(product.specs);
-        const safeId = Number(product.id ?? index + 1);
+        // Generate a guaranteed unique ID by combining timestamp with index
+        // This prevents ID collisions even if backend IDs are duplicated or missing
+        const uniqueId = baseTimestamp + index;
 
         return {
           ...product,
-          id: safeId,
+          id: uniqueId,
           orderingNumber: product.orderingNumber ?? '',
           description: product.description ?? '',
           manualInput: product.manualInput ?? '',
@@ -152,7 +158,8 @@ const CatalogReview = () => {
           isReviewed: product.status === CatalogProductStatus.Reviewed,
           isSaved: product.status === CatalogProductStatus.Reviewed,
         };
-      }),
+      });
+    },
     [loadSpecsList, reduceSpecsRecord],
   );
 
@@ -308,6 +315,7 @@ const CatalogReview = () => {
 
   useEffect(() => {
     setCurrentPage(1);
+    setExpandedProduct(null); // Clear expanded state when filter changes
   }, [showUnreviewedOnly, products.length]);
   useEffect(() => {
     if (routeBlocker.state === 'blocked') {
@@ -575,28 +583,25 @@ const CatalogReview = () => {
       return {
         orderingNumber: catalogProduct.orderingNumber,
         productCategory,
-        metadata: {
-          catalogProducts: [
-            {
-              fileId,
-              fileKey: fileKey ?? undefined,
-              fileName,
-              productId: catalogProduct.id,
-              tableIndex: catalogProduct.tindex,
-              snapshot: {
-                id: catalogProduct.id,
-                orderingNumber: catalogProduct.orderingNumber,
-                description: catalogProduct.description,
-                manualInput: catalogProduct.manualInput,
-                specs: catalogProduct.specs,
-                location: catalogProduct.location,
-                status: catalogProduct.status,
-                tindex: catalogProduct.tindex,
-              },
+        catalogProducts: [
+          {
+            fileId,
+            fileKey: fileKey ?? undefined,
+            fileName,
+            productId: catalogProduct.id,
+            tableIndex: catalogProduct.tindex,
+            snapshot: {
+              id: catalogProduct.id,
+              orderingNumber: catalogProduct.orderingNumber,
+              description: catalogProduct.description,
+              manualInput: catalogProduct.manualInput,
+              specs: catalogProduct.specs,
+              location: catalogProduct.location,
+              status: catalogProduct.status,
+              tindex: catalogProduct.tindex,
             },
-          ],
-        },
-        text_description: buildProductTextDescription(catalogProduct),
+          },
+        ],
       };
     },
     [buildProductTextDescription],
@@ -709,6 +714,16 @@ const CatalogReview = () => {
             resolvedCategory,
           ),
         );
+
+        // Validate all products before saving
+        productsToSave.forEach((product, index) => {
+          try {
+            validateProductForSave(product);
+          } catch (error) {
+            console.error(`[CatalogReview] Product validation failed at index ${index}:`, error);
+            throw new Error(`Product validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        });
 
         await saveProductsFromCatalog(productsToSave);
 
@@ -982,6 +997,16 @@ const CatalogReview = () => {
     const startIndex = (currentPage - 1) * PAGE_SIZE;
     return filteredProducts.slice(startIndex, startIndex + PAGE_SIZE);
   }, [currentPage, filteredProducts]);
+
+  // Clear expanded product when changing pages or when it's no longer visible
+  useEffect(() => {
+    if (expandedProduct !== null) {
+      const isExpandedProductVisible = paginatedProducts.some((p) => p.id === expandedProduct);
+      if (!isExpandedProductVisible) {
+        setExpandedProduct(null);
+      }
+    }
+  }, [currentPage, expandedProduct, paginatedProducts]);
 
   const reviewedCount = useMemo(
     () => products.filter((product) => product.isReviewed).length,
@@ -1270,7 +1295,7 @@ const CatalogReview = () => {
                             }}
                             title="Mark as unreviewed"
                           >
-                            Unreviewed
+                            Undo
                           </button>
                         ) : (
                           <button
@@ -1282,7 +1307,7 @@ const CatalogReview = () => {
                             }}
                             title="Mark as reviewed"
                           >
-                            Reviewed
+                            ✓ Reviewed
                           </button>
                         )}
                       </div>

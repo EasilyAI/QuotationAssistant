@@ -412,16 +412,13 @@ const SingleSearch = () => {
                       </tr>
                     )}
                     {catalogProducts.map((product) => {
-                      const snapshot = product.metadata?.catalogProductSnapshot;
+                      const snapshot = product.catalogProducts?.[0]?.snapshot;
                       const displayName =
                         snapshot?.description ||
                         snapshot?.manualInput ||
-                        product.text_description ||
                         product.orderingNumber;
                       const secondaryText =
-                        product.text_description && product.text_description !== displayName
-                          ? product.text_description
-                          : snapshot?.manualInput && snapshot.manualInput !== displayName
+                        snapshot?.manualInput && snapshot.manualInput !== displayName
                             ? snapshot.manualInput
                             : '';
                       const truncatedSecondary =

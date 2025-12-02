@@ -91,6 +91,7 @@ provider:
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.filesTable}
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.catalogProductsTable}
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.productsTable}
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.productsTable}/index/*
         - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.priceListProductsTable}
 
     # Textract permissions (for PDFs)
@@ -295,10 +296,19 @@ resources:
         AttributeDefinitions:
           - AttributeName: orderingNumber
             AttributeType: S
+          - AttributeName: productCategory
+            AttributeType: S
         KeySchema:
           - AttributeName: orderingNumber
             KeyType: HASH
-
+        GlobalSecondaryIndexes:
+          - IndexName: ProductCategoryIndex
+            KeySchema:
+              - AttributeName: productCategory
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+              
     PriceListProductsTable:
       Type: AWS::DynamoDB::Table
       Properties:

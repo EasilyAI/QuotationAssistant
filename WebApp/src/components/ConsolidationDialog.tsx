@@ -52,45 +52,36 @@ const ConsolidationDialog: React.FC<ConsolidationDialogProps> = ({
                   <div className="product-preview">
                     <p>
                       <strong>Description:</strong>{' '}
-                      {conflict.existing.metadata?.catalogProducts?.[0]?.snapshot?.description || '—'}
+                      {conflict.existing.catalogProducts?.[0]?.snapshot?.description || '—'}
                     </p>
                     <p>
                       <strong>Source:</strong>{' '}
-                      {conflict.existing.metadata?.catalogProducts?.[0]?.fileName ||
-                        conflict.existing.metadata?.catalogProducts?.[0]?.fileId ||
-                        (conflict.existing.metadata?.priceListPointers?.[0] 
-                          ? `Price List (File: ${conflict.existing.metadata.priceListPointers[0].fileId})`
+                      {conflict.existing.catalogProducts?.[0]?.fileName ||
+                        conflict.existing.catalogProducts?.[0]?.fileId ||
+                        (conflict.existing.priceListPointers?.[0] 
+                          ? `Price List (File: ${conflict.existing.priceListPointers[0].fileId})`
                           : '—')}
                     </p>
-                    {conflict.existing.metadata?.catalogProducts?.[0]?.snapshot?.specs &&
-                      Object.keys(conflict.existing.metadata.catalogProducts[0].snapshot.specs).length > 0 && (
+                    {conflict.existing.catalogProducts?.[0]?.snapshot?.specs &&
+                      Object.keys(conflict.existing.catalogProducts[0].snapshot.specs).length > 0 && (
                       <div className="specs-preview">
                         <strong>Specs:</strong>
                         <ul>
-                          {Object.entries(conflict.existing.metadata.catalogProducts[0].snapshot.specs)
+                          {Object.entries(conflict.existing.catalogProducts[0].snapshot.specs)
                             .slice(0, 3)
                             .map(([key, value]) => (
                               <li key={key}>
                                 {String(key)}: {String(value)}
                               </li>
                             ))}
-                          {Object.keys(conflict.existing.metadata.catalogProducts[0].snapshot.specs).length > 3 && (
+                          {Object.keys(conflict.existing.catalogProducts[0].snapshot.specs).length > 3 && (
                             <li>
                               ... and{' '}
-                              {Object.keys(conflict.existing.metadata.catalogProducts[0].snapshot.specs).length - 3} more
+                              {Object.keys(conflict.existing.catalogProducts[0].snapshot.specs).length - 3} more
                             </li>
                           )}
                         </ul>
                       </div>
-                    )}
-                    <p>
-                      <strong>Text Description:</strong> {conflict.existing.text_description || '—'}
-                    </p>
-                    {conflict.existing.currentPrice !== undefined && (
-                      <p>
-                        <strong>Current Price:</strong> ${conflict.existing.currentPrice}
-                        {conflict.existing.currentPriceYear && ` (${conflict.existing.currentPriceYear})`}
-                      </p>
                     )}
                   </div>
                 </div>
