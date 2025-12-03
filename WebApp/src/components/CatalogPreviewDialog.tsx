@@ -218,6 +218,9 @@ const CatalogPreviewDialog = ({
 
   const handleDocumentLoadError = useCallback(
     (err: Error) => {
+      // Log raw pdf.js error for debugging (network/CORS/HTTP details)
+      // eslint-disable-next-line no-console
+      console.error('PDF load error (raw):', err);
       const friendlyMessage = formatErrorMessage(err);
       setError(friendlyMessage);
     },
