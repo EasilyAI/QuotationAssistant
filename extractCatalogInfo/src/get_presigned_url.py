@@ -38,11 +38,11 @@ def get_presigned_url(event, context):
 
     uploaded_file_name = body.get("fileName")  # Actual file name from upload
     content_type = body.get("contentType") or "application/octet-stream"
-    file_type = body.get("BusinessFileType") or ""  # optional extra hint
+    business_file_type = body.get("BusinessFileType") or ""  # optional extra hint
     
     # Extract form data (optional - may not be present for all requests)
     form_data = body.get("formData") or {}
-    print(f"[get_presigned_url] File details - name: {uploaded_file_name}, contentType: {content_type}, fileType: {file_type}")
+    print(f"[get_presigned_url] File details - name: {uploaded_file_name}, contentType: {content_type}, businessFileType: {business_file_type}")
 
     if not uploaded_file_name:
         print(f"[get_presigned_url] ERROR: fileName is required but not provided")
@@ -117,7 +117,12 @@ def get_presigned_url(event, context):
             "Metadata": {
                 "file-id": file_id,  # Store fileId in S3 object metadata
                 "original-filename": uploaded_file_name,
-                "file-type": file_type
+                "business-file-type": business_file_type,
+                "file-type": ext.upper(),
+                "product-category": form_data.get("productCategory"),
+                "ordering-number": form_data.get("orderingNumber"),
+                "year": form_data.get("year"),
+                "catalog-serial-number": form_data.get("catalogSerialNumber")
             }
         },
         ExpiresIn=3600,  # URL valid for 1 hour
