@@ -7,6 +7,7 @@ from datetime import datetime
 import boto3
 
 from utils.corsHeaders import get_cors_headers
+from utils.file_details import normalize_file_name, normalize_catalog_serial_number
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -15,12 +16,11 @@ BUCKET = "hb-files-raw"
 # BUCKET = os.environ["UPLOAD_BUCKET"]
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
 
+
 def get_presigned_url(event, context):
     print(f"[get_presigned_url] Starting request processing")
     
     # Handle OPTIONS preflight request
-    # For API Gateway HTTP API v2, check the method in requestContext
-    json.dumps(event)
     http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
     print(f"[get_presigned_url] HTTP method: {http_method}")
     
@@ -60,17 +60,19 @@ def get_presigned_url(event, context):
     if "." in uploaded_file_name:
         ext = uploaded_file_name.rsplit(".", 1)[-1].lower()
     else:
-        ext = "bin"
+        ext = ""
 
     # S3 key is just the filename in uploads folder
-    # Format: uploads/{filename}
-    key = f"uploads/{uploaded_file_name}"
-    print(f"[get_presigned_url] S3 key: {key}, file extension: {ext}")
+    normalized_file_name = normalize_file_name(uploaded_file_name)
+    key = f"uploads/{normalized_file_name}"
+    print(f"[get_presigned_url] S3 key: {key}, file extension: {ext or 'None'}")
+
+    normalized_catalog_serial_number = normalize_catalog_serial_number(form_data.get("catalogSerialNumber"))
 
     # Build DynamoDB item with form data as top-level fields
     item = {
         "fileId": file_id,
-        "uploadedFileName": uploaded_file_name,  # Actual S3 file name
+        "uploadedFileName": normalized_file_name,  # Actual S3 file name
         "fileType": ext.upper(),  # PDF / XLSX / etc
         "bucket": BUCKET,
         "key": key,
@@ -87,7 +89,7 @@ def get_presigned_url(event, context):
         "description": form_data.get("description"),
         "onlineLink": form_data.get("onlineLink"),
         "productCategory": form_data.get("productCategory"),
-        "catalogSerialNumber": form_data.get("catalogSerialNumber"),
+        "catalogSerialNumber": normalized_catalog_serial_number,
     }
     print(f"[get_presigned_url] Built DynamoDB item with {len(item)} fields")
 
@@ -96,7 +98,7 @@ def get_presigned_url(event, context):
     try:
         print(f"[get_presigned_url] Saving record to DynamoDB table: {FILES_TABLE}")
         table.put_item(Item=item)
-        print(f"[get_presigned_url] Saved file record: fileId={file_id}, uploadedFileName={uploaded_file_name}, displayName={item.get('displayName', 'N/A')}")
+        print(f"[get_presigned_url] Saved file record: fileId={file_id}, uploadedFileName={normalized_file_name}, displayName={item.get('displayName', 'N/A')}")
     except Exception as e:
         print(f"[get_presigned_url] ERROR: Failed to save to DynamoDB: {e}")
         return {
@@ -115,14 +117,15 @@ def get_presigned_url(event, context):
             "Key": key,
             "ContentType": content_type,
             "Metadata": {
-                "file-id": file_id,  # Store fileId in S3 object metadata
-                "original-filename": uploaded_file_name,
-                "business-file-type": business_file_type,
-                "file-type": ext.upper(),
-                "product-category": form_data.get("productCategory"),
-                "ordering-number": form_data.get("orderingNumber"),
+                "file_id": file_id,  # Store fileId in S3 object metadata
+                "original_filename": uploaded_file_name,
+                "normalized_filename": normalized_file_name,
+                "business_file_type": business_file_type,
+                "file_type": ext.upper(),
+                "product_category": form_data.get("productCategory"),
+                "ordering_number": form_data.get("orderingNumber"),
                 "year": form_data.get("year"),
-                "catalog-serial-number": form_data.get("catalogSerialNumber")
+                "catalog_serial_number": normalized_catalog_serial_number
             }
         },
         ExpiresIn=3600,  # URL valid for 1 hour

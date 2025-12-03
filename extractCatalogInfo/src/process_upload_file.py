@@ -870,8 +870,15 @@ def process_uploaded_file(event, context):
                 metadata = s3_response.get('Metadata', {})
                 print(f"[process_uploaded_file] S3 head object response metadata: {json.dumps(metadata)}")
 
-                file_id = metadata.get('file-id')
-                file_type = metadata.get('file-type')
+                file_id =               metadata.get('file_id')
+                original_filename =     metadata.get('original_filename')
+                normalized_filename =   metadata.get('normalized_filename')
+                business_file_type =    metadata.get('business_file_type')
+                file_type =             metadata.get('file_type')
+                product_category =      metadata.get('product_category')
+                ordering_number =       metadata.get('ordering_number')
+                year =                  metadata.get('year')
+                catalog_serial_number = metadata.get('catalog_serial_number')
         
             except Exception as e:
                 print(f"[process_uploaded_file] ERROR: Failed to get S3 object metadata: {e}")
@@ -880,21 +887,21 @@ def process_uploaded_file(event, context):
                     "body": json.dumps({"error": "Failed to get S3 object metadata"}),
                 }
 
-            if not file_id or not file_type:       
+            if not file_id or not business_file_type:       
                 print(f"[process_uploaded_file] ERROR: No file ID or file type found")
                 return {
                     "statusCode": 500,
                     "body": json.dumps({"error": "No file ID or file type found"}),
                 }
 
-            if file_type == 'Price List':
+            if business_file_type == 'Price List':
                 result = process_price_list(file_id, s3_key)
                 return {
                     "statusCode": 200 if result['success'] else 500,
                     "body": json.dumps(result),
                 }
 
-            elif file_type == 'Sales Drawing':
+            elif business_file_type == 'Sales Drawing':
                 result = process_sales_drawing(file_id, s3_key)
                 return {
                     "statusCode": 200,
