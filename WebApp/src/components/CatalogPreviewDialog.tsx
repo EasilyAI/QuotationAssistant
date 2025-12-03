@@ -8,8 +8,9 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './CatalogPreviewDialog.css';
 
-// Use CDN for worker to avoid build/path issues in production (Vercel)
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
+// Use local worker file from public folder (works in both dev and production)
+// The file is copied from node_modules during build setup
+pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 type CatalogPreviewDialogProps = {
   isOpen: boolean;
