@@ -90,7 +90,7 @@ const formatDate = (isoDate?: string, fallbackTimestamp?: number): string => {
   return '—';
 };
 
-const formatStatusLabel = (status?: FileStatus | null): string => status.replace('_'," ") ?? '';
+const formatStatusLabel = (status?: FileStatus | null): string => status?.replace('_'," ") ?? '';
 
 const getProgress = (file: DBFile): number => {
   const productsCount = typeof file.productsCount === 'number' ? file.productsCount : undefined;
