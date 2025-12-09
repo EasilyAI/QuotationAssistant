@@ -41,6 +41,8 @@ def get_qdrant_manager() -> QdrantManager:
 
 def process_insert_or_modify(record: Dict[str, Any]) -> None:
     """
+    ADD GET PRODUCT FUNCTION FROM OTHER SERVICE - TO GET ALL PRODUCT INFORMATION.
+    
     Process INSERT or MODIFY events from DynamoDB Stream.
     
     Args:
