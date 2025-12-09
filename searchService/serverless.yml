@@ -1,0 +1,155 @@
+service: product-search-service
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512  # Lightweight - Bedrock embeddings via API
+  timeout: 30
+  
+  environment:
+    # Qdrant Cloud Configuration
+    QDRANT_URL: ${env:QDRANT_URL}
+    QDRANT_API_KEY: ${env:QDRANT_API_KEY}
+    QDRANT_COLLECTION: products
+    
+    # Embedding Model Configuration (AWS Bedrock - NO Docker needed!)
+    EMBEDDING_MODEL: amazon.titan-embed-text-v1
+    VECTOR_SIZE: 1536
+    
+    # Optional: OpenAI API Key (if using OpenAI embeddings)
+    # OPENAI_API_KEY: ${env:OPENAI_API_KEY, ''}
+    
+    # DynamoDB Configuration
+    PRODUCT_TABLE: ${self:custom.productTable}
+    
+    # Logging
+    LOG_LEVEL: INFO
+  
+  iam:
+    role:
+      statements:
+        # DynamoDB permissions (read-only for stream)
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:DescribeStream
+            - dynamodb:GetRecords
+            - dynamodb:GetShardIterator
+            - dynamodb:ListStreams
+          Resource:
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.productTable}
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.productTable}/stream/*
+        
+        # AWS Bedrock permissions (for embeddings - NO Docker needed!)
+        - Effect: Allow
+          Action:
+            - bedrock:InvokeModel
+          Resource:
+            - arn:aws:bedrock:*:*:foundation-model/amazon.titan-embed-text-v1
+            - arn:aws:bedrock:*:*:foundation-model/cohere.embed-english-v3
+        
+        # CloudWatch Logs
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: '*'
+
+custom:
+  productTable: hb-products
+  serverless-offline:
+    httpPort: 3000
+    lambdaPort: 3002
+    useChildProcesses: true
+    noPrependStageInUrl: true
+  pythonRequirements:
+    # No Docker needed - our dependencies are lightweight (pure Python)
+    dockerizePip: false
+    slim: true
+    strip: false
+    zip: true
+    pythonBin: python3
+    noDeploy:
+      - boto3
+      - botocore
+      - docutils
+      - jmespath
+      - pip
+      - python-dateutil
+      - s3transfer
+      - setuptools
+      - six
+      - urllib3
+
+functions:
+  searchIndexer:
+    handler: indexer/handler.handler
+    description: Indexes products into Qdrant from DynamoDB Stream (using Bedrock embeddings)
+    memorySize: 512
+    timeout: 60
+    # Note: You need to manually add the stream ARN after confirming your table has streams enabled
+    # events:
+    #   - stream:
+    #       type: dynamodb
+    #       arn: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.productTable}/stream/STREAM_LABEL
+    #       batchSize: 10
+    #       startingPosition: LATEST
+    #       maximumRetryAttempts: 3
+    #       enabled: true
+
+  searchApi:
+    handler: api/handler.handler
+    description: Search API for vector search and autocomplete (using Bedrock embeddings)
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /search
+          method: get
+      - httpApi:
+          path: /autocomplete
+          method: get
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline
+
+package:
+  individually: false
+  patterns:
+    - '!node_modules/**'
+    - '!.venv/**'
+    - '!__pycache__/**'
+    - '!*.pyc'
+    - '!.pytest_cache/**'
+    - '!tests/**'
+    - '!.serverless/**'
+    - '!.git/**'
+    - '!.env'
+    - '!.env.*'
+    - '!*.md'
+    - '!scripts/**'
+    - '!documentation/**'
+    - 'indexer/**'
+    - 'api/**'
+    - 'schemas/**'
+
+resources:
+  Outputs:
+    SearchApiUrl:
+      Description: Search API URL
+      Value:
+        Fn::Sub: https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+      Export:
+        Name: ${self:service}-${self:provider.stage}-api-url
+    
+    QdrantCollection:
+      Description: Qdrant Collection Name
+      Value: ${self:provider.environment.QDRANT_COLLECTION}
+      Export:
+        Name: ${self:service}-${self:provider.stage}-qdrant-collection

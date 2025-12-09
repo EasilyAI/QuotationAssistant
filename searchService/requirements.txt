@@ -1,0 +1,7 @@
+# Lightweight requirements for Bedrock embeddings
+
+# AWS SDK (provided by Lambda runtime, but keep for local dev)
+boto3>=1.34.0
+
+# Qdrant Client (lightweight, pure Python)
+qdrant-client>=1.7.0

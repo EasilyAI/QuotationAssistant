@@ -1,0 +1,26 @@
+{
+  "name": "product-search-service",
+  "version": "1.0.0",
+  "description": "Search Service for Product using Qdrant Cloud and AWS Bedrock",
+  "scripts": {
+    "deploy": "serverless deploy",
+    "dev": "serverless offline start",
+    "deploy:dev": "serverless deploy --stage dev",
+    "deploy:prod": "serverless deploy --stage prod",
+    "remove": "serverless remove",
+    "logs:indexer": "serverless logs -f searchIndexer -t",
+    "logs:api": "serverless logs -f searchApi -t",
+    "info": "serverless info",
+    "package": "serverless package",
+    "offline": "serverless offline start",
+    "init": "node scripts/invoke-offline.js searchIndexer"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-lambda": "^3.947.0",
+    "serverless": "^3.38.0",
+    "serverless-offline": "^13.9.0",
+    "serverless-python-requirements": "^6.1.2"
+  },
+  "author": "",
+  "license": "ISC"
+}
