@@ -11,7 +11,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from utils.corsHeaders import get_cors_headers
 from utils.helpers import convert_decimals_to_native, convert_floats_to_decimal
 from utils.file_details import build_file_details
-from utils.types import create_product_item, validate_product_structure
+from utils.app_types import create_product_item, validate_product_structure
 
 from shared.product_types import Product, CatalogProductPointer, PriceListPointer
 
