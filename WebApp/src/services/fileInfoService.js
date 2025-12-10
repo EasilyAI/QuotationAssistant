@@ -1,4 +1,4 @@
-import { API_CONFIG } from '../config/apiConfig';
+import { API_CONFIG, buildFileApiUrl } from '../config/apiConfig';
 import { BusinessFileType } from '../types/index';
 
 /** Service for retrieving file information and checking file existence */
@@ -6,7 +6,7 @@ import { BusinessFileType } from '../types/index';
 
 
 export const getFiles = async () => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}/api/files`, {
+  const response = await fetch(buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.FILES), {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -23,15 +23,9 @@ export const getFiles = async () => {
  * @returns {Promise<Object>} File information from backend including status and processing metadata
  */
 export const getFileInfo = async (fileId) => {
-  // Normalize URL to avoid double slashes
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
-    ? API_CONFIG.BASE_URL.slice(0, -1) 
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-  
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}`, {
+  const response = await fetch(
+    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}`),
+    {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -54,14 +48,7 @@ export const getFileInfo = async (fileId) => {
  * @returns {Promise<{url: string}>}
  */
 export const getFileDownloadUrl = async (key) => {
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
-    ? API_CONFIG.BASE_URL.slice(0, -1)
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-
-  const response = await fetch(`${baseUrl}${endpoint}/download-url`, {
+  const response = await fetch(buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.DOWNLOAD_URL), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -83,14 +70,9 @@ export const getFileDownloadUrl = async (key) => {
  * @returns {Promise<Object>} Products data from the file
  */
 export const getCatalogProducts = async (fileId) => {
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
-    ? API_CONFIG.BASE_URL.slice(0, -1) 
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-  
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/catalog-products`, {
+  const response = await fetch(
+    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/catalog-products`),
+    {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -111,14 +93,9 @@ export const getCatalogProducts = async (fileId) => {
  * @returns {Promise<Object>} Products data from the file
  */
 export const getPriceListProducts = async (fileId) => {
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
-    ? API_CONFIG.BASE_URL.slice(0, -1) 
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-  
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/price-list-products`, {
+  const response = await fetch(
+    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/price-list-products`),
+    {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -152,14 +129,9 @@ export const getFileProducts = async (fileId, businessFileType = 'Catalog') => {
  * @param {Array<object>} products
  */
 export const updateCatalogProducts = async (fileId, products) => {
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
-    ? API_CONFIG.BASE_URL.slice(0, -1)
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/catalog-products`, {
+  const response = await fetch(
+    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/catalog-products`),
+    {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -181,14 +153,9 @@ export const updateCatalogProducts = async (fileId, products) => {
  * @param {Array<object>} products
  */
 export const updatePriceListProducts = async (fileId, products) => {
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
-    ? API_CONFIG.BASE_URL.slice(0, -1)
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/price-list-products`, {
+  const response = await fetch(
+    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/price-list-products`),
+    {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -226,14 +193,9 @@ export const updateFileProducts = async (fileId, products) => {
  * @param {string} fileId
  */
 export const completeFileReview = async (fileId) => {
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
-    ? API_CONFIG.BASE_URL.slice(0, -1)
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}/complete`, {
+  const response = await fetch(
+    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/complete`),
+    {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -362,14 +324,6 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
       year: formData?.year,
     });
 
-    // Normalize URL to avoid double slashes
-    const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
-      ? API_CONFIG.BASE_URL.slice(0, -1) 
-      : API_CONFIG.BASE_URL;
-    const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-      ? API_CONFIG.FILE_INFO_ENDPOINT
-      : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-    
     // Build request body based on file type
     const requestBody = {
       // IMPORTANT: Align with backend field names
@@ -390,7 +344,9 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
 
     console.log('[checkFileExistsInS3] Request payload for backend check_file_exists:', requestBody);
 
-    const response = await fetch(`${baseUrl}${endpoint}/check-file-exists`, {
+    const response = await fetch(
+      buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.CHECK_EXISTS),
+      {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -500,14 +456,9 @@ export const validateFileDoesNotExist = async (formData, fileType) => {
  * @returns {Promise<Object>} Deletion result
  */
 export const deleteFile = async (fileId) => {
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/')
-    ? API_CONFIG.BASE_URL.slice(0, -1)
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.FILE_INFO_ENDPOINT.startsWith('/')
-    ? API_CONFIG.FILE_INFO_ENDPOINT
-    : `/${API_CONFIG.FILE_INFO_ENDPOINT}`;
-
-  const response = await fetch(`${baseUrl}${endpoint}/${fileId}`, {
+  const response = await fetch(
+    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}`),
+    {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',

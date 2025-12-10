@@ -4,6 +4,7 @@ Qdrant Cloud client for vector storage operations.
 
 import os
 import logging
+import uuid
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -75,9 +76,17 @@ class QdrantManager:
             logger.error(f"Error ensuring collection exists: {str(e)}")
             raise
     
+    def _build_point_id(self, ordering_number: str) -> str:
+        """
+        Build a deterministic UUID for a product based on its ordering number.
+        Using uuid5 keeps the point id stable across upserts/deletes without
+        storing an extra mapping.
+        """
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"products:{ordering_number}"))
+
     def upsert_product(
         self,
-        product_id: str,
+        ordering_number: str,
         vector: List[float],
         metadata: Dict[str, Any]
     ) -> bool:
@@ -94,7 +103,7 @@ class QdrantManager:
         """
         try:
             point = PointStruct(
-                id=product_id,
+                id=self._build_point_id(ordering_number),
                 vector=vector,
                 payload=metadata
             )
@@ -104,11 +113,11 @@ class QdrantManager:
                 points=[point]
             )
             
-            logger.info(f"Upserted product {product_id} to Qdrant")
+            logger.info(f"Upserted product {ordering_number} to Qdrant")
             return True
             
         except Exception as e:
-            logger.error(f"Error upserting product {product_id}: {str(e)}")
+            logger.error(f"Error upserting product {ordering_number}: {str(e)}")
             raise
     
     def batch_upsert_products(
@@ -146,7 +155,7 @@ class QdrantManager:
             logger.error(f"Error batch upserting products: {str(e)}")
             raise
     
-    def delete_product(self, product_id: str) -> bool:
+    def delete_product(self, ordering_number: str) -> bool:
         """
         Delete a product from Qdrant.
         
@@ -157,16 +166,14 @@ class QdrantManager:
             bool: True if successful
         """
         try:
-            self.client.delete(
-                collection_name=self.collection_name,
-                points_selector=[product_id]
-            )
+            point_id = self._build_point_id(ordering_number)
+            self.client.delete(collection_name=self.collection_name, points_selector=[point_id])
             
-            logger.info(f"Deleted product {product_id} from Qdrant")
+            logger.info(f"Deleted product {ordering_number} from Qdrant")
             return True
             
         except Exception as e:
-            logger.error(f"Error deleting product {product_id}: {str(e)}")
+            logger.error(f"Error deleting product {ordering_number}: {str(e)}")
             raise
     
     def search(

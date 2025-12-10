@@ -18,22 +18,11 @@ def prepare_product_metadata(product_data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Metadata dict optimized for search and filtering
     """
-    metadata = {
-        'orderingNumber': product_data.get('orderingNumber', ''),
-        'category': product_data.get('category', ''),
-        'oneLiner': product_data.get('oneLiner', ''),
-        'specs': product_data.get('specs', ''),
-        'manualNotes': product_data.get('manualNotes', ''),
+    return {
+        "orderingNumber": product_data.get("orderingNumber", ""),
+        "productCategory": product_data.get("productCategory", product_data.get("category", "")),
+        
     }
-    
-    # Add optional fields if present
-    if product_data.get('catalogProduct'):
-        metadata['catalogProduct'] = product_data['catalogProduct']
-    
-    if product_data.get('priceListProducts'):
-        metadata['priceListProducts'] = product_data['priceListProducts']
-    
-    return metadata
 
 
 def clean_text(text: str) -> str:
@@ -71,25 +60,42 @@ def prepare_search_text(product_data: Dict[str, Any]) -> str:
     """
     parts = []
     
-    # Add SKU with context
-    if product_data.get('orderingNumber'):
-        parts.append(f"SKU: {product_data['orderingNumber']}")
-    
+    # Add ordering number
+    if product_data.get("orderingNumber"):
+        parts.append(f"Ordering Number: {product_data['orderingNumber']}")
+
     # Add category
-    if product_data.get('category'):
-        parts.append(f"Category: {product_data['category']}")
-    
-    # Add one-liner (most important)
-    if product_data.get('oneLiner'):
-        parts.append(product_data['oneLiner'])
-    
-    # Add specifications
-    if product_data.get('specs'):
-        parts.append(f"Specifications: {product_data['specs']}")
-    
-    # Add manual notes
-    if product_data.get('manualNotes'):
-        parts.append(f"Notes: {product_data['manualNotes']}")
+    if product_data.get("productCategory"):
+        parts.append(f"Category: {product_data['productCategory']}")
+
+    # Add description from currentPrice (this is the one-liner)
+    current_price = product_data.get("currentPrice") or {}
+    if isinstance(current_price, dict) and current_price.get("description"):
+        parts.append(current_price["description"])
+
+    # Add specifications from catalog products
+    catalog_products = product_data.get("catalogProducts") or []
+    for catalog_product in catalog_products:
+        if not isinstance(catalog_product, dict):
+            continue
+        
+        # Add specs from catalog product
+        specs = catalog_product.get("specs")
+        if specs and isinstance(specs, dict):
+            spec_parts = []
+            for key, value in specs.items():
+                if value:
+                    spec_parts.append(f"{key}: {value}")
+            if spec_parts:
+                parts.append(f"Specifications: {', '.join(spec_parts)}")
+
+    # Add manual input if available
+    if product_data.get("manualInput"):
+        parts.append(f"Manual Input: {product_data['manualInput']}")
+
+    # Add price hint if available
+    if isinstance(current_price, dict) and current_price.get("price") is not None:
+        parts.append(f"Price: {current_price.get('price')}")
     
     combined = " | ".join(parts)
     
@@ -104,4 +110,3 @@ def prepare_search_text(product_data: Dict[str, Any]) -> str:
         logger.warning(f"Text truncated to {max_chars} chars for product {product_data.get('orderingNumber')}")
     
     return cleaned
-

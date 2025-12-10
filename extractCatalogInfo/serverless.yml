@@ -218,13 +218,6 @@ functions:
           path: /api/products/from-price-list
           method: post
 
-  getProduct:
-    handler: src/get_files.get_product
-    events:
-      - httpApi:
-          path: /api/products/{orderingNumber}
-          method: get
-
   listProducts:
     handler: src/get_files.list_products
     events:

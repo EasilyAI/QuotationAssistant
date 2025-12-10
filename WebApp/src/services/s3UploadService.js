@@ -1,19 +1,11 @@
 import { BusinessFileType } from '../types/index';
-import { API_CONFIG } from '../config/apiConfig';
+import { API_CONFIG, buildFileApiUrl } from '../config/apiConfig';
 
 /** Service for uploading files directly to S3 using presigned URLs */
 
 
 /** Request a presigned URL from the backend API */
 const getPresignedUrl = async (fileName, fileType, contentType, formData = null) => {
-  // Normalize URL to avoid double slashes
-  const baseUrl = API_CONFIG.BASE_URL.endsWith('/') 
-    ? API_CONFIG.BASE_URL.slice(0, -1) 
-    : API_CONFIG.BASE_URL;
-  const endpoint = API_CONFIG.PRESIGNED_URL_ENDPOINT.startsWith('/')
-    ? API_CONFIG.PRESIGNED_URL_ENDPOINT
-    : `/${API_CONFIG.PRESIGNED_URL_ENDPOINT}`;
-  
   const requestBody = {
     fileName,
     BusinessFileType: fileType,
@@ -25,7 +17,7 @@ const getPresignedUrl = async (fileName, fileType, contentType, formData = null)
     requestBody.formData = formData;
   }
   
-  const response = await fetch(`${baseUrl}${endpoint}`, {
+  const response = await fetch(buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRESIGNED_URL), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

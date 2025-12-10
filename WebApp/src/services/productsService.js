@@ -1,9 +1,4 @@
-import { API_CONFIG } from '../config/apiConfig';
-
-const getBaseUrl = () => {
-  const base = API_CONFIG.BASE_URL || '';
-  return base.endsWith('/') ? base.slice(0, -1) : base;
-};
+import { API_CONFIG, buildFileApiUrl, buildSearchApiUrl } from '../config/apiConfig';
 
 /**
  * Check for existing products by ordering numbers
@@ -11,9 +6,9 @@ const getBaseUrl = () => {
  * @returns {Promise<Object>} Object with existing products keyed by orderingNumber
  */
 export const checkExistingProducts = async (orderingNumbers) => {
-  const baseUrl = getBaseUrl();
-
-  const response = await fetch(`${baseUrl}/api/products/check-existing`, {
+  const response = await fetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS_CHECK_EXISTING),
+    {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -36,9 +31,9 @@ export const checkExistingProducts = async (orderingNumbers) => {
  * @returns {Promise<Object>} Save result
  */
 export const saveProductsFromCatalog = async (products) => {
-  const baseUrl = getBaseUrl();
-
-  const response = await fetch(`${baseUrl}/api/products/from-catalog`, {
+  const response = await fetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS_FROM_CATALOG),
+    {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -61,9 +56,9 @@ export const saveProductsFromCatalog = async (products) => {
  * @returns {Promise<Object>} Save result
  */
 export const saveProductsFromPriceList = async (products) => {
-  const baseUrl = getBaseUrl();
-
-  const response = await fetch(`${baseUrl}/api/products/from-price-list`, {
+  const response = await fetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS_FROM_PRICE_LIST),
+    {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -89,8 +84,9 @@ export const fetchProductByOrderingNumber = async (orderingNumber) => {
     throw new Error('orderingNumber is required');
   }
 
-  const baseUrl = getBaseUrl();
-  const response = await fetch(`${baseUrl}/api/products/${encodeURIComponent(orderingNumber)}`, {
+  const response = await fetch(
+    buildSearchApiUrl(`${API_CONFIG.SEARCH_ENDPOINTS.PRODUCT}/${encodeURIComponent(orderingNumber)}`),
+    {
     method: 'GET',
   });
 
@@ -108,7 +104,6 @@ export const fetchProductByOrderingNumber = async (orderingNumber) => {
  * @returns {Promise<{ products: Object[]; count: number; hasMore: boolean; cursor?: string }>}
  */
 export const fetchProducts = async (params = {}) => {
-  const baseUrl = getBaseUrl();
   const { productCategory, limit = 50, cursor } = params;
 
   const searchParams = new URLSearchParams();
@@ -122,7 +117,9 @@ export const fetchProducts = async (params = {}) => {
     searchParams.set('cursor', cursor);
   }
 
-  const url = `${baseUrl}/api/products${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
+  const url = `${buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS)}${
+    searchParams.toString() ? `?${searchParams.toString()}` : ''
+  }`;
   const response = await fetch(url);
 
   if (!response.ok) {

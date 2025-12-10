@@ -49,6 +49,8 @@ extractCatalogInfo/serverless/
 extractCatalogInfo/.serverless/
 .requirements.zip
 **/.requirements.zip
+**/.requirements/
+
 
 # IDE
 .vscode/

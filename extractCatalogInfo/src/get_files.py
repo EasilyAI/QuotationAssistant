@@ -11,13 +11,9 @@ from boto3.dynamodb.conditions import Attr, Key
 from utils.corsHeaders import get_cors_headers
 from utils.helpers import convert_decimals_to_native, convert_floats_to_decimal
 from utils.file_details import build_file_details
-from utils.types import (
-    Product,
-    CatalogProductPointer,
-    PriceListPointer,
-    create_product_item,
-    validate_product_structure,
-)
+from utils.types import create_product_item, validate_product_structure
+
+from shared.product_types import Product, CatalogProductPointer, PriceListPointer
 
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
@@ -25,7 +21,7 @@ s3 = boto3.client("s3")
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")
 PRODUCTS_TABLE = os.environ.get("PRODUCTS_TABLE", "hb-products")
-PRICE_LIST_PRODUCTS_TABLE = os.environ.get("PRICE_LIST_PRODUCTS_TABLE", "hb-price-list-products")
+PRICE_LIST_PRODUCTS_TABLE = os.environ.get("PRICE_LIST_PRODUCTS_TABLE", "hb-pricelist-products")
 UPLOAD_BUCKET = os.environ.get("UPLOAD_BUCKET", "hb-files-raw")
 
 
@@ -1945,98 +1941,18 @@ def fetch_price_for_product(ordering_number: str, price_list_pointers: List[Dict
 
 def get_product(event, context):
     """
-    Retrieve a single product by ordering number from the Products table.
-    Resolves pointers to fetch catalog and price list data asynchronously.
-    
-    IMPORTANT: Fetches live data from catalog-products table, NOT snapshots!
-    Users can edit specs after initial save, so we need current data.
-    
-    Returns a consolidated product object with:
-    - Product base fields (orderingNumber, productCategory, timestamps)
-    - catalogProducts array with RESOLVED data from catalog-products table
-    - priceListPointers array (resolved with metadata)
-    - currentPrice object (fetched from most recent price list)
+    Deprecated: this endpoint moved to product-search-service.
+    Kept as a stub to prevent accidental use.
     """
-    print("[get_product] Starting request")
-
-    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
-    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
-        return {
-            "statusCode": 200,
-            "body": "",
-            "headers": get_cors_headers(),
-        }
-
-    path_params = event.get("pathParameters") or {}
-    ordering_number = path_params.get("orderingNumber")
-    print(f"[get_product] Requested ordering number: {ordering_number}")
-
-    if not ordering_number:
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "orderingNumber is required"}),
-            "headers": get_cors_headers(),
-        }
-
-    products_table = dynamodb.Table(PRODUCTS_TABLE)
-
-    try:
-        # Step 1: Fetch the product from Products table
-        response = products_table.get_item(Key={"orderingNumber": ordering_number})
-        item = response.get("Item")
-
-        if not item:
-            return {
-                "statusCode": 404,
-                "body": json.dumps({"error": "Product not found"}),
-                "headers": get_cors_headers(),
-            }
-
-        # Convert Decimal types to native types
-        product = convert_decimals_to_native(item)
-        print(f"[get_product] Found product: {ordering_number}")
-        
-        # Step 2: Resolve catalog product pointers - fetch LIVE data from catalog-products table
-        # DO NOT use snapshots! Users can edit specs after initial save.
-        catalog_product_pointers = product.get("catalogProducts", [])
-        print(f"[get_product] Product has {len(catalog_product_pointers)} catalog product pointers: {json.dumps(catalog_product_pointers)}")
-        
-        resolved_catalog_products = resolve_catalog_product_pointers(catalog_product_pointers, ordering_number)
-        print(f"[get_product] Resolved {len(resolved_catalog_products)} catalog products")
-        
-        # Step 3: Resolve price list pointers (fetch metadata from chunks)
-        price_list_pointers = product.get("priceListPointers", [])
-        print(f"[get_product] Product has {len(price_list_pointers)} price list pointers")
-        
-        resolved_price_list_pointers = resolve_price_list_pointers(price_list_pointers)
-        
-        # Step 4: Fetch current price from most recent price list
-        current_price = fetch_price_for_product(ordering_number, price_list_pointers)
-        
-        # Step 5: Build consolidated response with RESOLVED catalog products
-        response_product = {
-            **product,
-            "catalogProducts": resolved_catalog_products,
-            "priceListPointers": resolved_price_list_pointers,
-            "currentPrice": current_price,
-        }
-        
-        print(f"[get_product] Successfully resolved product {ordering_number}")
-        return {
-            "statusCode": 200,
-            "body": json.dumps(response_product),
-            "headers": get_cors_headers(),
-        }
-        
-    except Exception as error:
-        print(f"[get_product] ERROR retrieving product {ordering_number}: {error}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "statusCode": 500,
-            "body": json.dumps({"error": "Failed to get product"}),
-            "headers": get_cors_headers(),
-        }
+    print("[get_product] DEPRECATED endpoint called. Use product-search-service /product/{orderingNumber}")
+    return {
+        "statusCode": 410,
+        "body": json.dumps({
+            "error": "Deprecated endpoint",
+            "message": "Use product-search-service /product/{orderingNumber}"
+        }),
+        "headers": get_cors_headers(),
+    }
 
 
 def list_products(event, context):

@@ -10,12 +10,21 @@ import logging
 from typing import Dict, Any, List
 import sys
 
-# Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+# Add parent directory and shared path to sys.path for imports
+SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(SERVICE_ROOT, ".."))
+SHARED_DIR = os.path.join(REPO_ROOT, "shared")
+
+for path in {SERVICE_ROOT, REPO_ROOT, SHARED_DIR}:
+    if path not in sys.path:
+        sys.path.append(path)
+
+from shared.product_service import fetch_product
+from shared.product_types import decode_dynamo_image
 
 from schemas.product_model import Product
-from .qdrant_client import QdrantManager
 from .embedding_bedrock import get_embedding_generator  # Using Bedrock (no Docker needed!)
+from .qdrant_client import QdrantManager
 from .transformers import prepare_product_metadata, prepare_search_text
 
 # Configure logging
@@ -55,38 +64,52 @@ def process_insert_or_modify(record: Dict[str, Any]) -> None:
             logger.warning("No NewImage in record, skipping")
             return
         
-        # Parse product
-        product = Product.from_dynamodb_stream(new_image)
+        logger.info(f"NewImage: {json.dumps(new_image, indent=2)}")
+
+        decoded_image = decode_dynamo_image(new_image)
+        ordering_number = decoded_image.get('orderingNumber')
+
+        if not ordering_number:
+            keys = decode_dynamo_image(record['dynamodb'].get('Keys', {}))
+            ordering_number = keys.get('orderingNumber')
         
-        if not product.orderingNumber:
+        if not ordering_number:
             logger.error("Product missing orderingNumber, cannot index")
             return
         
-        logger.info(f"Indexing product: {product.orderingNumber}")
+        logger.info(f"Indexing product: {ordering_number}")
         
+        # Fetch full product with pointers resolved (no snapshots)
+        product_data = fetch_product(ordering_number)
+        print(f"Product data: {json.dumps(product_data, indent=2)}")
+
         # Prepare text for embedding
-        search_text = prepare_search_text(product.to_dict())
+        search_text = prepare_search_text(product_data)
+        print(f"Search text: {json.dumps(search_text, indent=2)}")
         
         if not search_text or search_text.strip() == "":
-            logger.warning(f"No searchable text for product {product.orderingNumber}, skipping")
+            logger.warning(f"No searchable text for product {ordering_number}, skipping")
             return
         
         # Generate embedding
         embedding_gen = get_embedding_generator()
         vector = embedding_gen.generate(search_text)
+        print(f"Successfully generated embedding vector")
         
         # Prepare metadata
-        metadata = prepare_product_metadata(product.to_dict())
+        metadata = prepare_product_metadata(product_data)
+        metadata["searchText"] = search_text
+        print(f"Metadata: {json.dumps(metadata, indent=2)}")
         
         # Upsert to Qdrant
         qdrant = get_qdrant_manager()
         qdrant.upsert_product(
-            product_id=product.orderingNumber,
+            ordering_number=ordering_number,
             vector=vector,
             metadata=metadata
         )
         
-        logger.info(f"Successfully indexed product {product.orderingNumber}")
+        logger.info(f"Successfully indexed product {ordering_number}")
         
     except Exception as e:
         logger.error(f"Error processing INSERT/MODIFY: {str(e)}", exc_info=True)
@@ -169,7 +192,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         Response with processing results
     """
     logger.info(f"Received event with {len(event.get('Records', []))} records")
-    
+    # logger.info(f"Event: {json.dumps(event, indent=2)}")
+
     # Handle manual initialization
     if event.get('action') == 'initialize':
         return handle_initialize()

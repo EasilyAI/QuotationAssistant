@@ -11,8 +11,16 @@ from typing import Dict, Any
 from urllib.parse import parse_qs
 import sys
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+# Add parent and shared directories to path
+SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(SERVICE_ROOT, ".."))
+SHARED_DIR = os.path.abspath(os.path.join(REPO_ROOT, "shared"))
+
+for path in {SERVICE_ROOT, REPO_ROOT, SHARED_DIR}:
+    if path not in sys.path:
+        sys.path.append(path)
+
+from shared.product_service import fetch_product
 
 from .qdrant_search import SearchService
 
@@ -231,6 +239,36 @@ def handle_autocomplete(event: Dict[str, Any]) -> Dict[str, Any]:
         })
 
 
+def handle_get_product(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Handle /product/{orderingNumber} requests.
+    """
+    try:
+        path_params = event.get("pathParameters") or {}
+        ordering_number = path_params.get("orderingNumber") or path_params.get("orderingnumber")
+
+        if not ordering_number:
+            # allow query param fallback
+            params = get_query_params(event)
+            ordering_number = params.get("orderingNumber") or params.get("orderingnumber")
+
+        if not ordering_number:
+            return create_response(400, {"error": "orderingNumber is required"})
+
+        logger.info(f"Fetching product {ordering_number}")
+        product = fetch_product(ordering_number)
+        return create_response(200, product)
+
+    except ValueError as e:
+        return create_response(404, {"error": str(e)})
+    except Exception as e:
+        logger.error(f"Get product error: {str(e)}", exc_info=True)
+        return create_response(500, {
+            "error": "Internal server error",
+            "message": str(e)
+        })
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Main Lambda handler for Search API.
@@ -257,13 +295,16 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return handle_search(event)
     elif '/autocomplete' in path:
         return handle_autocomplete(event)
+    elif '/product' in path:
+        return handle_get_product(event)
     else:
         return create_response(404, {
             'error': 'Not found',
-            'message': 'Valid endpoints: /search, /autocomplete',
+            'message': 'Valid endpoints: /search, /autocomplete, /product/{orderingNumber}',
             'available_endpoints': [
                 'GET /search?q=<query>&category=<category>&size=<size>',
-                'GET /autocomplete?q=<prefix>&category=<category>&size=<size>'
+                'GET /autocomplete?q=<prefix>&category=<category>&size=<size>',
+                'GET /product/{orderingNumber}'
             ]
         })
 

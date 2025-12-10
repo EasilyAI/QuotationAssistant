@@ -6,17 +6,19 @@ These types enforce structure when reading/writing to DynamoDB tables.
 from typing import TypedDict, Optional, List, Dict, Any
 from decimal import Decimal
 
+from shared.product_types import (
+    CatalogProductLocation,
+    CatalogProductPointer,
+    CatalogProductSnapshot,
+    PriceListPointer,
+    Product,
+    SalesDrawingPointer,
+)
 
 # ============================================================================
 # CATALOG PRODUCTS TABLE (hb-catalog-products)
 # Temporary table for review before saving to Products table
 # ============================================================================
-
-class CatalogProductLocation(TypedDict, total=False):
-    """Location information for a catalog product."""
-    page: Optional[int]
-    boundingBox: Optional[Dict[str, Any]]
-
 
 class CatalogProductItem(TypedDict, total=False):
     """Individual catalog product in the review table."""
@@ -109,49 +111,8 @@ class CatalogProductPointer(TypedDict, total=False):
     snapshot: Optional[CatalogProductSnapshot]
 
 
-class PriceListPointer(TypedDict, total=False):
-    """
-    Pointer to a price list entry.
-    Actual price data is stored in price-list-products table and resolved on fetch.
-    """
-    fileId: str
-    chunkIndex: int  # Which chunk in the price-list-products table
-    year: Optional[str]  # For sorting by year
-    addedAt: Optional[int]
-    addedAtIso: Optional[str]
-
-
-class SalesDrawingPointer(TypedDict, total=False):
-    """Sales drawing reference."""
-    fileId: str
-    fileKey: str
-    fileName: Optional[str]
-    manufacturer: Optional[str]
-    notes: Optional[str]
-    link: Optional[str]  # SwagelokLink
-
-
-class Product(TypedDict, total=False):
-    """
-    Canonical product record stored in Products table.
-    Contains ONLY pointers to source tables - NO denormalized data.
-    
-    Structure matches TypeScript Product interface in webApp/src/types/products.ts
-    """
-    # Required fields
-    orderingNumber: str  # Primary Key (SKU)
-    productCategory: str  # GSI - ProductCategory enum value
-    
-    # Pointer arrays (no metadata wrapper)
-    catalogProducts: Optional[List[CatalogProductPointer]]
-    priceListPointers: Optional[List[PriceListPointer]]
-    salesDrawings: Optional[List[SalesDrawingPointer]]
-    
-    # Timestamps
-    createdAt: Optional[int]
-    updatedAt: Optional[int]
-    createdAtIso: Optional[str]
-    updatedAtIso: Optional[str]
+# PriceListPointer, SalesDrawingPointer, Product, and CatalogProductPointer are
+# imported from shared.product_types to keep a single source of truth.
 
 
 # ============================================================================
