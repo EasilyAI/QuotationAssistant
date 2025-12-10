@@ -13,6 +13,7 @@ package:
     - '!__pycache__/**'
     - '!.pytest_cache/**'
     - '!tests/**'
+    - '!layer-shared/**'
 
 custom:
   # Single environment (no -dev / -prod suffixes)
@@ -63,6 +64,8 @@ provider:
     CATALOG_PRODUCTS_TABLE: ${self:custom.catalogProductsTable}
     PRODUCTS_TABLE: ${self:custom.productsTable}
     PRICE_LIST_PRODUCTS_TABLE: ${self:custom.priceListProductsTable}
+    # PYTHONPATH: layer path for local dev (serverless-offline) and Lambda (/opt/python is auto-added in Lambda)
+    PYTHONPATH: "layer-shared/python:/opt/python"
 
   iamRoleStatements:
     # S3 access for generating presigned URLs and accessing uploaded files
@@ -101,10 +104,21 @@ provider:
         - textract:GetDocumentAnalysis
       Resource: "*"
 
+layers:
+  shared:
+    path: layer-shared
+    name: ${self:service}-${self:provider.stage}-shared
+    description: Shared package layer
+    compatibleRuntimes:
+      - python3.11
+    retain: false
+
 functions:
   # HTTP API for UI -> get presigned URL to upload file to S3
   getPresignedUrl:
     handler: src/get_presigned_url.get_presigned_url
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/presigned-url
@@ -113,6 +127,8 @@ functions:
   # HTTP API for UI -> generate presigned download URL (client supplies S3 key)
   getFileDownloadUrl:
     handler: src/get_files.get_file_download_url
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/download-url
@@ -121,6 +137,8 @@ functions:
   # HTTP API for UI -> get file information after upload
   getFileInfo:
     handler: src/get_files.get_file_info
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/{fileId}
@@ -129,6 +147,8 @@ functions:
   # HTTP API for UI -> get all files
   getFiles:
     handler: src/get_files.get_files
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files
@@ -138,6 +158,8 @@ functions:
   # HTTP API for UI -> delete a file
   deleteFile:
     handler: src/get_files.delete_file
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/{fileId}
@@ -147,6 +169,8 @@ functions:
   # HTTP API for UI -> get catalog products extracted from a file
   getCatalogProducts:
     handler: src/get_files.get_catalog_products
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/{fileId}/catalog-products
@@ -155,6 +179,8 @@ functions:
   # HTTP API for UI -> get price list products extracted from a file
   getPriceListProducts:
     handler: src/get_files.get_price_list_products
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/{fileId}/price-list-products
@@ -163,6 +189,8 @@ functions:
   # HTTP API for UI -> update catalog products after review
   updateCatalogProducts:
     handler: src/get_files.update_catalog_products
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/{fileId}/catalog-products
@@ -172,6 +200,8 @@ functions:
   updatePriceListProducts:
     handler: src/get_files.update_price_list_products
     timeout: 25  # Extended timeout for large price list updates (5558 products)
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/{fileId}/price-list-products
@@ -180,6 +210,8 @@ functions:
   # HTTP API for UI -> check if a file already exists
   checkFileExists:
     handler: src/get_files.check_file_exists
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/check-file-exists
@@ -188,6 +220,8 @@ functions:
   # HTTP API for UI -> complete file review (mark as completed)
   completeFileReview:
     handler: src/get_files.complete_file_review
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/files/{fileId}/complete
@@ -196,6 +230,8 @@ functions:
   # HTTP API for UI -> check existing products by ordering numbers
   checkExistingProducts:
     handler: src/get_files.check_existing_products
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/products/check-existing
@@ -204,6 +240,8 @@ functions:
   # HTTP API for UI -> save products from catalog to products table
   saveProductsFromCatalog:
     handler: src/get_files.save_products_from_catalog
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/products/from-catalog
@@ -213,6 +251,8 @@ functions:
   saveProductsFromPriceList:
     handler: src/get_files.save_products_from_price_list
     timeout: 120  # Extended timeout for saving thousands of products with batch writes
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/products/from-price-list
@@ -220,6 +260,8 @@ functions:
 
   listProducts:
     handler: src/get_files.list_products
+    layers:
+      - { Ref: SharedLambdaLayer }
     events:
       - httpApi:
           path: /api/products
@@ -230,6 +272,8 @@ functions:
   processUploadedFile:
     handler: src/process_upload_file.process_uploaded_file
     timeout: 45  # 5 minutes for Textract processing
+    layers:
+      - { Ref: SharedLambdaLayer }
     # S3 event configured manually - see setup instructions
     # events:
     #   - s3:

@@ -50,6 +50,8 @@ extractCatalogInfo/.serverless/
 .requirements.zip
 **/.requirements.zip
 **/.requirements/
+layer-shared/
+**/layer-shared/
 
 
 # IDE
