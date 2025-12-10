@@ -10,20 +10,17 @@ const normalizeBaseUrl = (baseUrl = '') =>
 const normalizeEndpoint = (endpoint = '') =>
   endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
-// Default base URL for local development
-const DEFAULT_LOCAL_BASE_URL = 'http://localhost:3000';
-
 export const API_CONFIG = {
   // Base URL for the file processing service (extractCatalogInfo)
   // Set via REACT_APP_API_BASE_URL environment variable
-  FILE_API_BASE_URL: process.env.REACT_APP_API_BASE_URL || DEFAULT_LOCAL_BASE_URL,
+  FILE_API_BASE_URL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:3000',
 
   // Base URL for the product search service (product-search-service)
   // Set via REACT_APP_SEARCH_API_BASE_URL environment variable
   // Defaults to FILE_API_BASE_URL for local/dev convenience
   SEARCH_API_BASE_URL:
     process.env.REACT_APP_SEARCH_API_BASE_URL ||
-    DEFAULT_LOCAL_BASE_URL,
+    'http://localhost:3000',
 
   // Extract Catalog Info service endpoints (see extractCatalogInfo/serverless.yml)
   FILE_ENDPOINTS: {
