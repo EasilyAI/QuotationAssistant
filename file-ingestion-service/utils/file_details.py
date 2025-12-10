@@ -11,6 +11,9 @@ def normalize_file_name(file_name:str) -> str:
 def normalize_catalog_serial_number(catalog_serial_number:str) -> str:
     """ Normalize a catalog serial number to an uppercase string with dashes instead of spaces"""
     
+    if catalog_serial_number is None:
+        return None
+    
     normalized_catalog_serial_number = catalog_serial_number.upper().replace(" ","-").strip()
     print(f"[normalize_catalog_serial_number] Normalized catalog serial number: {normalized_catalog_serial_number} from {catalog_serial_number}")
     

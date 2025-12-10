@@ -67,7 +67,47 @@ def get_presigned_url(event, context):
     key = f"uploads/{normalized_file_name}"
     print(f"[get_presigned_url] S3 key: {key}, file extension: {ext or 'None'}")
 
-    normalized_catalog_serial_number = normalize_catalog_serial_number(form_data.get("catalogSerialNumber"))
+    catalog_serial_number_raw = form_data.get("catalogSerialNumber")
+    normalized_catalog_serial_number = normalize_catalog_serial_number(catalog_serial_number_raw) if catalog_serial_number_raw else None
+
+    # Generate presigned URL first (fail fast if S3 is unavailable)
+    # Add fileId as metadata in S3 object for correlation
+    # S3 metadata values must be strings, so convert None to empty string
+    print(f"[get_presigned_url] Generating presigned URL for bucket: {BUCKET}, key: {key}")
+    
+    # Helper function to ensure metadata values are strings (S3 requirement)
+    def to_metadata_string(value):
+        return str(value) if value is not None else ""
+    
+    try:
+        upload_url = s3.generate_presigned_url(
+            ClientMethod="put_object",
+            Params={
+                "Bucket": BUCKET,
+                "Key": key,
+                "ContentType": content_type,
+                "Metadata": {
+                    "file_id": file_id,  # Store fileId in S3 object metadata
+                    "original_filename": uploaded_file_name,
+                    "normalized_filename": normalized_file_name,
+                    "business_file_type": to_metadata_string(business_file_type),
+                    "file_type": to_metadata_string(ext.upper()),
+                    "product_category": to_metadata_string(form_data.get("productCategory")),
+                    "ordering_number": to_metadata_string(form_data.get("orderingNumber")),
+                    "year": to_metadata_string(form_data.get("year")),
+                    "catalog_serial_number": to_metadata_string(normalized_catalog_serial_number)
+                }
+            },
+            ExpiresIn=3600,  # URL valid for 1 hour
+        )
+        print(f"[get_presigned_url] Generated presigned URL successfully")
+    except Exception as e:
+        print(f"[get_presigned_url] ERROR: Failed to generate presigned URL: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Failed to generate upload URL"}),
+            "headers": get_cors_headers(),
+        }
 
     # Build DynamoDB item with form data as top-level fields
     item = {
@@ -93,7 +133,7 @@ def get_presigned_url(event, context):
     }
     print(f"[get_presigned_url] Built DynamoDB item with {len(item)} fields")
 
-    # Save initial record in Files table
+    # Save initial record in Files table only after presigned URL is successfully generated
     table = dynamodb.Table(FILES_TABLE)
     try:
         print(f"[get_presigned_url] Saving record to DynamoDB table: {FILES_TABLE}")
@@ -106,31 +146,6 @@ def get_presigned_url(event, context):
             "body": json.dumps({"error": "Failed to create file record"}),
             "headers": get_cors_headers(),
         }
-
-    # Generate presigned URL for PUT upload
-    # Add fileId as metadata in S3 object for correlation
-    print(f"[get_presigned_url] Generating presigned URL for bucket: {BUCKET}, key: {key}")
-    upload_url = s3.generate_presigned_url(
-        ClientMethod="put_object",
-        Params={
-            "Bucket": BUCKET,
-            "Key": key,
-            "ContentType": content_type,
-            "Metadata": {
-                "file_id": file_id,  # Store fileId in S3 object metadata
-                "original_filename": uploaded_file_name,
-                "normalized_filename": normalized_file_name,
-                "business_file_type": business_file_type,
-                "file_type": ext.upper(),
-                "product_category": form_data.get("productCategory"),
-                "ordering_number": form_data.get("orderingNumber"),
-                "year": form_data.get("year"),
-                "catalog_serial_number": normalized_catalog_serial_number
-            }
-        },
-        ExpiresIn=3600,  # URL valid for 1 hour
-    )
-    print(f"[get_presigned_url] Generated presigned URL successfully")
 
     response_body = {
         "fileId": file_id,

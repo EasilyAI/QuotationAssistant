@@ -23,15 +23,17 @@ export const getFiles = async () => {
  * @returns {Promise<Object>} File information from backend including status and processing metadata
  */
 export const getFileInfo = async (fileId) => {
-  const response = await fetch(
-    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}`),
-    {
+  // Add cache-busting query parameter to ensure fresh data (doesn't trigger CORS preflight)
+  const timestamp = Date.now();
+  const url = buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}?_t=${timestamp}`);
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
       // TODO: Add authentication header if needed
       // 'Authorization': `Bearer ${getAuthToken()}`,
     },
+    cache: 'no-store', // Prevent browser caching (fetch option, not a header)
   });
 
   if (!response.ok) {
@@ -70,13 +72,15 @@ export const getFileDownloadUrl = async (key) => {
  * @returns {Promise<Object>} Products data from the file
  */
 export const getCatalogProducts = async (fileId) => {
-  const response = await fetch(
-    buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/catalog-products`),
-    {
+  // Add cache-busting query parameter to ensure fresh data (doesn't trigger CORS preflight)
+  const timestamp = Date.now();
+  const url = buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/catalog-products?_t=${timestamp}`);
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
     },
+    cache: 'no-store', // Prevent browser caching (fetch option, not a header)
   });
 
   if (!response.ok) {

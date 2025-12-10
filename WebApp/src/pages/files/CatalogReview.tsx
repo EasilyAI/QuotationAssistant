@@ -251,19 +251,28 @@ const CatalogReview = () => {
         setIsLoading(true);
         setLoadError(null);
 
-        if (locationState?.products?.length) {
-          if (!isSubscribed) return;
-          applyLoadedProducts(locationState.products);
-          setIsLoading(false);
-          return;
-        }
-
+        // Always fetch from backend when fileId is present to ensure fresh data
+        // Location state products are only used as initial optimization for immediate display
         if (!fileId) {
+          // If no fileId but we have location state products, use them as fallback
+          if (locationState?.products?.length) {
+            if (!isSubscribed) return;
+            applyLoadedProducts(locationState.products);
+            setIsLoading(false);
+            return;
+          }
           setLoadError('No file ID provided');
           setIsLoading(false);
           return;
         }
 
+        // If we have location state products, show them immediately for better UX
+        // but still fetch fresh data from backend
+        if (locationState?.products?.length && isSubscribed) {
+          applyLoadedProducts(locationState.products);
+        }
+
+        // Always fetch fresh data from backend when fileId is present
         const productsData = await getCatalogProducts(fileId);
         if (!isSubscribed) {
           return;
@@ -276,6 +285,7 @@ const CatalogReview = () => {
           return;
         }
 
+        // Always use backend data (this will overwrite location state data if it was shown)
         applyLoadedProducts(backendProducts);
         if (productsData.sourceFile) {
           setFileKey((prev) => prev ?? productsData.sourceFile);
@@ -311,7 +321,7 @@ const CatalogReview = () => {
     return () => {
       isSubscribed = false;
     };
-  }, [applyLoadedProducts, fileId, locationState?.products]);
+  }, [applyLoadedProducts, fileId]);
 
   useEffect(() => {
     setCurrentPage(1);
