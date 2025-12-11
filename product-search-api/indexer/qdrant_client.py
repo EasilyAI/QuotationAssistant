@@ -3,18 +3,31 @@ Qdrant Cloud client for vector storage operations.
 """
 
 import os
+import sys
 import logging
 import uuid
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    Distance,
-    VectorParams,
-    PointStruct,
-    Filter,
-    FieldCondition,
-    MatchValue,
+from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.http.models import (
+    Filter as HttpFilter,
+    FieldCondition as HttpFieldCondition,
+    MatchValue as HttpMatchValue,
+    MatchText as HttpMatchText,
+    MinShould,
+    TextIndexParams,
+    TextIndexType,
+    TokenizerType,
 )
+
+# Add shared folder for type imports
+SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(SERVICE_ROOT, ".."))
+SHARED_DIR = os.path.join(REPO_ROOT, "shared")
+if SHARED_DIR not in sys.path:
+    sys.path.append(SHARED_DIR)
+
+from qdrant_types import ProductMetadata
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
@@ -43,6 +56,8 @@ class QdrantManager:
         )
         
         logger.info(f"Qdrant client initialized for collection: {self.collection_name}")
+        # Ensure the collection and text indexes exist so search filters work
+        self.ensure_collection_exists()
     
     def ensure_collection_exists(self) -> bool:
         """
@@ -58,6 +73,8 @@ class QdrantManager:
             
             if exists:
                 logger.info(f"Collection {self.collection_name} already exists")
+                # Even if the collection exists, make sure payload indexes are present
+                self.ensure_text_indexes()
                 return False
             
             # Create collection
@@ -70,11 +87,51 @@ class QdrantManager:
             )
             
             logger.info(f"Created collection {self.collection_name}")
+            # Create text indexes needed for hybrid search
+            self.ensure_text_indexes()
             return True
             
         except Exception as e:
             logger.error(f"Error ensuring collection exists: {str(e)}")
             raise
+
+    def ensure_text_indexes(self) -> None:
+        """
+        Ensure text indexes exist for hybrid search fields.
+        Creates text indexes for `searchText` and `orderingNumber` if missing.
+        """
+        fields = ["searchText", "orderingNumber"]
+        try:
+            collection_info = self.client.get_collection(self.collection_name)
+            existing_schema = getattr(collection_info, "payload_schema", {}) or {}
+        except Exception as e:
+            logger.warning(f"Could not fetch collection info for indexes: {str(e)}")
+            existing_schema = {}
+
+        for field in fields:
+            # Skip if index already exists
+            if existing_schema and field in existing_schema:
+                continue
+
+            index_params = TextIndexParams(
+                type=TextIndexType.TEXT,
+                tokenizer=TokenizerType.WORD,
+                lowercase=True,
+            )
+
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=field,
+                    field_schema=index_params,
+                )
+                logger.info(f"Created text index for field '{field}'")
+            except Exception as e:
+                # If index already exists or cannot be created, log and continue
+                if "already exists" in str(e).lower():
+                    logger.info(f"Text index for field '{field}' already exists")
+                else:
+                    logger.warning(f"Could not create text index for '{field}': {str(e)}")
     
     def _build_point_id(self, ordering_number: str) -> str:
         """
@@ -88,7 +145,7 @@ class QdrantManager:
         self,
         ordering_number: str,
         vector: List[float],
-        metadata: Dict[str, Any]
+        metadata: ProductMetadata
     ) -> bool:
         """
         Upsert a single product into Qdrant.
@@ -176,61 +233,87 @@ class QdrantManager:
             logger.error(f"Error deleting product {ordering_number}: {str(e)}")
             raise
     
-    def search(
+    def query_points(
         self,
-        query_vector: List[float],
+        collection_name: str,
+        query: List[float],
         limit: int = 30,
         category_filter: Optional[str] = None,
+        text_query: Optional[str] = None,
         score_threshold: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
-        Search for similar products.
+        Query points using the query_points API with proper filtering and hybrid search support.
         
-        Args:
-            query_vector: Query embedding vector
-            limit: Number of results to return
-            category_filter: Optional category to filter by
-            score_threshold: Minimum similarity score
-            
-        Returns:
-            List of search results with scores and metadata
+        Supports:
+        - Vector similarity search
+        - Category filtering on `productCategory`
+        - Text-based matching on `searchText` and `orderingNumber`
         """
         try:
-            # Build filter if category specified
-            query_filter = None
+            # Build filter
+            must_conditions: List[HttpFieldCondition] = []
+            should_conditions: List[HttpFieldCondition] = []
+
+            # Category filter (payload key: productCategory)
             if category_filter:
-                query_filter = Filter(
-                    must=[
-                        FieldCondition(
-                            key="category",
-                            match=MatchValue(value=category_filter)
-                        )
-                    ]
+                must_conditions.append(
+                    HttpFieldCondition(
+                        key="productCategory",
+                        match=HttpMatchValue(value=category_filter)
+                    )
                 )
-            
-            # Execute search
-            results = self.client.search(
-                collection_name=self.collection_name,
-                query_vector=query_vector,
-                limit=limit,
+
+            # Hybrid text match across searchText and orderingNumber
+            if text_query and text_query.strip():
+                text_query_lower = text_query.lower().strip()
+                should_conditions.extend([
+                    HttpFieldCondition(
+                        key="searchText",
+                        match=HttpMatchText(text=text_query_lower)
+                    ),
+                    HttpFieldCondition(
+                        key="orderingNumber",
+                        match=HttpMatchText(text=text_query_lower)
+                    ),
+                ])
+
+            query_filter = None
+            if must_conditions or should_conditions:
+                min_should = (
+                    MinShould(conditions=should_conditions, min_count=1)
+                    if should_conditions
+                    else None
+                )
+                query_filter = HttpFilter(
+                    must=must_conditions if must_conditions else None,
+                    should=should_conditions if should_conditions else None,
+                    min_should=min_should
+                )
+
+            # Execute query_points with filter as per user example
+            results = self.client.query_points(
+                collection_name=collection_name,
+                query=query,
                 query_filter=query_filter,
+                limit=limit,
                 score_threshold=score_threshold
             )
             
             # Format results
             formatted_results = []
-            for result in results:
+            for point in results.points:
                 formatted_results.append({
-                    'id': result.id,
-                    'score': result.score,
-                    'metadata': result.payload
+                    'id': str(point.id),
+                    'score': point.score if hasattr(point, 'score') else None,
+                    'metadata': point.payload or {}
                 })
             
-            logger.info(f"Search returned {len(formatted_results)} results")
+            logger.info(f"Query returned {len(formatted_results)} results")
             return formatted_results
             
         except Exception as e:
-            logger.error(f"Error searching Qdrant: {str(e)}")
+            logger.error(f"Error querying Qdrant: {str(e)}", exc_info=True)
             raise
     
     def get_product(self, product_id: str) -> Optional[Dict[str, Any]]:

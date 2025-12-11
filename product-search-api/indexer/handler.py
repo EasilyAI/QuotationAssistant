@@ -21,6 +21,7 @@ for path in {SERVICE_ROOT, REPO_ROOT, SHARED_DIR}:
 
 from shared.product_service import fetch_product
 from shared.product_types import decode_dynamo_image
+from shared.qdrant_types import ProductMetadata
 
 from schemas.product_model import Product
 from .embedding_bedrock import get_embedding_generator  # Using Bedrock (no Docker needed!)
@@ -97,7 +98,7 @@ def process_insert_or_modify(record: Dict[str, Any]) -> None:
         print(f"Successfully generated embedding vector")
         
         # Prepare metadata
-        metadata = prepare_product_metadata(product_data)
+        metadata: ProductMetadata = prepare_product_metadata(product_data)  # type: ignore[assignment]
         metadata["searchText"] = search_text
         print(f"Metadata: {json.dumps(metadata, indent=2)}")
         

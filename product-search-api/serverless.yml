@@ -12,6 +12,8 @@ provider:
   timeout: 30
   
   environment:
+    # Ensure local/offline Python can locate service packages
+    PYTHONPATH: ${env:PYTHONPATH, './'}
     # Qdrant Cloud Configuration
     QDRANT_URL: ${env:QDRANT_URL}
     QDRANT_API_KEY: ${env:QDRANT_API_KEY}

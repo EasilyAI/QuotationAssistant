@@ -5,12 +5,15 @@ Qdrant search operations for the API.
 import logging
 from typing import List, Dict, Any, Optional
 
+import json
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'shared'))
 
 from indexer.qdrant_client import QdrantManager
 from indexer.embedding_bedrock import get_embedding_generator  # Using Bedrock (no Docker needed!)
+from qdrant_types import ProductMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +33,23 @@ class SearchService:
         query: str,
         limit: int = 30,
         category: Optional[str] = None,
-        min_score: float = 0.0
+        min_score: float = 0.0,
+        text_query: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Perform vector similarity search.
+        Perform hybrid vector + text similarity search.
+        
+        This method combines:
+        - Vector similarity search (semantic matching)
+        - Text-based filtering on payload fields (exact/prefix matching)
+        - Category filtering
         
         Args:
-            query: Search query text
+            query: Search query text (used for vector embedding)
             limit: Maximum number of results
             category: Optional category filter
             min_score: Minimum similarity score threshold
+            text_query: Optional text query for hybrid search (if None, uses query)
             
         Returns:
             List of search results with scores
@@ -49,30 +59,41 @@ class SearchService:
             return []
         
         try:
-            # Generate query embedding
-            logger.info(f"Searching for: '{query}' (category: {category})")
+            # Generate query embedding for vector search
+            logger.info(f"Searching for: '{query}' (category: {category}, text_query: {text_query})")
             query_vector = self.embedder.generate(query)
             
-            # Search Qdrant
-            results = self.qdrant.search(
-                query_vector=query_vector,
+            # For hybrid search: use text_query if provided, otherwise use query for text matching too
+            # This enables both semantic (vector) and keyword (text) matching
+            hybrid_text_query = text_query if text_query else query
+            
+            # Search Qdrant using query_points with proper filtering and hybrid search
+            results = self.qdrant.query_points(
+                collection_name=self.qdrant.collection_name,
+                query=query_vector,
                 limit=limit,
                 category_filter=category,
+                text_query=hybrid_text_query,  # Enable hybrid search with text matching
                 score_threshold=min_score if min_score > 0 else None
             )
             
+            logger.info(f"Results: {json.dumps(results, indent=2)}")
             # Format results for API response
             formatted_results = []
             for result in results:
-                metadata = result['metadata']
+                metadata: ProductMetadata = result.get('metadata', {})  # type: ignore[assignment]
+                score = result.get('score', 0.0)
+                ordering_number = metadata.get('orderingNumber', '') or result.get('id', '')
+                category_val = metadata.get('productCategory') or metadata.get('category', '')
+                
                 formatted_results.append({
-                    'orderingNumber': result['id'],
-                    'category': metadata.get('category', ''),
+                    'orderingNumber': ordering_number,
+                    'category': category_val,
                     'oneLiner': metadata.get('oneLiner', ''),
                     'specs': metadata.get('specs', ''),
                     'manualNotes': metadata.get('manualNotes', ''),
-                    'score': round(result['score'], 4),
-                    'relevance': self._calculate_relevance(result['score']),
+                    'score': round(score, 4) if score else 0.0,
+                    'relevance': self._calculate_relevance(score) if score else 'low',
                     'catalogProduct': metadata.get('catalogProduct'),
                     'priceListProducts': metadata.get('priceListProducts'),
                 })

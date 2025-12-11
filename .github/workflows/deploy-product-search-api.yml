@@ -1,0 +1,59 @@
+name: Deploy Product Search API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'product-search-api/**'
+      - 'shared/**'
+      - '.github/workflows/deploy-product-search-api.yml'
+
+env:
+  AWS_REGION: us-east-1
+  AWS_PROFILE: hb-client
+  SERVERLESS_STAGE: dev
+  # Override local macOS pythonBin path so packaging works on Linux runners
+  SLS_PYTHON_BIN: python3.11
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: product-search-api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Serverless CLI
+        run: npm install -g serverless
+
+      - name: Install Node dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.HB_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.HB_AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.HB_AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Product Search service
+        run: serverless deploy --stage ${SERVERLESS_STAGE} --region ${AWS_REGION}
+
