@@ -22,7 +22,6 @@ from qdrant_client.http.models import (
     MatchText as HttpMatchText,
     MinShould,
     TextIndexParams,
-    TextIndexType,
     TokenizerType,
 )
 
@@ -87,7 +86,7 @@ class QdrantManager:
             )
             
             logger.info(f"Created collection {self.collection_name}")
-            # Create text indexes needed for hybrid search
+            # Create text indexes needed for hybrid / filtered search
             self.ensure_text_indexes()
             return True
             
@@ -102,27 +101,18 @@ class QdrantManager:
         - `searchText` / `orderingNumber`: full-text search
         - `productCategory`: keyword (exact match) filter
         """
-        # Map of field -> index params factory so we can mix TEXT and KEYWORD types
+        # Map of field -> index params factory for TEXT indices.
+        # NOTE: This client version supports only `type="text"` for TextIndexParams.
+        # For keyword-style indices (needed for MatchValue filters), we use a separate
+        # branch below and pass `field_schema="keyword"` directly to Qdrant.
         def text_index() -> TextIndexParams:
             return TextIndexParams(
-                type=TextIndexType.TEXT,
+                type="text",
                 tokenizer=TokenizerType.WORD,
                 lowercase=True,
             )
-
-        def keyword_index() -> TextIndexParams:
-            # Qdrant requires a KEYWORD index for fields used with MatchValue filters.
-            # See error: "Index required but not found for \"productCategory\" of one of the following types: [keyword]"
-            return TextIndexParams(
-                type=TextIndexType.KEYWORD
-            )
-
-        fields = {
-            "searchText": text_index,
-            "orderingNumber": text_index,
-            # Used in category_filter in `query_points` (MatchValue on `productCategory`)
-            "productCategory": keyword_index,
-        }
+        
+        text_fields = ["searchText", "orderingNumber"]
 
         try:
             collection_info = self.client.get_collection(self.collection_name)
@@ -131,12 +121,12 @@ class QdrantManager:
             logger.warning(f"Could not fetch collection info for indexes: {str(e)}")
             existing_schema = {}
 
-        for field, factory in fields.items():
-            # Skip if index already exists
+        # 1) Ensure TEXT indexes for full-text search fields
+        for field in text_fields:
             if existing_schema and field in existing_schema:
                 continue
 
-            index_params = factory()
+            index_params = text_index()
 
             try:
                 self.client.create_payload_index(
@@ -144,13 +134,37 @@ class QdrantManager:
                     field_name=field,
                     field_schema=index_params,
                 )
-                logger.info(f"Created payload index for field '{field}'")
+                logger.info(f"Created TEXT payload index for field '{field}'")
             except Exception as e:
-                # If index already exists or cannot be created, log and continue
                 if "already exists" in str(e).lower():
                     logger.info(f"Payload index for field '{field}' already exists")
                 else:
-                    logger.warning(f"Could not create payload index for '{field}': {str(e)}")
+                    logger.warning(f"Could not create TEXT payload index for '{field}': {str(e)}")
+
+        # 2) Ensure KEYWORD index for productCategory (used with MatchValue filters)
+        try:
+            # If an index exists but is not of keyword type, we recreate it.
+            if existing_schema and "productCategory" in existing_schema:
+                try:
+                    self.client.delete_payload_index(
+                        collection_name=self.collection_name,
+                        field_name="productCategory",
+                    )
+                    logger.info("Deleted existing index for 'productCategory' to recreate as KEYWORD")
+                except Exception as e:
+                    logger.warning(f"Could not delete existing index for 'productCategory': {str(e)}")
+
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="productCategory",
+                field_schema="keyword",
+            )
+            logger.info("Created KEYWORD payload index for field 'productCategory'")
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                logger.info("Payload index for field 'productCategory' already exists")
+            else:
+                logger.warning(f"Could not create KEYWORD payload index for 'productCategory': {str(e)}")
     
     def _build_point_id(self, ordering_number: str) -> str:
         """
