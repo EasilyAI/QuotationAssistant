@@ -16,7 +16,7 @@ from indexer.embedding_bedrock import get_embedding_generator  # Using Bedrock (
 from qdrant_types import ProductMetadata
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 class SearchService:
     """

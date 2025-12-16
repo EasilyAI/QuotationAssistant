@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "description": "Search Service for Product using Qdrant Cloud and AWS Bedrock",
   "scripts": {
-    "deploy": "serverless deploy",
-    "dev": "serverless offline start",
+    "deploy": "DOTENV_CONFIG_PATH=../.env node -r dotenv/config node_modules/serverless/bin/serverless.js deploy",
+    "dev": "DOTENV_CONFIG_PATH=../.env node -r dotenv/config node_modules/serverless/bin/serverless.js offline start",
     "deploy:dev": "serverless deploy --stage dev",
     "deploy:prod": "serverless deploy --stage prod",
     "remove": "serverless remove",
@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@aws-sdk/client-lambda": "^3.947.0",
+    "dotenv": "^16.4.5",
     "serverless": "^3.38.0",
     "serverless-offline": "^13.9.0",
     "serverless-python-requirements": "^6.1.2"

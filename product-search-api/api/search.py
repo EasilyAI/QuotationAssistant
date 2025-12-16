@@ -3,12 +3,14 @@ Search endpoint handler.
 """
 
 import logging
+import os
 from typing import Dict, Any
 
 from .utils import get_query_params, create_response, get_search_service
 
 # Configure logging
 logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 
 def handle_search(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -31,6 +33,8 @@ def handle_search(event: Dict[str, Any]) -> Dict[str, Any]:
         params = get_query_params(event)
         query = params.get('q', '').strip()
         
+        logger.info(f"Request path parameters = {params}")
+
         if not query:
             return create_response(400, {
                 'error': 'Missing required parameter: q'
@@ -44,7 +48,7 @@ def handle_search(event: Dict[str, Any]) -> Dict[str, Any]:
         min_score = float(params.get('min_score', 0.0))
         min_score = max(0.0, min(1.0, min_score))  # Clamp between 0-1
         
-        logger.info(f"Search: q='{query}', category={category}, size={size}")
+        logger.info(f"Search query parameters = q = {query}, category = {category}, size = {size}, min_score = {min_score}")
         
         # Execute search
         service = get_search_service()

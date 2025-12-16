@@ -41,10 +41,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     path = event.get('rawPath', '').lower()
     
     if '/search' in path:
+        logger.info(f"Redirecting to search service")
         return handle_search(event)
     elif '/autocomplete' in path:
+        logger.info(f"Redirecting to autocomplete service")
         return handle_autocomplete(event)
     elif '/product' in path:
+        logger.info(f"Redirecting to get product service")
         return handle_get_product(event)
     else:
         return create_response(404, {

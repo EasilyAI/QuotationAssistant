@@ -7,6 +7,12 @@ import sys
 import logging
 import uuid
 from typing import List, Dict, Any, Optional
+
+# Ensure Lambda layer site-packages (/opt/python) is on sys.path
+LAYER_SITE_DIR = "/opt/python"
+if os.path.isdir(LAYER_SITE_DIR) and LAYER_SITE_DIR not in sys.path:
+    sys.path.append(LAYER_SITE_DIR)
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from qdrant_client.http.models import (
@@ -20,14 +26,8 @@ from qdrant_client.http.models import (
     TokenizerType,
 )
 
-# Add shared folder for type imports
-SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(SERVICE_ROOT, ".."))
-SHARED_DIR = os.path.join(REPO_ROOT, "shared")
-if SHARED_DIR not in sys.path:
-    sys.path.append(SHARED_DIR)
-
-from qdrant_types import ProductMetadata
+# Import shared types from the shared package
+from shared.qdrant_types import ProductMetadata
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
@@ -97,10 +97,33 @@ class QdrantManager:
 
     def ensure_text_indexes(self) -> None:
         """
-        Ensure text indexes exist for hybrid search fields.
-        Creates text indexes for `searchText` and `orderingNumber` if missing.
+        Ensure payload indexes exist for hybrid search fields.
+        
+        - `searchText` / `orderingNumber`: full-text search
+        - `productCategory`: keyword (exact match) filter
         """
-        fields = ["searchText", "orderingNumber"]
+        # Map of field -> index params factory so we can mix TEXT and KEYWORD types
+        def text_index() -> TextIndexParams:
+            return TextIndexParams(
+                type=TextIndexType.TEXT,
+                tokenizer=TokenizerType.WORD,
+                lowercase=True,
+            )
+
+        def keyword_index() -> TextIndexParams:
+            # Qdrant requires a KEYWORD index for fields used with MatchValue filters.
+            # See error: "Index required but not found for \"productCategory\" of one of the following types: [keyword]"
+            return TextIndexParams(
+                type=TextIndexType.KEYWORD
+            )
+
+        fields = {
+            "searchText": text_index,
+            "orderingNumber": text_index,
+            # Used in category_filter in `query_points` (MatchValue on `productCategory`)
+            "productCategory": keyword_index,
+        }
+
         try:
             collection_info = self.client.get_collection(self.collection_name)
             existing_schema = getattr(collection_info, "payload_schema", {}) or {}
@@ -108,16 +131,12 @@ class QdrantManager:
             logger.warning(f"Could not fetch collection info for indexes: {str(e)}")
             existing_schema = {}
 
-        for field in fields:
+        for field, factory in fields.items():
             # Skip if index already exists
             if existing_schema and field in existing_schema:
                 continue
 
-            index_params = TextIndexParams(
-                type=TextIndexType.TEXT,
-                tokenizer=TokenizerType.WORD,
-                lowercase=True,
-            )
+            index_params = factory()
 
             try:
                 self.client.create_payload_index(
@@ -125,13 +144,13 @@ class QdrantManager:
                     field_name=field,
                     field_schema=index_params,
                 )
-                logger.info(f"Created text index for field '{field}'")
+                logger.info(f"Created payload index for field '{field}'")
             except Exception as e:
                 # If index already exists or cannot be created, log and continue
                 if "already exists" in str(e).lower():
-                    logger.info(f"Text index for field '{field}' already exists")
+                    logger.info(f"Payload index for field '{field}' already exists")
                 else:
-                    logger.warning(f"Could not create text index for '{field}': {str(e)}")
+                    logger.warning(f"Could not create payload index for '{field}': {str(e)}")
     
     def _build_point_id(self, ordering_number: str) -> str:
         """
