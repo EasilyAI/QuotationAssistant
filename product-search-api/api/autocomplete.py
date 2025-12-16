@@ -35,7 +35,7 @@ def handle_autocomplete(event: Dict[str, Any]) -> Dict[str, Any]:
                 'error': 'Missing required parameter: q'
             })
         
-        if len(query) < 2:
+        if len(query) < 1:
             return create_response(200, {
                 'query': query,
                 'suggestions': [],
