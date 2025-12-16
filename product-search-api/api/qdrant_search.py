@@ -3,6 +3,7 @@ Qdrant search operations for the API.
 """
 
 import logging
+from enum import Enum
 from typing import List, Dict, Any, Optional
 
 import json
@@ -63,9 +64,26 @@ class SearchService:
             logger.info(f"Searching for: '{query}' (category: {category}, text_query: {text_query})")
             query_vector = self.embedder.generate(query)
             
-            # For hybrid search: use text_query if provided, otherwise use query for text matching too
-            # This enables both semantic (vector) and keyword (text) matching
-            hybrid_text_query = text_query if text_query else query
+            # Decide how to use text filters:
+            # - If caller explicitly provided text_query, use it as-is.
+            # - Otherwise, only enable MatchText-based hybrid search for
+            #   "code-like" queries (e.g. ordering numbers such as 6L-LD8-DDXX).
+            #   For natural-language queries like "i need 1/2 inch valve", we rely
+            #   purely on vector search, because text filters would be too strict
+            #   and might filter out good semantic matches.
+            if text_query is not None:
+                hybrid_text_query = text_query
+            else:
+                q = query.strip()
+                # Heuristic: treat as code-like if there are no spaces, it contains
+                # both letters and digits, and only simple punctuation characters.
+                has_space = " " in q
+                has_letter = any(c.isalpha() for c in q)
+                has_digit = any(c.isdigit() for c in q)
+                allowed_chars = all(c.isalnum() or c in "-_./" for c in q)
+                is_code_like = (not has_space) and has_letter and has_digit and allowed_chars
+
+                hybrid_text_query = q if is_code_like else None
             
             # Search Qdrant using query_points with proper filtering and hybrid search
             results = self.qdrant.query_points(
@@ -73,29 +91,28 @@ class SearchService:
                 query=query_vector,
                 limit=limit,
                 category_filter=category,
-                text_query=hybrid_text_query,  # Enable hybrid search with text matching
+                text_query=hybrid_text_query,  # Enable hybrid search only for code-like queries
                 score_threshold=min_score if min_score > 0 else None
             )
             
             logger.info(f"Results: {json.dumps(results, indent=2)}")
             # Format results for API response
-            formatted_results = []
+            formatted_results: List[Dict[str, Any]] = []
             for result in results:
                 metadata: ProductMetadata = result.get('metadata', {})  # type: ignore[assignment]
                 score = result.get('score', 0.0)
                 ordering_number = metadata.get('orderingNumber', '') or result.get('id', '')
                 category_val = metadata.get('productCategory') or metadata.get('category', '')
+                search_text = metadata.get('searchText') or metadata.get('category', '')
                 
+                relevance = self._calculate_relevance(score) if score else RelevanceLevel.LOW
+
                 formatted_results.append({
                     'orderingNumber': ordering_number,
                     'category': category_val,
-                    'oneLiner': metadata.get('oneLiner', ''),
-                    'specs': metadata.get('specs', ''),
-                    'manualNotes': metadata.get('manualNotes', ''),
                     'score': round(score, 4) if score else 0.0,
-                    'relevance': self._calculate_relevance(score) if score else 'low',
-                    'catalogProduct': metadata.get('catalogProduct'),
-                    'priceListProducts': metadata.get('priceListProducts'),
+                    'relevance': relevance.value,
+                    'searchText': search_text
                 })
             
             logger.info(f"Found {len(formatted_results)} results")
@@ -166,9 +183,9 @@ class SearchService:
         except Exception as e:
             logger.error(f"Autocomplete error: {str(e)}", exc_info=True)
             return []
-    
+
     @staticmethod
-    def _calculate_relevance(score: float) -> str:
+    def _calculate_relevance(score: float) -> "RelevanceLevel":
         """
         Convert similarity score to relevance label.
         
@@ -182,9 +199,18 @@ class SearchService:
             Relevance label
         """
         if score >= 0.85:
-            return "high"
+            return RelevanceLevel.HIGH
         elif score >= 0.70:
-            return "medium"
+            return RelevanceLevel.MEDIUM
         else:
-            return "low"
+            return RelevanceLevel.LOW
+
+
+class RelevanceLevel(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+    def __str__(self) -> str:  # Helpful if logged or serialized implicitly
+        return self.value
 

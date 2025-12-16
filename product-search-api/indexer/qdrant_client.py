@@ -101,18 +101,15 @@ class QdrantManager:
         - `searchText` / `orderingNumber`: full-text search
         - `productCategory`: keyword (exact match) filter
         """
-        # Map of field -> index params factory for TEXT indices.
+        # Configuration for TEXT indices on payload fields.
         # NOTE: This client version supports only `type="text"` for TextIndexParams.
-        # For keyword-style indices (needed for MatchValue filters), we use a separate
-        # branch below and pass `field_schema="keyword"` directly to Qdrant.
-        def text_index() -> TextIndexParams:
-            return TextIndexParams(
-                type="text",
-                tokenizer=TokenizerType.WORD,
-                lowercase=True,
-            )
-        
-        text_fields = ["searchText", "orderingNumber"]
+        # We use WORD tokenizer for general full-text fields, and PREFIX tokenizer
+        # for fields like `orderingNumber` to improve partial / prefix matching
+        # (e.g. queries like "6L" or "6").
+        text_field_configs = {
+            "searchText": TokenizerType.WORD,
+            "orderingNumber": TokenizerType.PREFIX,
+        }
 
         try:
             collection_info = self.client.get_collection(self.collection_name)
@@ -121,12 +118,16 @@ class QdrantManager:
             logger.warning(f"Could not fetch collection info for indexes: {str(e)}")
             existing_schema = {}
 
-        # 1) Ensure TEXT indexes for full-text search fields
-        for field in text_fields:
+        # 1) Ensure TEXT indexes for full-text / prefix-search fields
+        for field, tokenizer in text_field_configs.items():
             if existing_schema and field in existing_schema:
                 continue
-
-            index_params = text_index()
+            
+            index_params = TextIndexParams(
+                type="text",
+                tokenizer=tokenizer,
+                lowercase=True,
+            )
 
             try:
                 self.client.create_payload_index(
@@ -297,19 +298,29 @@ class QdrantManager:
                     )
                 )
 
-            # Hybrid text match across searchText and orderingNumber
+            # Hybrid text match across searchText and orderingNumber.
+            # For very short queries (e.g. 1-char like "6"), text indexing/tokenization
+            # is often too restrictive, so we skip text filters and rely on vector
+            # similarity + category filtering instead to still return options.
             if text_query and text_query.strip():
                 text_query_lower = text_query.lower().strip()
-                should_conditions.extend([
-                    HttpFieldCondition(
-                        key="searchText",
-                        match=HttpMatchText(text=text_query_lower)
-                    ),
-                    HttpFieldCondition(
-                        key="orderingNumber",
-                        match=HttpMatchText(text=text_query_lower)
-                    ),
-                ])
+                if len(text_query_lower) >= 2:
+                    should_conditions.extend([
+                        HttpFieldCondition(
+                            key="searchText",
+                            match=HttpMatchText(text=text_query_lower)
+                        ),
+                        HttpFieldCondition(
+                            key="orderingNumber",
+                            match=HttpMatchText(text=text_query_lower)
+                        ),
+                    ])
+                else:
+                    logger.info(
+                        "Skipping text MatchText filters for very short query '%s'; "
+                        "using vector + category filtering only",
+                        text_query_lower,
+                    )
 
             query_filter = None
             if must_conditions or should_conditions:
