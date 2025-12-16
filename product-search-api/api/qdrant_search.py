@@ -4,7 +4,8 @@ Qdrant search operations for the API.
 
 import logging
 from enum import Enum
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
+import re
 
 import json
 import sys
@@ -129,11 +130,14 @@ class SearchService:
         category: Optional[str] = None
     ) -> List[Dict[str, str]]:
         """
-        Get autocomplete suggestions.
+        Get autocomplete suggestions with intelligent prefix matching.
+        
+        Prioritizes matches where the prefix appears at the beginning of the text,
+        followed by word-boundary matches, then substring matches.
         
         Since Qdrant doesn't have built-in prefix matching,
         we use a hybrid approach: vector search with low threshold
-        + metadata filtering on the client side.
+        + intelligent client-side scoring and ranking.
         
         Args:
             prefix: Query prefix
@@ -141,9 +145,9 @@ class SearchService:
             category: Optional category filter
             
         Returns:
-            List of suggestions
+            List of suggestions, sorted by relevance score
         """
-        if not prefix or len(prefix) < 2:
+        if not prefix or len(prefix) < 1:
             return []
         
         try:
@@ -153,29 +157,42 @@ class SearchService:
             # This finds semantically similar items
             results = self.vector_search(
                 query=prefix,
-                limit=limit * 3,  # Get more candidates
+                limit=limit * 5,  # Get more candidates for better ranking
                 category=category,
                 min_score=0.0  # No minimum score for autocomplete
             )
             
-            # Filter results that actually match the prefix
-            suggestions = []
+            # Score and filter results that match the prefix
+            scored_suggestions: List[Tuple[float, Dict[str, str]]] = []
             prefix_lower = prefix.lower()
             
             for result in results:
-                # Check if oneLiner or orderingNumber contains the prefix
-                one_liner = result.get('oneLiner', '').lower()
-                ordering_num = result.get('orderingNumber', '').lower()
+                ordering_num = result.get('orderingNumber', '')
+                ordering_num_lower = ordering_num.lower()
+                search_text = result.get('searchText', '')
+                search_text_lower = search_text.lower() if search_text else ''
                 
-                if prefix_lower in one_liner or prefix_lower in ordering_num:
-                    suggestions.append({
-                        'text': result['oneLiner'],
-                        'orderingNumber': result['orderingNumber'],
-                        'category': result['category']
-                    })
-                    
-                    if len(suggestions) >= limit:
-                        break
+                # Calculate match score based on where prefix appears
+                score = self._calculate_prefix_match_score(
+                    prefix_lower,
+                    ordering_num_lower,
+                    search_text_lower
+                )
+                
+                # Only include results that actually match the prefix (score > 0)
+                if score > 0:
+                    scored_suggestions.append((
+                        score,
+                        {
+                            'orderingNumber': ordering_num,
+                            'category': result.get('category', ''),
+                            'searchText': search_text
+                        }
+                    ))
+            
+            # Sort by score (descending) and take top results
+            scored_suggestions.sort(key=lambda x: x[0], reverse=True)
+            suggestions = [item[1] for item in scored_suggestions[:limit]]
             
             logger.info(f"Returning {len(suggestions)} autocomplete suggestions")
             return suggestions
@@ -183,6 +200,68 @@ class SearchService:
         except Exception as e:
             logger.error(f"Autocomplete error: {str(e)}", exc_info=True)
             return []
+    
+    def _calculate_prefix_match_score(
+        self,
+        prefix: str,
+        ordering_num: str,
+        search_text: str
+    ) -> float:
+        """
+        Calculate relevance score for prefix matching.
+        
+        Scoring priority (higher score = better match):
+        1. Prefix starts at beginning of orderingNumber (score: 100.0)
+        2. Prefix starts at beginning of searchText (score: 80.0)
+        3. Prefix starts at word boundary in orderingNumber (score: 60.0)
+        4. Prefix starts at word boundary in searchText (score: 40.0)
+        5. Prefix appears anywhere in orderingNumber (score: 20.0)
+        6. Prefix appears anywhere in search_text (score: 10.0)
+        
+        Args:
+            prefix: Lowercase prefix to match
+            ordering_num: Lowercase ordering number
+            search_text: Lowercase search text
+            
+        Returns:
+            Score (0.0 if no match, higher is better)
+        """
+        if not prefix:
+            return 0.0
+        
+        # Priority 1: Prefix starts at beginning of orderingNumber
+        if ordering_num and ordering_num.startswith(prefix):
+            return 100.0
+        
+        # Priority 2: Prefix starts at beginning of searchText
+        if search_text and search_text.startswith(prefix):
+            return 80.0
+        
+        # Priority 3: Prefix starts at word boundary in orderingNumber
+        # Word boundary: start of string or after non-alphanumeric character
+        if ordering_num:
+            # Check if prefix appears at word boundary
+            word_boundary_pattern = r'(^|[^a-z0-9])' + re.escape(prefix)
+            if re.search(word_boundary_pattern, ordering_num, re.IGNORECASE):
+                return 60.0
+        
+        # Priority 4: Prefix starts at word boundary in searchText
+        if search_text:
+            word_boundary_pattern = r'(^|[^a-z0-9])' + re.escape(prefix)
+            if re.search(word_boundary_pattern, search_text, re.IGNORECASE):
+                return 40.0
+        
+        # Priority 5: Prefix appears anywhere in orderingNumber
+        if ordering_num and prefix in ordering_num:
+            return 20.0
+        
+        # Priority 6: Prefix appears anywhere in searchText
+        if search_text and prefix in search_text:
+            return 10.0
+        
+        # No match
+        return 0.0
+
 
     @staticmethod
     def _calculate_relevance(score: float) -> "RelevanceLevel":
