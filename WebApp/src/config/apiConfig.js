@@ -19,8 +19,7 @@ export const API_CONFIG = {
   // Set via REACT_APP_SEARCH_API_BASE_URL environment variable
   // Defaults to FILE_API_BASE_URL for local/dev convenience
   SEARCH_API_BASE_URL:
-    // process.env.REACT_APP_SEARCH_API_BASE_URL ||
-    // 'http://localhost:3000',
+    process.env.REACT_APP_SEARCH_API_BASE_URL ||
     'http://localhost:3000',
 
   // Extract Catalog Info service endpoints (see extractCatalogInfo/serverless.yml)
