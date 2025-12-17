@@ -72,12 +72,14 @@ export const searchProducts = async ({
  * @param {string} params.query - Search prefix (required, sent as `q`)
  * @param {string} [params.category] - Optional product category filter
  * @param {number} [params.size=10] - Number of suggestions to return (1–20)
+ * @param {AbortSignal} [params.signal] - AbortSignal for request cancellation
  * @returns {Promise<Object>} Autocomplete response from the API
  */
 export const fetchAutocompleteSuggestions = async ({
   query,
   category,
   size = 10,
+  signal,
 } = {}) => {
   if (!query || !query.trim()) {
     throw new Error('Autocomplete query (q) is required');
@@ -98,6 +100,7 @@ export const fetchAutocompleteSuggestions = async ({
 
   const response = await fetch(url, {
     method: 'GET',
+    signal, // Support request cancellation
   });
 
   if (!response.ok) {

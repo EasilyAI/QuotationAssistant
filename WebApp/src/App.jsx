@@ -16,6 +16,7 @@ import NewQuotation from './pages/quotations/NewQuotation';
 import EditQuotation from './pages/quotations/EditQuotation';
 import Settings from './pages/Settings';
 import ProductPage from './pages/ProductPage';
+import Products from './pages/Products';
 import './styles/globals.css';
 
 const router = createBrowserRouter([
@@ -38,6 +39,7 @@ const router = createBrowserRouter([
       { path: 'files/review/price-list/:id', element: <PriceListReview /> },
       { path: 'search', element: <SingleSearch /> },
       { path: 'multi-search', element: <MultiItemSearch /> },
+      { path: 'products', element: <Products /> },
       { path: 'quotations', element: <Quotations /> },
       { path: 'quotations/new', element: <NewQuotation /> },
       { path: 'quotations/metadata/:id', element: <NewQuotation /> },

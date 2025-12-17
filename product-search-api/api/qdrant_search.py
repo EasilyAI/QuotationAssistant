@@ -13,6 +13,14 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'shared'))
 
+from qdrant_client.http.models import (
+    Filter as HttpFilter,
+    FieldCondition as HttpFieldCondition,
+    MatchText as HttpMatchText,
+    MatchValue as HttpMatchValue,
+    MinShould,
+)
+
 from indexer.qdrant_client import QdrantManager
 from indexer.embedding_bedrock import get_embedding_generator  # Using Bedrock (no Docker needed!)
 from shared.qdrant_types import ProductMetadata
@@ -130,14 +138,13 @@ class SearchService:
         category: Optional[str] = None
     ) -> List[Dict[str, str]]:
         """
-        Get autocomplete suggestions with intelligent prefix matching.
+        Get autocomplete suggestions using text-only prefix matching.
+        
+        Uses Qdrant's text search capabilities (PREFIX tokenizer) for fast prefix matching.
+        No vector embeddings needed - pure text-based search for maximum speed.
         
         Prioritizes matches where the prefix appears at the beginning of the text,
         followed by word-boundary matches, then substring matches.
-        
-        Since Qdrant doesn't have built-in prefix matching,
-        we use a hybrid approach: vector search with low threshold
-        + intelligent client-side scoring and ranking.
         
         Args:
             prefix: Query prefix
@@ -151,26 +158,156 @@ class SearchService:
             return []
         
         try:
-            logger.info(f"Autocomplete for: '{prefix}'")
+            logger.info(f"Autocomplete (text-only) for: '{prefix}'")
             
-            # Use vector search with lower threshold
-            # This finds semantically similar items
-            results = self.vector_search(
-                query=prefix,
-                limit=limit * 5,  # Get more candidates for better ranking
-                category=category,
-                min_score=0.0  # No minimum score for autocomplete
-            )
+            # Use text-only search via Qdrant's query_points with MatchText filters
+            # No vector embedding needed - much faster!
+            # Fetch more candidates to account for potential tokenization mismatches
+            # (e.g., "6L-L" might not match perfectly due to PREFIX tokenizer behavior)
+            candidate_limit = max(limit * 3, 30)  # Get more candidates for better coverage
+            
+            # Create a dummy zero vector (required by query_points API but not used for matching)
+            # The actual matching is done via text filters
+            dummy_vector = [0.0] * self.embedder.get_vector_size()
+            
+            # Build text filters for prefix matching
+            # Use MatchText which works with PREFIX tokenizer on orderingNumber
+            
+            must_conditions = []
+            should_conditions = []
+            
+            # Category filter
+            if category:
+                must_conditions.append(
+                    HttpFieldCondition(
+                        key="productCategory",
+                        match=HttpMatchValue(value=category)
+                    )
+                )
+            
+            # Text prefix matching on orderingNumber and searchText
+            # For autocomplete, we use a more lenient approach:
+            # 1. Try MatchText for token-based matching (works with PREFIX tokenizer)
+            # 2. Also include substring matching to catch edge cases like "6L-L"
+            # We'll fetch more candidates and filter client-side for better control
+            prefix_lower = prefix.lower().strip()
+            if prefix_lower:
+                # Use MatchText for token-based prefix matching
+                # This works well with PREFIX tokenizer for most cases
+                should_conditions.extend([
+                    HttpFieldCondition(
+                        key="orderingNumber",
+                        match=HttpMatchText(text=prefix_lower)
+                    ),
+                    HttpFieldCondition(
+                        key="searchText",
+                        match=HttpMatchText(text=prefix_lower)
+                    ),
+                ])
+                
+                # For very short prefixes or if we want to be more lenient,
+                # we could also add substring matching, but that's expensive.
+                # Instead, we'll fetch more results and do client-side filtering
+            
+            query_filter = None
+            if must_conditions or should_conditions:
+                min_should = (
+                    MinShould(conditions=should_conditions, min_count=1)
+                    if should_conditions
+                    else None
+                )
+                query_filter = HttpFilter(
+                    must=must_conditions if must_conditions else None,
+                    should=should_conditions if should_conditions else None,
+                    min_should=min_should
+                )
+            
+            # Query Qdrant with text filters only (dummy vector ignored)
+            # Note: We use query_points which requires a vector, but we use a dummy vector
+            # and rely entirely on text filters for matching
+            results_raw = None
+            
+            # First, try with strict MatchText filter
+            try:
+                results_raw = self.qdrant.client.query_points(
+                    collection_name=self.qdrant.collection_name,
+                    query=dummy_vector,
+                    query_filter=query_filter,
+                    limit=candidate_limit,
+                    score_threshold=None  # No score threshold for text search
+                )
+            except Exception as e:
+                logger.warning(f"Query points failed: {str(e)}")
+                results_raw = None
+            
+            # If we got no results or very few, try a more lenient approach:
+            # Use scroll_points to get more candidates, then filter client-side
+            # This helps with edge cases where MatchText doesn't match due to tokenization
+            if not results_raw or len(results_raw.points) < limit:
+                logger.info(f"Got {len(results_raw.points) if results_raw else 0} results, trying scroll for more candidates")
+                try:
+                    # Use scroll with only category filter (no text filter) to get more candidates
+                    # We'll filter by prefix client-side
+                    scroll_filter = None
+                    if category:
+                        scroll_filter = HttpFilter(
+                            must=[
+                                HttpFieldCondition(
+                                    key="productCategory",
+                                    match=HttpMatchValue(value=category)
+                                )
+                            ]
+                        )
+                    
+                    scroll_results = self.qdrant.client.scroll(
+                        collection_name=self.qdrant.collection_name,
+                        scroll_filter=scroll_filter,
+                        limit=candidate_limit * 2,  # Get even more candidates
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    
+                    # Convert scroll results to same format as query_points
+                    class MockPoint:
+                        def __init__(self, point_id, payload):
+                            self.id = point_id
+                            self.payload = payload
+                            self.score = None
+                    
+                    scroll_points = [MockPoint(p.id, p.payload) for p in scroll_results[0]]
+                    
+                    # If we got results from scroll, use them (they'll be filtered client-side)
+                    if scroll_points:
+                        results_raw = type('Results', (), {'points': scroll_points})()
+                        logger.info(f"Scroll returned {len(scroll_points)} candidates for client-side filtering")
+                except Exception as e:
+                    logger.warning(f"Scroll also failed: {str(e)}")
+                    # If both fail, use empty results
+                    if not results_raw:
+                        results_raw = type('Results', (), {'points': []})()
+            
+            # Format results
+            results = []
+            for point in results_raw.points:
+                results.append({
+                    'id': str(point.id),
+                    'score': point.score if hasattr(point, 'score') else None,
+                    'metadata': point.payload or {}
+                })
             
             # Score and filter results that match the prefix
+            # We do client-side filtering to ensure we catch all prefix matches,
+            # including edge cases where Qdrant's tokenization might miss exact matches
             scored_suggestions: List[Tuple[float, Dict[str, str]]] = []
             prefix_lower = prefix.lower()
             
             for result in results:
-                ordering_num = result.get('orderingNumber', '')
+                metadata: ProductMetadata = result.get('metadata', {})  # type: ignore[assignment]
+                ordering_num = metadata.get('orderingNumber', '') or result.get('id', '')
                 ordering_num_lower = ordering_num.lower()
-                search_text = result.get('searchText', '')
+                search_text = metadata.get('searchText') or metadata.get('description', '') or ''
                 search_text_lower = search_text.lower() if search_text else ''
+                category_val = metadata.get('productCategory') or metadata.get('category', '')
                 
                 # Calculate match score based on where prefix appears
                 score = self._calculate_prefix_match_score(
@@ -179,13 +316,14 @@ class SearchService:
                     search_text_lower
                 )
                 
-                # Only include results that actually match the prefix (score > 0)
+                # Only include results that actually contain the prefix
+                # This ensures we catch matches even if Qdrant's tokenization missed them
                 if score > 0:
                     scored_suggestions.append((
                         score,
                         {
                             'orderingNumber': ordering_num,
-                            'category': result.get('category', ''),
+                            'category': category_val,
                             'searchText': search_text
                         }
                     ))
@@ -194,7 +332,7 @@ class SearchService:
             scored_suggestions.sort(key=lambda x: x[0], reverse=True)
             suggestions = [item[1] for item in scored_suggestions[:limit]]
             
-            logger.info(f"Returning {len(suggestions)} autocomplete suggestions")
+            logger.info(f"Returning {len(suggestions)} autocomplete suggestions (text-only)")
             return suggestions
             
         except Exception as e:
@@ -271,15 +409,32 @@ class SearchService:
         Cosine similarity ranges from -1 to 1, but we normalize to 0-1.
         Good matches are typically > 0.7.
         
+        Thresholds are configurable via environment variables:
+        - RELEVANCE_HIGH_THRESHOLD (default: 0.70)
+        - RELEVANCE_MEDIUM_THRESHOLD (default: 0.50)
+        
         Args:
             score: Similarity score
             
         Returns:
             Relevance label
         """
-        if score >= 0.85:
+        # Get configurable thresholds from environment variables
+        high_threshold = float(os.getenv('RELEVANCE_HIGH_THRESHOLD', '0.70'))
+        medium_threshold = float(os.getenv('RELEVANCE_MEDIUM_THRESHOLD', '0.50'))
+        
+        # Validate thresholds
+        if not (0.0 <= medium_threshold <= high_threshold <= 1.0):
+            logger.warning(
+                f"Invalid relevance thresholds: HIGH={high_threshold}, MEDIUM={medium_threshold}. "
+                f"Using defaults: HIGH=0.70, MEDIUM=0.50"
+            )
+            high_threshold = 0.70
+            medium_threshold = 0.50
+        
+        if score >= high_threshold:
             return RelevanceLevel.HIGH
-        elif score >= 0.70:
+        elif score >= medium_threshold:
             return RelevanceLevel.MEDIUM
         else:
             return RelevanceLevel.LOW

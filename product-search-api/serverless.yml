@@ -36,6 +36,10 @@ provider:
     
     # Logging
     LOG_LEVEL: INFO
+    
+    # Relevance Level Thresholds (configurable)
+    RELEVANCE_HIGH_THRESHOLD: ${env:RELEVANCE_HIGH_THRESHOLD, '0.70'}
+    RELEVANCE_MEDIUM_THRESHOLD: ${env:RELEVANCE_MEDIUM_THRESHOLD, '0.50'}
   
   iam:
     role:
