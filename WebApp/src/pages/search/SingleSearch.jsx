@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AddToQuotationDialog from '../../components/AddToQuotationDialog';
+import AutocompleteResults from '../../components/AutocompleteResults';
+import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
 import { ProductCategory } from '../../types/index';
-import { fetchProducts } from '../../services/productsService';
+import { fetchProducts, fetchProductByOrderingNumber } from '../../services/productsService';
+import { getFileDownloadUrl, getFileInfo } from '../../services/fileInfoService';
 import { searchProducts, fetchAutocompleteSuggestions } from '../../services/searchService';
 import './SingleSearch.css';
 
 const SingleSearch = () => {
   const navigate = useNavigate();
+  const autocompleteRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [productType, setProductType] = useState('All Types');
   const [resultsCount, setResultsCount] = useState(5);
@@ -30,6 +34,12 @@ const SingleSearch = () => {
   const [autocompleteError, setAutocompleteError] = useState('');
   const [isAutocompleteOpen, setIsAutocompleteOpen] = useState(false);
   const [useAI, setUseAI] = useState(true);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewProduct, setPreviewProduct] = useState(null);
+  const [previewFileKey, setPreviewFileKey] = useState('');
+  const [previewFileUrl, setPreviewFileUrl] = useState(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewOrderingNo, setPreviewOrderingNo] = useState(null);
   const selectedCategory = productType === 'All Types' ? undefined : productType;
 
   const productTypes = ['All Types', ...Object.values(ProductCategory)];
@@ -115,6 +125,33 @@ const SingleSearch = () => {
     };
   }, [searchQuery, selectedCategory]);
 
+  // Handle ESC key and click outside to close autocomplete
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === 'Escape' && isAutocompleteOpen) {
+        setIsAutocompleteOpen(false);
+      }
+    };
+
+    const handleClickOutside = (e) => {
+      if (
+        isAutocompleteOpen &&
+        autocompleteRef.current &&
+        !autocompleteRef.current.contains(e.target)
+      ) {
+        setIsAutocompleteOpen(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    document.addEventListener('mousedown', handleClickOutside);
+
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isAutocompleteOpen]);
+
   const handleSearch = async () => {
     const trimmedQuery = searchQuery.trim();
     if (!trimmedQuery) {
@@ -171,6 +208,35 @@ const SingleSearch = () => {
     handleSearchInputChange(primary);
     setIsAutocompleteOpen(false);
     setAutocompleteSuggestions([]);
+  };
+
+  const runSearchWithQuery = async (value) => {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return;
+
+    setSearchQuery(trimmed);
+    setHasSearched(true);
+    setLastSearchQuery(trimmed);
+    setSearchLoading(true);
+    setSearchError('');
+    setSearchResults([]);
+    setIsAutocompleteOpen(false);
+
+    try {
+      const response = await searchProducts({
+        query: trimmed,
+        category: selectedCategory,
+        size: 30,
+        resultSize: resultsCount,
+        useAI,
+      });
+      setSearchResults(response.results || []);
+    } catch (error) {
+      setSearchResults([]);
+      setSearchError(error.message || 'Failed to search products');
+    } finally {
+      setSearchLoading(false);
+    }
   };
 
   const handleLoadMoreCatalogProducts = async () => {
@@ -269,6 +335,73 @@ const SingleSearch = () => {
     navigate(`/product/${orderingNo}`);
   };
 
+  const handleAutocompleteOrderingClick = async (orderingNo) => {
+    await runSearchWithQuery(orderingNo);
+  };
+
+  const handleOpenPreview = async (orderingNo) => {
+    const trimmedOrderingNo = (orderingNo || '').trim();
+    if (!trimmedOrderingNo || isPreviewLoading) {
+      return;
+    }
+
+    try {
+      setIsPreviewLoading(true);
+      setPreviewOrderingNo(trimmedOrderingNo);
+
+      // Fetch full product details (including catalogProducts with file references)
+      const productData = await fetchProductByOrderingNumber(trimmedOrderingNo);
+      const catalogProducts = productData.catalogProducts || [];
+      const primaryCatalogProduct = catalogProducts[0];
+
+      const fileId =
+        primaryCatalogProduct &&
+        (primaryCatalogProduct._fileId ||
+          primaryCatalogProduct.fileId);
+
+      if (!primaryCatalogProduct || !fileId) {
+        throw new Error('No catalog source available for preview');
+      }
+
+      // Resolve the file info to get the S3 key for the original catalog
+      const fileInfo = await getFileInfo(fileId);
+      const key = fileInfo.s3Key || fileInfo.key;
+
+      if (!key) {
+        throw new Error('No file key available for preview');
+      }
+
+      // Request a presigned download URL for secure preview access
+      const download = await getFileDownloadUrl(key);
+      if (!download || !download.url) {
+        throw new Error('Missing preview URL');
+      }
+
+      setPreviewProduct(primaryCatalogProduct);
+      setPreviewFileKey(key);
+      setPreviewFileUrl(download.url);
+      setIsPreviewOpen(true);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to open catalog preview', error);
+      const message =
+        (error && error.message) ||
+        'Unable to open catalog preview. Please try again.';
+      // eslint-disable-next-line no-alert
+      window.alert(message);
+    } finally {
+      setIsPreviewLoading(false);
+      setPreviewOrderingNo(null);
+    }
+  };
+
+  const handleClosePreview = () => {
+    setIsPreviewOpen(false);
+    setPreviewProduct(null);
+    setPreviewFileKey('');
+    setPreviewFileUrl(null);
+  };
+
   const renderHighlightedText = (text) => {
     if (!text) return null;
     const trimmedQuery = searchQuery.trim();
@@ -319,76 +452,36 @@ const SingleSearch = () => {
 
         {/* Search Bar Section */}
         <div className="search-bar-section">
-          <div className="search-input-wrapper">
-            <div className="search-icon-container">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
-                <path d="M21 21L16.65 16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-              </svg>
+          <div className="search-input-container" ref={autocompleteRef}>
+            <div className="search-input-wrapper">
+              <div className="search-icon-container">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M21 21L16.65 16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <input
+                type="text"
+                className="search-input"
+                placeholder="Search by free-text query or ordering number"
+                value={searchQuery}
+                onChange={(e) => handleSearchInputChange(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              />
             </div>
-            <input
-              type="text"
-              className="search-input"
-              placeholder="Search by free-text query or ordering number"
-              value={searchQuery}
-              onChange={(e) => handleSearchInputChange(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            />
+
+            {/* Autocomplete suggestions */}
+            {isAutocompleteOpen && (
+              <AutocompleteResults
+                suggestions={autocompleteSuggestions}
+                loading={autocompleteLoading}
+                error={autocompleteError}
+                query={searchQuery}
+                onSelectSuggestion={handleSelectSuggestion}
+                onOrderingNumberClick={handleAutocompleteOrderingClick}
+              />
+            )}
           </div>
-
-          {/* Autocomplete suggestions */}
-          {isAutocompleteOpen && (
-            <div className="autocomplete-panel">
-              {autocompleteLoading && (
-                <div className="autocomplete-status">Loading suggestions...</div>
-              )}
-              {autocompleteError && !autocompleteLoading && (
-                <div className="autocomplete-error">{autocompleteError}</div>
-              )}
-              {!autocompleteLoading && !autocompleteError && autocompleteSuggestions.length === 0 && (
-                <div className="autocomplete-status">No suggestions</div>
-              )}
-              {!autocompleteLoading && autocompleteSuggestions.length > 0 && (
-                <ul className="autocomplete-list">
-                  {autocompleteSuggestions.map((suggestion, index) => {
-                    const isObject = typeof suggestion === 'object' && suggestion !== null;
-                    const primary =
-                      !isObject
-                        ? String(suggestion)
-                        : suggestion.displayText ||
-                          suggestion.productName ||
-                          suggestion.orderingNumber ||
-                          suggestion.text ||
-                          '';
-                    const secondary =
-                      isObject &&
-                      (suggestion.category ||
-                        suggestion.productCategory ||
-                        suggestion.source ||
-                        suggestion.description ||
-                        '');
-
-                    return (
-                      <li
-                        key={index}
-                        className="autocomplete-item"
-                        onClick={() => handleSelectSuggestion(suggestion)}
-                      >
-                        <div className="autocomplete-item-primary">
-                          {renderHighlightedText(primary || String(suggestion))}
-                        </div>
-                        {secondary && (
-                          <div className="autocomplete-item-secondary">
-                            {secondary}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          )}
 
           <div className="search-filters">
             <div className="dropdown-wrapper">
@@ -592,8 +685,17 @@ const SingleSearch = () => {
                                 Add To Quotation
                               </button>
                               <div className="action-buttons-secondary">
-                                <button className="action-btn-icon" title="Open Catalog">
-                                  📄
+                                <button
+                                  className="action-btn-icon"
+                                  title="Preview Catalog"
+                                  type="button"
+                                  onClick={() => handleOpenPreview(orderingNo)}
+                                  disabled={
+                                    !orderingNo ||
+                                    (isPreviewLoading && previewOrderingNo === orderingNo)
+                                  }
+                                >
+                                  {isPreviewLoading && previewOrderingNo === orderingNo ? '…' : '📄'}
                                 </button>
                                 <button className="action-btn-icon" title="Swagelok Site">
                                   🌐
@@ -759,6 +861,15 @@ const SingleSearch = () => {
         orderingNo={selectedProduct?.orderingNo}
         onSelectQuotation={handleSelectQuotation}
         onCreateNew={handleCreateNew}
+      />
+      <CatalogPreviewDialog
+        isOpen={isPreviewOpen}
+        onClose={handleClosePreview}
+        catalogKey={previewFileKey || undefined}
+        fileUrl={previewFileUrl || undefined}
+        product={previewProduct || undefined}
+        highlightTerm={previewProduct?.orderingNumber}
+        title="Original Document Preview"
       />
     </div>
   );
