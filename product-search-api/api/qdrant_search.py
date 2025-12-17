@@ -13,6 +13,11 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'shared'))
 
+# Ensure Lambda layer site-packages (/opt/python) is on sys.path
+LAYER_SITE_DIR = "/opt/python"
+if os.path.isdir(LAYER_SITE_DIR) and LAYER_SITE_DIR not in sys.path:
+    sys.path.append(LAYER_SITE_DIR)
+    
 from qdrant_client.http.models import (
     Filter as HttpFilter,
     FieldCondition as HttpFieldCondition,
