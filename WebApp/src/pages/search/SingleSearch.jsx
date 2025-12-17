@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AddToQuotationDialog from '../../components/AddToQuotationDialog';
-import { getSearchResultsByType } from '../../data/mockSearchResults';
 import { ProductCategory } from '../../types/index';
 import { fetchProducts } from '../../services/productsService';
+import { searchProducts, fetchAutocompleteSuggestions } from '../../services/searchService';
 import './SingleSearch.css';
 
 const SingleSearch = () => {
@@ -22,13 +22,17 @@ const SingleSearch = () => {
   const [catalogProductsError, setCatalogProductsError] = useState('');
   const [catalogProductsCursor, setCatalogProductsCursor] = useState(null);
   const [catalogProductsHasMore, setCatalogProductsHasMore] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState([]);
+  const [autocompleteLoading, setAutocompleteLoading] = useState(false);
+  const [autocompleteError, setAutocompleteError] = useState('');
+  const [isAutocompleteOpen, setIsAutocompleteOpen] = useState(false);
+  const [useAI, setUseAI] = useState(true);
   const selectedCategory = productType === 'All Types' ? undefined : productType;
 
   const productTypes = ['All Types', ...Object.values(ProductCategory)];
-
-  // Get search results from centralized data
-  const allSearchResults = getSearchResultsByType(productType);
-  const searchResults = allSearchResults.slice(0, resultsCount);
 
   useEffect(() => {
     let isMounted = true;
@@ -65,12 +69,108 @@ const SingleSearch = () => {
     };
   }, [selectedCategory]);
 
-  const handleSearch = () => {
-    if (searchQuery.trim()) {
-      setHasSearched(true);
-      setLastSearchQuery(searchQuery);
-      console.log('Searching for:', searchQuery);
+  // Fetch autocomplete suggestions whenever the query changes
+  useEffect(() => {
+    const trimmedQuery = searchQuery.trim();
+
+    if (!trimmedQuery) {
+      setAutocompleteSuggestions([]);
+      setIsAutocompleteOpen(false);
+      setAutocompleteError('');
+      return;
     }
+
+    let isActive = true;
+    setAutocompleteLoading(true);
+    setAutocompleteError('');
+
+    const fetchSuggestions = async () => {
+      try {
+        const response = await fetchAutocompleteSuggestions({
+          query: trimmedQuery,
+          category: selectedCategory,
+          size: 10,
+        });
+        if (!isActive) return;
+        setAutocompleteSuggestions(response.suggestions || []);
+        setIsAutocompleteOpen(true);
+      } catch (error) {
+        if (!isActive) return;
+        setAutocompleteSuggestions([]);
+        setAutocompleteError(error.message || 'Failed to load suggestions');
+        setIsAutocompleteOpen(false);
+      } finally {
+        if (isActive) {
+          setAutocompleteLoading(false);
+        }
+      }
+    };
+
+    // Small debounce to avoid firing on every keystroke too aggressively
+    const timeoutId = setTimeout(fetchSuggestions, 250);
+
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [searchQuery, selectedCategory]);
+
+  const handleSearch = async () => {
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) {
+      return;
+    }
+
+    setHasSearched(true);
+    setLastSearchQuery(trimmedQuery);
+    setSearchLoading(true);
+    setSearchError('');
+    setSearchResults([]);
+    setIsAutocompleteOpen(false);
+
+    try {
+      const response = await searchProducts({
+        query: trimmedQuery,
+        category: selectedCategory,
+        size: 30,
+        resultSize: resultsCount,
+        useAI,
+      });
+      setSearchResults(response.results || []);
+    } catch (error) {
+      setSearchResults([]);
+      setSearchError(error.message || 'Failed to search products');
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleSearchInputChange = (value) => {
+    setSearchQuery(value);
+    setHasSearched(false);
+    setLastSearchQuery('');
+    setSearchError('');
+    setSearchResults([]);
+  };
+
+  const handleSelectSuggestion = (suggestion) => {
+    // Try to derive a reasonable primary text from the suggestion
+    let primary =
+      typeof suggestion === 'string'
+        ? suggestion
+        : suggestion.displayText ||
+          suggestion.productName ||
+          suggestion.orderingNumber ||
+          suggestion.text ||
+          '';
+
+    if (!primary && typeof suggestion === 'object') {
+      primary = JSON.stringify(suggestion);
+    }
+
+    handleSearchInputChange(primary);
+    setIsAutocompleteOpen(false);
+    setAutocompleteSuggestions([]);
   };
 
   const handleLoadMoreCatalogProducts = async () => {
@@ -101,6 +201,8 @@ const SingleSearch = () => {
     setLastSearchQuery('');
     setProductType('All Types');
     setResultsCount(5);
+     setSearchResults([]);
+    setSearchError('');
   };
 
   const handleAddToQuotation = (product) => {
@@ -167,6 +269,32 @@ const SingleSearch = () => {
     navigate(`/product/${orderingNo}`);
   };
 
+  const renderHighlightedText = (text) => {
+    if (!text) return null;
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) return text;
+
+    const lowerText = String(text);
+    const lowerQuery = trimmedQuery.toLowerCase();
+    const index = lowerText.toLowerCase().indexOf(lowerQuery);
+
+    if (index === -1) {
+      return lowerText;
+    }
+
+    const before = lowerText.slice(0, index);
+    const match = lowerText.slice(index, index + trimmedQuery.length);
+    const after = lowerText.slice(index + trimmedQuery.length);
+
+    return (
+      <>
+        {before}
+        <span className="match-highlight">{match}</span>
+        {after}
+      </>
+    );
+  };
+
   return (
     <div className="single-search-page">
       <div className="single-search-content">
@@ -203,10 +331,64 @@ const SingleSearch = () => {
               className="search-input"
               placeholder="Search by free-text query or ordering number"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchInputChange(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
             />
           </div>
+
+          {/* Autocomplete suggestions */}
+          {isAutocompleteOpen && (
+            <div className="autocomplete-panel">
+              {autocompleteLoading && (
+                <div className="autocomplete-status">Loading suggestions...</div>
+              )}
+              {autocompleteError && !autocompleteLoading && (
+                <div className="autocomplete-error">{autocompleteError}</div>
+              )}
+              {!autocompleteLoading && !autocompleteError && autocompleteSuggestions.length === 0 && (
+                <div className="autocomplete-status">No suggestions</div>
+              )}
+              {!autocompleteLoading && autocompleteSuggestions.length > 0 && (
+                <ul className="autocomplete-list">
+                  {autocompleteSuggestions.map((suggestion, index) => {
+                    const isObject = typeof suggestion === 'object' && suggestion !== null;
+                    const primary =
+                      !isObject
+                        ? String(suggestion)
+                        : suggestion.displayText ||
+                          suggestion.productName ||
+                          suggestion.orderingNumber ||
+                          suggestion.text ||
+                          '';
+                    const secondary =
+                      isObject &&
+                      (suggestion.category ||
+                        suggestion.productCategory ||
+                        suggestion.source ||
+                        suggestion.description ||
+                        '');
+
+                    return (
+                      <li
+                        key={index}
+                        className="autocomplete-item"
+                        onClick={() => handleSelectSuggestion(suggestion)}
+                      >
+                        <div className="autocomplete-item-primary">
+                          {renderHighlightedText(primary || String(suggestion))}
+                        </div>
+                        {secondary && (
+                          <div className="autocomplete-item-secondary">
+                            {secondary}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
 
           <div className="search-filters">
             <div className="dropdown-wrapper">
@@ -236,6 +418,15 @@ const SingleSearch = () => {
                 </div>
               )}
             </div>
+
+            {/* AI Re-ranking toggle */}
+            <button
+              type="button"
+              className={`filter-dropdown ai-toggle-button ${useAI ? 'ai-on' : 'ai-off'}`}
+              onClick={() => setUseAI((prev) => !prev)}
+            >
+              {useAI ? 'AI Re-ranking: On' : 'AI Re-ranking: Off'}
+            </button>
             
             <div className="dropdown-wrapper">
               <button 
@@ -284,6 +475,14 @@ const SingleSearch = () => {
                       Showing results for: <span className="query-text">"{lastSearchQuery}"</span>
                     </p>
                   )}
+                  {searchLoading && (
+                    <p className="search-query-display">Searching products...</p>
+                  )}
+                  {searchError && (
+                    <p className="search-query-display error-text">
+                      {searchError}
+                    </p>
+                  )}
                 </div>
                 <button className="clear-results-button" onClick={handleClearResults}>
                   Clear Results
@@ -306,53 +505,108 @@ const SingleSearch = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {searchResults.map((result) => (
-                      <tr key={result.id}>
-                        <td className="col-product-name">{result.productName}</td>
-                        <td className="col-ordering-no">
-                          <button 
-                            className="ordering-link"
-                            onClick={() => handleProductClick(result.orderingNo)}
-                          >
-                            {result.orderingNo}
-                          </button>
-                        </td>
-                        <td className="col-confidence">
-                          <div className="confidence-wrapper">
-                            <div className="confidence-bar-bg">
-                              <div 
-                                className="confidence-bar-fill" 
-                                style={{ width: `${result.confidence}%` }}
-                              ></div>
-                            </div>
-                            <span className="confidence-value">{result.confidence}</span>
-                          </div>
-                        </td>
-                        <td className="col-type text-secondary">{result.type}</td>
-                        <td className="col-specifications text-secondary">{result.specifications}</td>
-                        <td className="col-actions">
-                          <div className="action-buttons-wrapper">
-                            <button 
-                              className="action-btn-primary"
-                              onClick={() => handleAddToQuotation(result)}
-                            >
-                              Add To Quotation
-                            </button>
-                            <div className="action-buttons-secondary">
-                              <button className="action-btn-icon" title="Open Catalog">
-                                📄
-                              </button>
-                              <button className="action-btn-icon" title="Swagelok Site">
-                                🌐
-                              </button>
-                              <button className="action-btn-icon" title="Open Sketch">
-                                📐
-                              </button>
-                            </div>
-                          </div>
+                    {!searchLoading && searchResults.length === 0 && (
+                      <tr>
+                        <td colSpan="6" className="catalog-table-empty">
+                          No results found.
                         </td>
                       </tr>
-                    ))}
+                    )}
+                    {searchResults.map((result, index) => {
+                      const confidencePercent =
+                        typeof result.score === 'number'
+                          ? Math.round(result.score * 100)
+                          : typeof result.confidence === 'number'
+                          ? result.confidence
+                          : null;
+
+                      const productName =
+                        result.productName ||
+                        result.name ||
+                        result.summary ||
+                        result.orderingNumber ||
+                        result.orderingNo ||
+                        `Result ${index + 1}`;
+
+                      const orderingNo = result.orderingNumber || result.orderingNo || result.id;
+
+                      const specifications =
+                        result.specifications ||
+                        result.description ||
+                        result.details ||
+                        '';
+
+                      const type =
+                        result.productCategory ||
+                        result.category ||
+                        result.type ||
+                        '—';
+
+                      return (
+                        <tr key={orderingNo || index}>
+                          <td className="col-product-name">{productName}</td>
+                          <td className="col-ordering-no">
+                            {orderingNo ? (
+                              <button
+                                className="ordering-link"
+                                onClick={() => handleProductClick(orderingNo)}
+                              >
+                                {orderingNo}
+                              </button>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="col-confidence">
+                            {confidencePercent != null ? (
+                              <div className="confidence-wrapper">
+                                <div className="confidence-bar-bg">
+                                  <div
+                                    className="confidence-bar-fill"
+                                    style={{ width: `${confidencePercent}%` }}
+                                  ></div>
+                                </div>
+                                <span className="confidence-value">
+                                  {confidencePercent}%
+                                </span>
+                              </div>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="col-type text-secondary">{type}</td>
+                          <td className="col-specifications text-secondary">
+                            {specifications}
+                          </td>
+                          <td className="col-actions">
+                            <div className="action-buttons-wrapper">
+                              <button
+                                className="action-btn-primary"
+                                onClick={() =>
+                                  handleAddToQuotation({
+                                    productName,
+                                    orderingNo,
+                                  })
+                                }
+                              >
+                                Add To Quotation
+                              </button>
+                              <div className="action-buttons-secondary">
+                                <button className="action-btn-icon" title="Open Catalog">
+                                  📄
+                                </button>
+                                <button className="action-btn-icon" title="Swagelok Site">
+                                  🌐
+                                </button>
+                                <button className="action-btn-icon" title="Open Sketch">
+                                  📐
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

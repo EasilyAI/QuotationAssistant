@@ -44,6 +44,7 @@ provider:
         - Effect: Allow
           Action:
             - dynamodb:GetItem
+            - dynamodb:Scan
             - dynamodb:DescribeStream
             - dynamodb:GetRecords
             - dynamodb:GetShardIterator
@@ -152,6 +153,9 @@ functions:
           method: get
       - httpApi:
           path: /autocomplete
+          method: get
+      - httpApi:
+          path: /product
           method: get
       - httpApi:
           path: /product/{orderingNumber}

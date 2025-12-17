@@ -117,7 +117,7 @@ export const fetchProducts = async (params = {}) => {
     searchParams.set('cursor', cursor);
   }
 
-  const url = `${buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS)}${
+  const url = `${buildSearchApiUrl(API_CONFIG.SEARCH_ENDPOINTS.PRODUCT)}${
     searchParams.toString() ? `?${searchParams.toString()}` : ''
   }`;
   const response = await fetch(url);

@@ -192,3 +192,55 @@ def fetch_product(ordering_number: str) -> ProductData:
         "priceListPointers": resolved_price_list,
         "currentPrice": current_price,
     }
+
+
+def list_products_page(limit: int = 50) -> Dict[str, Any]:
+    """
+    Fetch a lightweight page of products.
+
+    This mirrors the basic behavior of the legacy get_product endpoint when no
+    ordering number was provided: return the first X products from the products
+    table.
+
+    The result includes a stable shape that the API layer can return directly:
+        {
+            "count": <int>,
+            "products": [ ... ],
+            "hasMore": <bool>,
+            "cursor": <str | None>
+        }
+    """
+    # Normalize and clamp limit
+    try:
+        limit_int = int(limit)
+    except (TypeError, ValueError):
+        limit_int = 50
+
+    limit_int = max(1, min(limit_int, 200))
+
+    products_table = dynamodb.Table(PRODUCT_TABLE)
+
+    # Single-page scan – we intentionally keep this lightweight and bounded
+    response = products_table.scan(Limit=limit_int)
+    items = response.get("Items", [])
+
+    # Convert Decimals so the result is JSON-serializable
+    products: List[Dict[str, Any]] = [
+        convert_decimals_to_native(item) for item in items
+    ]
+
+    last_evaluated_key = response.get("LastEvaluatedKey")
+    cursor: Optional[str] = None
+    has_more = False
+
+    if last_evaluated_key:
+        # Safe JSON string cursor the client can pass back as-is
+        cursor = json.dumps(last_evaluated_key, default=str)
+        has_more = True
+
+    return {
+        "count": len(products),
+        "products": products,
+        "hasMore": has_more,
+        "cursor": cursor,
+    }
