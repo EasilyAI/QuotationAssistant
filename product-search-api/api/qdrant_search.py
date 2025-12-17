@@ -15,7 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'shared'))
 
 from indexer.qdrant_client import QdrantManager
 from indexer.embedding_bedrock import get_embedding_generator  # Using Bedrock (no Docker needed!)
-from qdrant_types import ProductMetadata
+from shared.qdrant_types import ProductMetadata
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
