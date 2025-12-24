@@ -177,39 +177,6 @@ const CatalogReview = () => {
     [reduceSpecsRecord],
   );
 
-  const buildProductTextDescription = useCallback((product: ReviewProduct): string => {
-    const parts: string[] = [];
-    if (product.orderingNumber) {
-      parts.push(`Ordering Number: ${product.orderingNumber}`);
-    }
-    if (product.description?.trim()) {
-      parts.push(product.description.trim());
-    }
-    if (product.manualInput?.trim()) {
-      parts.push(product.manualInput.trim());
-    }
-    if (product.specsList.length) {
-      const specsText = product.specsList
-        .map((spec) => {
-          const key = spec.key.trim();
-          const value = spec.value.trim();
-          if (key && value) {
-            return `${key}: ${value}`;
-          }
-          return key || value;
-        })
-        .filter(Boolean)
-        .join('; ');
-      if (specsText) {
-        parts.push(`Specs: ${specsText}`);
-      }
-    }
-    if (product.location?.page) {
-      parts.push(`Located on page ${product.location.page}`);
-    }
-    return parts.filter(Boolean).join('\n');
-  }, []);
-
   const applyLoadedProducts = useCallback(
     (backendProducts: CatalogProduct[]) => {
       const transformed = transformBackendProducts(backendProducts);
@@ -321,7 +288,7 @@ const CatalogReview = () => {
     return () => {
       isSubscribed = false;
     };
-  }, [applyLoadedProducts, fileId]);
+  }, [applyLoadedProducts, fileId, locationState?.products]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -615,7 +582,7 @@ const CatalogReview = () => {
         ],
       };
     },
-    [buildProductTextDescription],
+    [],
   );
 
   const mergeProducts = useCallback(

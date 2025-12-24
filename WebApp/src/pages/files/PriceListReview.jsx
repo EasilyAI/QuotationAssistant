@@ -25,7 +25,6 @@ const PriceListReview = () => {
 
   const [fileInfo, setFileInfo] = useState(null);
   const [products, setProducts] = useState([]);
-  const [originalProducts, setOriginalProducts] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [showErrorsOnly, setShowErrorsOnly] = useState(false);
 
@@ -55,7 +54,6 @@ const PriceListReview = () => {
           console.log('[PriceListReview] Using data from location state');
           setFileInfo(location.state.fileInfo);
           setProducts(location.state.products);
-          setOriginalProducts(JSON.parse(JSON.stringify(location.state.products)));
           updateStats(location.state.products);
         } else {
           // Load from backend
@@ -78,7 +76,6 @@ const PriceListReview = () => {
 
           setFileInfo(fileInfoData);
           setProducts(productsData.products || []);
-          setOriginalProducts(JSON.parse(JSON.stringify(productsData.products || [])));
           updateStats(productsData.products || []);
         }
       } catch (err) {
@@ -195,8 +192,7 @@ const PriceListReview = () => {
 
       await updatePriceListProducts(fileId, productsToSave);
       
-      // Update original products to match saved state
-      setOriginalProducts(JSON.parse(JSON.stringify(productsToSave)));
+      // Update products to match saved state
       setProducts(productsToSave);
       setStats(prev => ({ ...prev, modified: 0 }));
       setSaveSuccess(true);

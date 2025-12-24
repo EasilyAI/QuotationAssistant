@@ -1,6 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mockBatchItems } from '../../data/mockBatchItems';
+import { parseExcelFile } from '../../utils/excelParser';
+import { batchSearchProducts } from '../../services/batchSearchService';
+import { fetchAutocompleteSuggestions } from '../../services/searchService';
+import BatchSearchResultsDialog from '../../components/BatchSearchResultsDialog';
+import BatchValidationDialog from '../../components/BatchValidationDialog';
+import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
+import { fetchProductByOrderingNumber } from '../../services/productsService';
+import { getFileDownloadUrl, getFileInfo } from '../../services/fileInfoService';
+import { ProductCategory } from '../../types';
 import './MultiItemSearch.css';
 
 const MultiItemSearch = () => {
@@ -24,9 +32,25 @@ const MultiItemSearch = () => {
     return null;
   };
 
-  // Initialize with restored state if available, otherwise use centralized mock data
+  // Initialize with restored state if available, otherwise empty
   const restoredState = restoreBatchSearchState();
-  const [items, setItems] = useState(restoredState?.items || mockBatchItems.map(item => ({ ...item })));
+  const [items, setItems] = useState(restoredState?.items || []);
+  const [isLoading, setIsLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [showResultsDialog, setShowResultsDialog] = useState(false);
+  const [batchSearchResults, setBatchSearchResults] = useState(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewProduct, setPreviewProduct] = useState(null);
+  const [previewFileKey, setPreviewFileKey] = useState('');
+  const [previewFileUrl, setPreviewFileUrl] = useState(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewOrderingNo, setPreviewOrderingNo] = useState(null);
+  const [showValidationDialog, setShowValidationDialog] = useState(false);
+  const [parsedExcelData, setParsedExcelData] = useState(null);
+  const [validationErrorsMinimized, setValidationErrorsMinimized] = useState(true); // Start minimized
+  const [autocompleteData, setAutocompleteData] = useState({}); // { itemId: { suggestions: [], loading: false, show: false } }
+  const autocompleteInputRefs = useRef({});
 
   // Set uploaded file if restoring state
   React.useEffect(() => {
@@ -35,12 +59,155 @@ const MultiItemSearch = () => {
     }
   }, [restoredState?.uploadedFileName]);
 
-  const handleFileUpload = (event) => {
+  const handleFileUpload = async (event) => {
     const file = event.target.files[0];
-    if (file) {
-      setUploadedFile(file);
-      console.log('File uploaded:', file.name);
+    if (!file) {
+      return;
     }
+
+    // Validate file type
+    const validExtensions = ['.xlsx', '.xls'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    if (!validExtensions.includes(fileExtension)) {
+      setSearchError('Invalid file type. Please upload an Excel file (.xlsx or .xls)');
+      return;
+    }
+
+    setIsLoading(true);
+    setSearchError('');
+    setValidationErrors([]);
+    setUploadedFile(file);
+
+    try {
+      // Parse Excel file
+      const { items: parsedItems, errors: parseErrors } = await parseExcelFile(file);
+      
+      // Store parsed data for later use
+      setParsedExcelData(parsedItems);
+      
+      // Separate valid and invalid items
+      const validItems = parsedItems.filter(item => item.isValid);
+      const invalidItems = parsedItems.filter(item => !item.isValid);
+
+      // Show validation dialog if there are any errors or warnings
+      if (parseErrors.length > 0 || invalidItems.length > 0) {
+        setValidationErrors(parseErrors);
+        setShowValidationDialog(true);
+        setIsLoading(false);
+        return; // Wait for user to confirm
+      }
+
+      // If all items are valid, proceed directly to search
+      await executeBatchSearch(validItems, parsedItems);
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setSearchError(error.message || 'Failed to process Excel file. Please check the file format and try again.');
+      setIsLoading(false);
+    }
+  };
+
+  // Execute batch search with valid items
+  const executeBatchSearch = async (validItems, allParsedItems) => {
+    if (validItems.length === 0) {
+      setSearchError('No valid items to search.');
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setSearchError('');
+
+    try {
+      // Execute batch search
+      const searchResponse = await batchSearchProducts({
+        items: validItems.map(item => ({
+          orderingNumber: item.orderingNumber || null,
+          description: item.description || null,
+          quantity: item.quantity,
+          productType: item.productType,
+        })),
+        size: 30,
+        resultSize: 5,
+        useAI: true,
+      });
+
+      // Transform API results to match component's expected format
+      // Map results back to original parsed items to preserve all Excel columns
+      // The API returns results with itemIndex corresponding to the position in the validItems array sent
+      const validItemsList = allParsedItems.filter(item => item.isValid);
+      const resultMap = new Map();
+      searchResponse.results.forEach((result) => {
+        // result.itemIndex corresponds to index in validItems array that was sent to API
+        resultMap.set(result.itemIndex, result);
+      });
+
+      const transformedItems = validItemsList.map((originalItem, validIndex) => {
+        const result = resultMap.get(validIndex);
+        if (!result) {
+        return {
+          id: Date.now() + validIndex,
+          ...originalItem, // Preserve all original Excel data
+          isValid: true, // Ensure valid items are marked
+          status: 'No Matches',
+          isExpanded: false,
+          selectedMatch: null,
+          matches: [],
+        };
+        }
+
+        return {
+          id: Date.now() + validIndex,
+          ...originalItem, // Preserve all original Excel data
+          isValid: true, // Ensure valid items are marked
+          status: result.matches && result.matches.length > 0 ? 'Match Found' : 'No Matches',
+          isExpanded: false,
+          selectedMatch: null,
+          matches: (result.matches || []).map((match, matchIdx) => ({
+            id: `M${validIndex}-${matchIdx + 1}`,
+            productName: match.productName || match.searchText || '',
+            orderingNo: match.orderingNo || match.orderingNumber || '',
+            orderingNumber: match.orderingNo || match.orderingNumber || '',
+            confidence: match.confidence || 0,
+            type: match.type || originalItem.productType,
+            category: match.type || originalItem.productType,
+            specifications: match.specifications || match.searchText || '',
+            searchText: match.specifications || match.searchText || '',
+            score: match.score || 0,
+            relevance: match.relevance || 'low',
+          })),
+        };
+      });
+
+      // Don't include invalid items in the searchable items list
+      // Invalid items are only shown in the validation dialog
+      setItems(transformedItems);
+      setBatchSearchResults(searchResponse);
+      setShowResultsDialog(true);
+      setValidationErrorsMinimized(true); // Minimize errors after search
+    } catch (error) {
+      console.error('Error executing batch search:', error);
+      setSearchError(error.message || 'Failed to execute batch search. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle validation dialog continue
+  const handleValidationContinue = () => {
+    setShowValidationDialog(false);
+    if (parsedExcelData) {
+      const validItems = parsedExcelData.filter(item => item.isValid);
+      executeBatchSearch(validItems, parsedExcelData);
+    }
+  };
+
+  // Handle validation dialog cancel
+  const handleValidationCancel = () => {
+    setShowValidationDialog(false);
+    setUploadedFile(null);
+    setParsedExcelData(null);
+    setValidationErrors([]);
+    setIsLoading(false);
   };
 
   const toggleExpanded = (id) => {
@@ -63,27 +230,31 @@ const MultiItemSearch = () => {
     }));
   };
 
+  // Filter out invalid items from display (they shouldn't be searchable)
+  const validItemsOnly = items.filter(item => item.isValid !== false);
+  
   const filteredItems = activeTab === 'all' 
-    ? items 
+    ? validItemsOnly
     : activeTab === 'unmatched' 
-    ? items.filter(item => item.matches.length === 0)
+    ? validItemsOnly.filter(item => item.matches.length === 0 && !item.manualOrderingNo)
     : activeTab === 'not-chosen'
-    ? items.filter(item => item.matches.length > 0 && !item.selectedMatch && !item.manualOrderingNo)
-    : items;
+    ? validItemsOnly.filter(item => item.matches.length > 0 && !item.selectedMatch && !item.manualOrderingNo)
+    : validItemsOnly;
 
   // Pagination
   const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedItems = filteredItems.slice(startIndex, startIndex + itemsPerPage);
 
-  // Calculate stats
-  const totalCount = items.length;
-  const matchedCount = items.filter(item => item.selectedMatch).length;
-  const manualCount = items.filter(item => item.manualOrderingNo).length;
-  const notChosenCount = items.filter(item => item.matches.length > 0 && !item.selectedMatch && !item.manualOrderingNo).length;
-  const noMatchesCount = items.filter(item => item.matches.length === 0 && !item.manualOrderingNo).length;
+  // Calculate stats (only for valid items)
+  const validItemsForStats = items.filter(item => item.isValid !== false);
+  const totalCount = validItemsForStats.length;
+  const matchedCount = validItemsForStats.filter(item => item.selectedMatch).length;
+  const manualCount = validItemsForStats.filter(item => item.manualOrderingNo).length;
+  const notChosenCount = validItemsForStats.filter(item => item.matches.length > 0 && !item.selectedMatch && !item.manualOrderingNo).length;
+  const noMatchesCount = validItemsForStats.filter(item => item.matches.length === 0 && !item.manualOrderingNo).length;
   const processedCount = matchedCount + manualCount;
-  const progressPercentage = (processedCount / totalCount) * 100;
+  const progressPercentage = totalCount > 0 ? (processedCount / totalCount) * 100 : 0;
 
   const handleSaveToQuotation = () => {
     // Convert all items to quotation format (both complete and incomplete)
@@ -155,6 +326,61 @@ const MultiItemSearch = () => {
     }
   };
 
+  // Handle opening catalog preview
+  const handleOpenPreview = async (orderingNo) => {
+    const trimmedOrderingNo = (orderingNo || '').trim();
+    if (!trimmedOrderingNo || isPreviewLoading) {
+      return;
+    }
+
+    try {
+      setIsPreviewLoading(true);
+      setPreviewOrderingNo(trimmedOrderingNo);
+
+      // Fetch full product details (including catalogProducts with file references)
+      const productData = await fetchProductByOrderingNumber(trimmedOrderingNo);
+      const catalogProducts = productData.catalogProducts || [];
+      const primaryCatalogProduct = catalogProducts[0];
+
+      const fileId =
+        primaryCatalogProduct &&
+        (primaryCatalogProduct._fileId ||
+          primaryCatalogProduct.fileId);
+
+      if (!primaryCatalogProduct || !fileId) {
+        throw new Error('No catalog source available for preview');
+      }
+
+      // Resolve the file info to get the S3 key for the original catalog
+      const fileInfo = await getFileInfo(fileId);
+      const key = fileInfo.s3Key || fileInfo.key;
+
+      if (!key) {
+        throw new Error('No file key available for preview');
+      }
+
+      // Request a presigned download URL for secure preview access
+      const download = await getFileDownloadUrl(key);
+      if (!download || !download.url) {
+        throw new Error('Missing preview URL');
+      }
+
+      setPreviewProduct(primaryCatalogProduct);
+      setPreviewFileKey(key);
+      setPreviewFileUrl(download.url);
+      setIsPreviewOpen(true);
+    } catch (error) {
+      console.error('Failed to open catalog preview', error);
+      const message =
+        (error && error.message) ||
+        'Unable to open catalog preview. Please try again.';
+      window.alert(message);
+    } finally {
+      setIsPreviewLoading(false);
+      setPreviewOrderingNo(null);
+    }
+  };
+
   return (
     <div className="multi-item-search-page">
       <div className="multi-item-search-content">
@@ -195,34 +421,153 @@ const MultiItemSearch = () => {
 
         {/* Upload Section */}
         <div className="upload-section-wrapper">
-          <input
-            type="file"
-            id="excel-upload"
-            accept=".xlsx,.xls"
-            onChange={handleFileUpload}
-            style={{ display: 'none' }}
-          />
-          <label htmlFor="excel-upload" className="upload-button">
-            <div className="upload-icon">
-              <svg fill="currentColor" height="20px" viewBox="0 0 256 256" width="20px" xmlns="http://www.w3.org/2000/svg">
-                <path d="M240,136v64a16,16,0,0,1-16,16H32a16,16,0,0,1-16-16V136a16,16,0,0,1,16-16H80a8,8,0,0,1,0,16H32v64H224V136H176a8,8,0,0,1,0-16h48A16,16,0,0,1,240,136ZM85.66,77.66,120,43.31V128a8,8,0,0,0,16,0V43.31l34.34,34.35a8,8,0,0,0,11.32-11.32l-48-48a8,8,0,0,0-11.32,0l-48,48A8,8,0,0,0,85.66,77.66ZM200,168a12,12,0,1,0-12,12A12,12,0,0,0,200,168Z"></path>
-              </svg>
-            </div>
-            <span>Upload Excel File</span>
-          </label>
-          {uploadedFile && (
-            <div className="uploaded-file-marker">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M8 1L3 6H6V11H10V6H13L8 1Z" fill="currentColor"/>
-                <path d="M2 13H14V15H2V13Z" fill="currentColor"/>
-              </svg>
-              <span>{uploadedFile.name}</span>
+          <div className="upload-section-main">
+            <input
+              type="file"
+              id="excel-upload"
+              accept=".xlsx,.xls"
+              onChange={handleFileUpload}
+              style={{ display: 'none' }}
+            />
+            <label htmlFor="excel-upload" className="upload-button">
+              <div className="upload-icon">
+                <svg fill="currentColor" height="20px" viewBox="0 0 256 256" width="20px" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M240,136v64a16,16,0,0,1-16,16H32a16,16,0,0,1-16-16V136a16,16,0,0,1,16-16H80a8,8,0,0,1,0,16H32v64H224V136H176a8,8,0,0,1,0-16h48A16,16,0,0,1,240,136ZM85.66,77.66,120,43.31V128a8,8,0,0,0,16,0V43.31l34.34,34.35a8,8,0,0,0,11.32-11.32l-48-48a8,8,0,0,0-11.32,0l-48,48A8,8,0,0,0,85.66,77.66ZM200,168a12,12,0,1,0-12,12A12,12,0,0,0,200,168Z"></path>
+                </svg>
+              </div>
+              <span>Upload Excel File</span>
+            </label>
+            {uploadedFile && (
+              <div className="uploaded-file-marker">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 1L3 6H6V11H10V6H13L8 1Z" fill="currentColor"/>
+                  <path d="M2 13H14V15H2V13Z" fill="currentColor"/>
+                </svg>
+                <span>{uploadedFile.name}</span>
+              </div>
+            )}
+          </div>
+          
+          {/* Validation Errors Display - Minimizable, positioned on the right */}
+          {validationErrors.length > 0 && (
+            <div className={`validation-errors-sidebar ${validationErrorsMinimized ? 'minimized' : ''}`}>
+              <div className="validation-errors-sidebar-header">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span>{validationErrors.length} error{validationErrors.length !== 1 ? 's' : ''}</span>
+                <button
+                  className="validation-errors-toggle"
+                  onClick={() => setValidationErrorsMinimized(!validationErrorsMinimized)}
+                >
+                  {validationErrorsMinimized ? '▼' : '▲'}
+                </button>
+              </div>
+              {validationErrorsMinimized === false && (
+                <div className="validation-errors-sidebar-list">
+                  {validationErrors.map((error, idx) => (
+                    <div key={idx} className="validation-error-sidebar-item">
+                      <strong>Row {error.rowNumber}:</strong>
+                      {error.errors && error.errors.length > 0 && (
+                        <div className="validation-error-details">
+                          {error.errors.map((err, errIdx) => (
+                            <div key={errIdx}>• {err}</div>
+                          ))}
+                        </div>
+                      )}
+                      {error.warnings && error.warnings.length > 0 && (
+                        <div className="validation-warning-details">
+                          {error.warnings.map((warn, warnIdx) => (
+                            <div key={warnIdx}>⚠ {warn}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
 
+        {/* Empty State - Show instructions when no file uploaded */}
+        {!uploadedFile && !isLoading && (
+          <div className="empty-state-container">
+            <div className="empty-state-content">
+              <div className="empty-state-icon">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <h2 className="empty-state-title">Upload Excel File to Start Batch Search</h2>
+              <p className="empty-state-description">
+                Upload an Excel file (.xlsx or .xls) containing your product requests. 
+                The system will search manufacturer catalogs and suggest matches for each item.
+              </p>
+              
+              <div className="empty-state-instructions">
+                <h3 className="empty-state-instructions-title">Required Excel Columns:</h3>
+                <ul className="empty-state-instructions-list">
+                  <li>
+                    <strong>orderingNumber</strong> (optional) - Product SKU or part number
+                    <br />
+                    <span className="instruction-note">If provided, search will prioritize exact matches by ordering number</span>
+                  </li>
+                  <li>
+                    <strong>description</strong> (required if no orderingNumber) - Product description or technical specifications
+                    <br />
+                    <span className="instruction-note">Used for vector search when ordering number is not available</span>
+                  </li>
+                  <li>
+                    <strong>quantity</strong> (required) - Number of units needed
+                  </li>
+                  <li>
+                    <strong>productType</strong> (optional) - Product category
+                    <br />
+                    <span className="instruction-note">Recommended: {Object.values(ProductCategory).join(', ')}. Missing product type may affect search accuracy.</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="empty-state-note">
+                <p>
+                  <strong>Note:</strong> Each row must have either an ordering number or description. 
+                  Rows missing both will be marked as invalid and excluded from search.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="loading-state-container">
+            <div className="loading-spinner">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" stroke="#2188C9" strokeWidth="2" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="32">
+                  <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
+                  <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
+                </circle>
+              </svg>
+            </div>
+            <p className="loading-text">Processing Excel file and searching products...</p>
+          </div>
+        )}
+
+        {/* Error Display */}
+        {searchError && (
+          <div className="error-banner">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span>{searchError}</span>
+          </div>
+        )}
+
+
         {/* Show table only after file upload */}
-        {uploadedFile && (
+        {uploadedFile && !isLoading && items.length > 0 && (
           <>
             {/* Summary Stats */}
             <div className="batch-summary">
@@ -287,10 +632,11 @@ const MultiItemSearch = () => {
                     <tr>
                       <th className="expand-column"></th>
                       <th>Item #</th>
-                      <th>Product Type</th>
-                      <th>Requested Item</th>
-                      <th>Quantity</th>
                       <th>Ordering Number</th>
+                      <th>Description</th>
+                      <th>Product Type</th>
+                      <th>Quantity</th>
+                      <th>Selected Ordering Number</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -325,9 +671,15 @@ const MultiItemSearch = () => {
                             )}
                           </td>
                           <td>{item.itemNumber}</td>
-                          <td>{item.productType}</td>
-                          <td>{item.requestedItem}</td>
-                          <td>{item.quantity}</td>
+                          <td>{item.orderingNumber || '—'}</td>
+                          <td>{item.description || '—'}</td>
+                          <td>
+                            {item.productType || '—'}
+                            {!item.productType && item.warnings && item.warnings.includes('Product type is missing') && (
+                              <span className="warning-badge" title="Product type missing - may affect search results">⚠</span>
+                            )}
+                          </td>
+                          <td>{item.quantity || '—'}</td>
                           <td>
                             <div className="ordering-number-cell">
                               {selectedMatchData ? (
@@ -337,7 +689,10 @@ const MultiItemSearch = () => {
                                   </svg>
                                   <button 
                                     className="ordering-number-link"
-                                    onClick={() => navigate(`/product/${selectedMatchData.orderingNo}`)}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      window.open(`/product/${selectedMatchData.orderingNo}`, '_blank');
+                                    }}
                                   >
                                     {selectedMatchData.orderingNo}
                                   </button>
@@ -349,7 +704,10 @@ const MultiItemSearch = () => {
                                   </svg>
                                   <button 
                                     className="ordering-number-link manual-entry-link"
-                                    onClick={() => navigate(`/product/${item.manualOrderingNo}`)}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      window.open(`/product/${item.manualOrderingNo}`, '_blank');
+                                    }}
                                   >
                                     {item.manualOrderingNo}
                                   </button>
@@ -358,23 +716,105 @@ const MultiItemSearch = () => {
                               ) : item.matches.length > 0 ? (
                                 <span className="ordering-number-pending">{orderingNumberDisplay}</span>
                               ) : (
-                                <div className="manual-entry-wrapper">
+                                <div className="manual-entry-wrapper" style={{ position: 'relative' }}>
                                   <input
+                                    ref={(el) => {
+                                      if (el) autocompleteInputRefs.current[item.id] = el;
+                                    }}
                                     type="text"
                                     className="manual-ordering-input"
                                     placeholder="Enter ordering number manually"
                                     defaultValue=""
-                                    onBlur={(e) => {
+                                    onChange={async (e) => {
                                       const value = e.target.value.trim();
-                                      if (value) {
-                                        setItems(items.map(itm => 
-                                          itm.id === item.id 
-                                            ? { ...itm, manualOrderingNo: value, status: 'Match Found' }
-                                            : itm
-                                        ));
+                                      if (value.length >= 2) {
+                                        try {
+                                          setAutocompleteData(prev => ({
+                                            ...prev,
+                                            [item.id]: { ...prev[item.id], loading: true, show: false }
+                                          }));
+                                          const suggestions = await fetchAutocompleteSuggestions({
+                                            query: value,
+                                            size: 5,
+                                          });
+                                          setAutocompleteData(prev => ({
+                                            ...prev,
+                                            [item.id]: {
+                                              suggestions: suggestions.suggestions || [],
+                                              loading: false,
+                                              show: true
+                                            }
+                                          }));
+                                        } catch (error) {
+                                          console.error('Autocomplete error:', error);
+                                          setAutocompleteData(prev => ({
+                                            ...prev,
+                                            [item.id]: { ...prev[item.id], loading: false, show: false }
+                                          }));
+                                        }
+                                      } else {
+                                        setAutocompleteData(prev => ({
+                                          ...prev,
+                                          [item.id]: { suggestions: [], loading: false, show: false }
+                                        }));
+                                      }
+                                    }}
+                                    onBlur={(e) => {
+                                      // Delay to allow click on suggestion
+                                      setTimeout(() => {
+                                        const value = e.target.value.trim();
+                                        if (value) {
+                                          setItems(items.map(itm => 
+                                            itm.id === item.id 
+                                              ? { ...itm, manualOrderingNo: value, status: 'Match Found' }
+                                              : itm
+                                          ));
+                                        }
+                                        setAutocompleteData(prev => ({
+                                          ...prev,
+                                          [item.id]: { ...prev[item.id], show: false }
+                                        }));
+                                      }, 200);
+                                    }}
+                                    onFocus={(e) => {
+                                      const value = e.target.value.trim();
+                                      if (value.length >= 2) {
+                                        // Trigger autocomplete if there's already text
+                                        e.target.dispatchEvent(new Event('change', { bubbles: true }));
                                       }
                                     }}
                                   />
+                                  {autocompleteData[item.id]?.show && autocompleteData[item.id]?.suggestions?.length > 0 && (
+                                    <div className="autocomplete-dropdown">
+                                      {autocompleteData[item.id].suggestions.map((suggestion, idx) => {
+                                        const orderingNo = suggestion.orderingNumber || suggestion.orderingNo || '';
+                                        const displayText = suggestion.searchText || suggestion.text || orderingNo;
+                                        return (
+                                          <div
+                                            key={idx}
+                                            className="autocomplete-item"
+                                            onClick={() => {
+                                              setItems(items.map(itm => 
+                                                itm.id === item.id 
+                                                  ? { ...itm, manualOrderingNo: orderingNo, status: 'Match Found' }
+                                                  : itm
+                                              ));
+                                              setAutocompleteData(prev => ({
+                                                ...prev,
+                                                [item.id]: { suggestions: [], loading: false, show: false }
+                                              }));
+                                              if (autocompleteInputRefs.current[item.id]) {
+                                                autocompleteInputRefs.current[item.id].value = orderingNo;
+                                              }
+                                            }}
+                                          >
+                                            <div className="autocomplete-ordering">{orderingNo}</div>
+                                            <div className="autocomplete-text">{displayText}</div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -382,64 +822,125 @@ const MultiItemSearch = () => {
                         </tr>
                         {item.isExpanded && (
                           <tr className="expanded-row">
-                            <td colSpan="6">
+                            <td colSpan="7">
                               <div className="expanded-content">
-                                <h4 className="expanded-title">Search Results for Item #{item.itemNumber}</h4>
                                 <div className="expanded-table-container">
-                                  <table className="expanded-results-table">
+                                  <table className="expanded-results-table results-table">
                                     <thead>
                                       <tr>
-                                        <th>Product Name</th>
-                                        <th>Ordering No.</th>
-                                        <th>Confidence</th>
-                                        <th>Type</th>
-                                        <th>Specifications</th>
-                                        <th>Actions</th>
+                                        <th className="col-ordering-no">Ordering No.</th>
+                                        <th className="col-confidence">Match</th>
+                                        <th className="col-type">Category</th>
+                                        <th className="col-specifications">Specifications</th>
+                                        <th className="col-actions">Actions</th>
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {item.matches.map((match) => (
-                                        <tr key={match.id}>
-                                          <td>{match.productName}</td>
-                                          <td>
-                                            <span className="ordering-number">{match.orderingNo}</span>
-                                          </td>
-                                          <td>
-                                            <div className="confidence-wrapper">
-                                              <div className="confidence-bar-bg">
-                                                <div 
-                                                  className="confidence-bar-fill" 
-                                                  style={{ width: `${match.confidence}%` }}
-                                                ></div>
-                                              </div>
-                                              <span className="confidence-value">{match.confidence}</span>
-                                            </div>
-                                          </td>
-                                          <td className="text-secondary">{match.type}</td>
-                                          <td className="text-secondary">{match.specifications}</td>
-                                          <td>
-                                            <div className="match-actions">
-                                              <button 
-                                                className={`choose-match-btn ${item.selectedMatch === match.id ? 'selected' : ''}`}
-                                                onClick={() => handleChooseMatch(item.id, match.id)}
-                                              >
-                                                {item.selectedMatch === match.id ? 'Selected ✓' : 'Choose This'}
-                                              </button>
-                                              <div className="action-buttons-icon-group">
-                                                <button className="action-btn-icon" title="Open Catalog">
-                                                  📄
-                                                </button>
-                                                <button className="action-btn-icon" title="Swagelok Site">
-                                                  🌐
-                                                </button>
-                                                <button className="action-btn-icon" title="Open Sketch">
-                                                  📐
-                                                </button>
-                                              </div>
-                                            </div>
+                                      {item.matches.length === 0 ? (
+                                        <tr>
+                                          <td colSpan="5" className="catalog-table-empty">
+                                            No results found.
                                           </td>
                                         </tr>
-                                      ))}
+                                      ) : (
+                                        item.matches.map((match) => {
+                                          const confidencePercent = match.confidence || (match.score ? Math.round(match.score * 100) : 0);
+                                          const relevance = match.relevance || 'low';
+                                          const relevanceLower = relevance.toLowerCase();
+                                          const orderingNo = match.orderingNo || match.orderingNumber || '';
+                                          const specifications = match.specifications || match.searchText || '';
+                                          // Filter out lines that contain "Ordering Number:" or "Category:"
+                                          const specItems = specifications
+                                            .split(/\s*[|,]\s*/)
+                                            .filter(s => {
+                                              const trimmed = s.trim();
+                                              return trimmed && 
+                                                     !trimmed.toLowerCase().startsWith('ordering number:') && 
+                                                     !trimmed.toLowerCase().startsWith('category:');
+                                            });
+                                          const type = match.type || match.category || item.productType || '—';
+
+                                          return (
+                                            <tr key={match.id}>
+                                              <td className="col-ordering-no">
+                                                {orderingNo ? (
+                                                  <button
+                                                    className="ordering-link"
+                                                    onClick={(e) => {
+                                                      e.preventDefault();
+                                                      window.open(`/product/${orderingNo}`, '_blank');
+                                                    }}
+                                                  >
+                                                    {orderingNo}
+                                                  </button>
+                                                ) : (
+                                                  '—'
+                                                )}
+                                              </td>
+                                              <td className="col-confidence">
+                                                {confidencePercent > 0 ? (
+                                                  <div className="confidence-wrapper">
+                                                    <div className="confidence-bar-bg">
+                                                      <div
+                                                        className="confidence-bar-fill"
+                                                        style={{ width: `${confidencePercent}%` }}
+                                                      ></div>
+                                                    </div>
+                                                    <div className="confidence-details">
+                                                      <span className="confidence-value">
+                                                        {confidencePercent}%
+                                                      </span>
+                                                      {relevance && (
+                                                        <span className={`relevance-badge relevance-${relevanceLower}`}>
+                                                          {relevance}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                ) : (
+                                                  '—'
+                                                )}
+                                              </td>
+                                              <td className="col-type">
+                                                <span className="category-badge">{type}</span>
+                                              </td>
+                                              <td className="col-specifications">
+                                                {specItems.length > 0 ? (
+                                                  <ul className="spec-list">
+                                                    {specItems.map((spec, idx) => (
+                                                      <li key={idx} className="spec-item">{spec}</li>
+                                                    ))}
+                                                  </ul>
+                                                ) : (
+                                                  <span className="text-secondary">—</span>
+                                                )}
+                                              </td>
+                                              <td className="col-actions">
+                                                <div className="action-buttons-wrapper">
+                                                  <button
+                                                    className="action-btn-primary"
+                                                    onClick={() => handleChooseMatch(item.id, match.id)}
+                                                  >
+                                                    {item.selectedMatch === match.id ? 'Selected ✓' : 'Choose This'}
+                                                  </button>
+                                                  <button
+                                                    className="action-btn-secondary"
+                                                    onClick={async () => {
+                                                      if (orderingNo) {
+                                                        await handleOpenPreview(orderingNo);
+                                                      }
+                                                    }}
+                                                    disabled={isPreviewLoading || !orderingNo}
+                                                    title="Open Catalog Preview"
+                                                  >
+                                                    Preview
+                                                  </button>
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })
+                                      )}
                                     </tbody>
                                   </table>
                                 </div>
@@ -501,6 +1002,46 @@ const MultiItemSearch = () => {
             </div>
           </>
         )}
+
+        {/* Validation Dialog */}
+        {showValidationDialog && parsedExcelData && (
+          <BatchValidationDialog
+            isOpen={showValidationDialog}
+            onClose={() => setShowValidationDialog(false)}
+            onContinue={handleValidationContinue}
+            onCancel={handleValidationCancel}
+            validItems={parsedExcelData.filter(item => item.isValid)}
+            invalidItems={parsedExcelData.filter(item => !item.isValid)}
+            fileName={uploadedFile?.name || 'Excel file'}
+          />
+        )}
+
+        {/* Batch Search Results Dialog */}
+        {showResultsDialog && batchSearchResults && (
+          <BatchSearchResultsDialog
+            isOpen={showResultsDialog}
+            onClose={() => setShowResultsDialog(false)}
+            onReviewResults={() => setShowResultsDialog(false)}
+            summary={batchSearchResults.summary}
+            results={batchSearchResults.results}
+          />
+        )}
+
+        {/* Catalog Preview Dialog */}
+        <CatalogPreviewDialog
+          isOpen={isPreviewOpen}
+          onClose={() => {
+            setIsPreviewOpen(false);
+            setPreviewProduct(null);
+            setPreviewFileKey('');
+            setPreviewFileUrl(null);
+          }}
+          catalogKey={previewFileKey}
+          fileUrl={previewFileUrl}
+          product={previewProduct}
+          highlightTerm={previewOrderingNo}
+          title="Catalog Preview"
+        />
       </div>
     </div>
   );

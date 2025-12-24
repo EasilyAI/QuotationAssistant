@@ -414,32 +414,6 @@ const SingleSearch = () => {
     { label: '6L-LDE-2H1P', query: '6L-LDE-2H1P' },
   ];
 
-  const renderHighlightedText = (text) => {
-    if (!text) return null;
-    const trimmedQuery = searchQuery.trim();
-    if (!trimmedQuery) return text;
-
-    const lowerText = String(text);
-    const lowerQuery = trimmedQuery.toLowerCase();
-    const index = lowerText.toLowerCase().indexOf(lowerQuery);
-
-    if (index === -1) {
-      return lowerText;
-    }
-
-    const before = lowerText.slice(0, index);
-    const match = lowerText.slice(index, index + trimmedQuery.length);
-    const after = lowerText.slice(index + trimmedQuery.length);
-
-    return (
-      <>
-        {before}
-        <span className="match-highlight">{match}</span>
-        {after}
-      </>
-    );
-  };
-
   return (
     <div className="single-search-page">
       <div className="single-search-content">

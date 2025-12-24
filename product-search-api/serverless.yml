@@ -164,6 +164,9 @@ functions:
       - httpApi:
           path: /product/{orderingNumber}
           method: get
+      - httpApi:
+          path: /batch-search
+          method: post
 
 plugins:
   - serverless-python-requirements
