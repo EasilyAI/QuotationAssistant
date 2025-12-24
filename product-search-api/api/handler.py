@@ -12,6 +12,7 @@ from .utils import create_response
 from .search import handle_search
 from .autocomplete import handle_autocomplete
 from .product import handle_get_product
+from .batch_search import handle_batch_search
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -39,8 +40,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     
     # Route based on path
     path = event.get('rawPath', '').lower()
+    method = event.get('requestContext', {}).get('http', {}).get('method', '').upper()
     
-    if '/search' in path:
+    if '/batch-search' in path:
+        logger.info(f"Redirecting to batch search service")
+        return handle_batch_search(event)
+    elif '/search' in path:
         logger.info(f"Redirecting to search service")
         return handle_search(event)
     elif '/autocomplete' in path:
@@ -52,10 +57,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     else:
         return create_response(404, {
             'error': 'Not found',
-            'message': 'Valid endpoints: /search, /autocomplete, /product/{orderingNumber}',
+            'message': 'Valid endpoints: /search, /autocomplete, /product/{orderingNumber}, /batch-search',
             'available_endpoints': [
                 'GET /search?q=<query>&category=<category>&size=<size>',
                 'GET /autocomplete?q=<prefix>&category=<category>&size=<size>',
-                'GET /product/{orderingNumber}'
+                'GET /product/{orderingNumber}',
+                'POST /batch-search'
             ]
         })

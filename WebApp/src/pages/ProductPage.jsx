@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getProductByOrderingNo } from '../data/mockProducts';
 import { fetchProductByOrderingNumber } from '../services/productsService';
@@ -276,7 +276,6 @@ const ProductPage = () => {
       setCachedPreviewUrlTimestamp(now);
       return response.url;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       setPreviewError('Unable to generate preview link. Please try again.');
       return null;
     } finally {

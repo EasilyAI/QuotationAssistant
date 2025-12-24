@@ -9,6 +9,14 @@ export enum ProductCategory {
   TUBING = 'Tubing',
   FILTER = 'Filter',
   QUICK_CONNECT = 'Quick-Connect',
+  BALL_VALVE = 'Ball Valve',
+  PLUG_VALVE = 'Plug Valve',
+  CHECK_VALVE = 'Check Valve',
+  NEEDLE_VALVE = 'Needle Valve',
+  DIAPHRAGM_SEALED_VALVE = 'Diaphragm Sealed Valve',
+  QUICK_CONNECT_ALT = 'Quick Connect',
+  WELDING_SYSTEM = 'Welding System',
+  BELLOWS_SEALED_VALVE = 'Bellows Sealed Valve',
   UNCATEGORIZED = 'UNCATEGORIZED',
 }
 

@@ -84,3 +84,5 @@ webApp/build/
 wip/
 scripts/*
 .llm-summaries/
+
+.cursor/
