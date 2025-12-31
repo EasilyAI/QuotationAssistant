@@ -81,7 +81,7 @@ provider:
     PYTHONPATH: "layer-shared/python:/opt/python"
     # AWS Configuration for local development
     AWS_PROFILE: ${env:AWS_PROFILE, 'hb-client'}
-    AWS_REGION: ${self:provider.region}
+    
     # Cognito Configuration (optional - for JWT authorizer)
     COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, ''}
     COGNITO_APP_CLIENT_ID: ${env:COGNITO_APP_CLIENT_ID, ''}
