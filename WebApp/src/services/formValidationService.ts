@@ -42,13 +42,10 @@ export const validateUploadForm = (
       if (!salesDrawingData.orderingNumber?.trim()) {
         return { valid: false, error: 'Ordering Number is required' };
       }
-      if (!salesDrawingData.manufacturer?.trim()) {
-        return { valid: false, error: 'Manufacturer is required' };
-      }
       if (!salesDrawingData.year?.trim()) {
         return { valid: false, error: 'Year is required' };
       }
-      // SwagelokLink and notes are optional (SwagelokLink is explicitly optional in type)
+      // manufacturer, SwagelokLink and notes are optional
       break;
 
     case BusinessFileType.PriceList:

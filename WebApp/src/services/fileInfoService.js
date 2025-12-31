@@ -108,10 +108,15 @@ export const getPriceListProducts = async (fileId) => {
 /**
  * Get products extracted from a file based on file type
  * @param {string} fileId - File ID
- * @param {string} businessFileType - Type of file (Catalog, Price List, etc.)
+ * @param {string} businessFileType - Type of file (Catalog, Price List, Sales Drawing, etc.)
  * @returns {Promise<Object>} Products data from the file
  */
 export const getFileProducts = async (fileId, businessFileType = 'Catalog') => {
+  // Sales Drawings don't have products - return empty response
+  if (businessFileType === BusinessFileType.SalesDrawing || businessFileType === 'Sales Drawing') {
+    return { fileId, products: [], count: 0 };
+  }
+  
   if (businessFileType === BusinessFileType.PriceList || businessFileType === 'Price List') {
     return getPriceListProducts(fileId);
   }

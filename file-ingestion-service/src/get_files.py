@@ -13,16 +13,47 @@ from utils.helpers import convert_decimals_to_native, convert_floats_to_decimal
 from utils.file_details import build_file_details
 from utils.app_types import create_product_item, validate_product_structure
 
-from shared.product_types import Product, CatalogProductPointer, PriceListPointer
+from shared.product_types import Product, CatalogProductPointer, PriceListPointer, SalesDrawingPointer
 
-dynamodb = boto3.resource("dynamodb")
-s3 = boto3.client("s3")
+# Configure DynamoDB for local development
+# When running serverless offline, we need to use AWS profile or credentials
+dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT')
+aws_profile = os.getenv('AWS_PROFILE', os.getenv('AWS_DEFAULT_PROFILE'))
+region = os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
+
+# Check if we're in real AWS Lambda (not serverless-offline)
+# Serverless-offline may set LAMBDA_TASK_ROOT, but we can detect real Lambda by checking
+# if we're in /var/task (real Lambda) vs local filesystem
+is_real_lambda = os.path.exists('/var/task') and os.getenv('LAMBDA_TASK_ROOT')
+
+if dynamodb_endpoint:
+    # Use DynamoDB Local
+    print(f"[get_files] Using DynamoDB Local endpoint: {dynamodb_endpoint}")
+    dynamodb = boto3.resource('dynamodb', endpoint_url=dynamodb_endpoint)
+    s3 = boto3.client("s3", region_name=region)
+elif aws_profile and not is_real_lambda:
+    # Use AWS profile (for local development, including serverless-offline)
+    print(f"[get_files] Using AWS profile: {aws_profile} in region: {region}")
+    try:
+        session = boto3.Session(profile_name=aws_profile, region_name=region)
+        dynamodb = session.resource('dynamodb')
+        s3 = session.client('s3')
+    except Exception as e:
+        print(f"[get_files] WARNING: Failed to use profile {aws_profile}: {e}, falling back to default credentials")
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+        s3 = boto3.client("s3", region_name=region)
+else:
+    # Use default AWS credentials (IAM role in Lambda, or env vars/credentials file locally)
+    print(f"[get_files] Using default AWS credentials in region: {region} (Real Lambda: {is_real_lambda}, Profile: {aws_profile or 'None'})")
+    dynamodb = boto3.resource('dynamodb', region_name=region)
+    s3 = boto3.client("s3", region_name=region)
 
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")
 PRODUCTS_TABLE = os.environ.get("PRODUCTS_TABLE", "hb-products")
 PRICE_LIST_PRODUCTS_TABLE = os.environ.get("PRICE_LIST_PRODUCTS_TABLE", "hb-pricelist-products")
 UPLOAD_BUCKET = os.environ.get("UPLOAD_BUCKET", "hb-files-raw")
+print(f"[get_files] FILES_TABLE: {FILES_TABLE}, region: {region}")
 
 
 def get_files(event, context):
@@ -215,20 +246,24 @@ def get_file_download_url(event, context):
         url = s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={"Bucket": bucket, "Key": normalized_key},
-            ExpiresIn=300,
+            ExpiresIn=3600,  # Increase to 1 hour to avoid expiration issues
         )
-        print(f"[get_file_download_url] Successfully generated presigned URL")
+        print(f"[get_file_download_url] Successfully generated presigned URL: {url[:100]}...")  # Log first 100 chars
     except Exception as error:
         print(f"[get_file_download_url] ERROR generating URL for {bucket}/{normalized_key}: {error}")
+        import traceback
+        traceback.print_exc()
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "Failed to generate download URL"}),
             "headers": get_cors_headers(),
         }
 
+    response_body = {"url": url}
+    print(f"[get_file_download_url] Returning response with URL length: {len(url)}")
     return {
         "statusCode": 200,
-        "body": json.dumps({"url": url}),
+        "body": json.dumps(response_body),
         "headers": get_cors_headers(),
     }
 
@@ -1112,6 +1147,80 @@ def delete_file(event, context):
             except Exception as e:
                 print(f"[delete_file] WARNING: Failed to delete products for file {file_id}: {e}")
                 # Continue with deletion even if products delete fails (might not exist)
+        
+        elif file_business_type == "Sales Drawing":
+            # For sales drawings, we need to unlink from products table
+            products_table = dynamodb.Table(PRODUCTS_TABLE)
+            try:
+                print(f"[delete_file] Unlinking sales drawing {file_id} from products")
+                
+                # Scan products table to find products with this fileId in salesDrawings
+                # Note: This is a scan operation, but sales drawings are typically few
+                # For better performance in production, consider adding a GSI on salesDrawings
+                scan_response = products_table.scan(
+                    FilterExpression=Attr("salesDrawings").contains(file_id)
+                )
+                
+                products_to_update = scan_response.get("Items", [])
+                
+                # Continue paginating if needed
+                while "LastEvaluatedKey" in scan_response:
+                    scan_response = products_table.scan(
+                        FilterExpression=Attr("salesDrawings").contains(file_id),
+                        ExclusiveStartKey=scan_response["LastEvaluatedKey"]
+                    )
+                    products_to_update.extend(scan_response.get("Items", []))
+                
+                print(f"[delete_file] Found {len(products_to_update)} products with sales drawing {file_id}")
+                
+                # Update each product to remove the sales drawing pointer
+                for product in products_to_update:
+                    ordering_number = product.get("orderingNumber")
+                    if not ordering_number:
+                        continue
+                    
+                    # Get existing sales drawings
+                    if "metadata" in product:
+                        existing_metadata = product.get("metadata", {})
+                        existing_sales_drawings = existing_metadata.get("salesDrawings", [])
+                        existing_catalog_products = existing_metadata.get("catalogProducts", [])
+                        existing_price_list_pointers = existing_metadata.get("priceListPointers", [])
+                    else:
+                        existing_sales_drawings = product.get("salesDrawings", [])
+                        existing_catalog_products = product.get("catalogProducts", [])
+                        existing_price_list_pointers = product.get("priceListPointers", [])
+                    
+                    # Remove sales drawing with matching fileId
+                    updated_sales_drawings = [
+                        sd for sd in existing_sales_drawings 
+                        if isinstance(sd, dict) and sd.get("fileId") != file_id
+                    ]
+                    
+                    # Only update if sales drawings changed
+                    if len(updated_sales_drawings) != len(existing_sales_drawings):
+                        timestamp = int(time.time() * 1000)
+                        iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+                        
+                        product_item: Product = create_product_item(
+                            ordering_number=ordering_number,
+                            product_category=product.get("productCategory", ""),
+                            catalog_products=existing_catalog_products,
+                            price_list_pointers=existing_price_list_pointers,
+                            sales_drawings=updated_sales_drawings,
+                            created_at=product.get("createdAt", timestamp),
+                            created_at_iso=product.get("createdAtIso", iso_timestamp),
+                            updated_at=timestamp,
+                            updated_at_iso=iso_timestamp,
+                        )
+                        
+                        products_table.put_item(Item=product_item)
+                        print(f"[delete_file] Unlinked sales drawing from product {ordering_number}")
+                
+                print(f"[delete_file] Successfully unlinked sales drawing {file_id} from {len(products_to_update)} products")
+            except Exception as e:
+                print(f"[delete_file] WARNING: Failed to unlink sales drawing from products: {e}")
+                # Continue with deletion even if unlinking fails
+        
         # Delete from files table
         try:
             print(f"[delete_file] Deleting file record {file_id}")
@@ -1806,6 +1915,383 @@ def save_products_from_price_list(event, context):
     }
 
 
+def save_sales_drawing_to_product(event, context):
+    """
+    Link a sales drawing file to a product by ordering number.
+    
+    STRICT VALIDATION: Product must exist before sales drawing can be linked.
+    If product doesn't exist, returns 404 error.
+    
+    Args:
+        Request body should contain:
+        - fileId: File ID of the sales drawing
+        - orderingNumber: Ordering number of the product to link to
+    
+    Returns:
+        Success response with linked product info, or 404 if product doesn't exist
+    """
+    print(f"[save_sales_drawing_to_product] Starting request")
+    
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
+    
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON body"}),
+            "headers": get_cors_headers(),
+        }
+    
+    file_id = body.get("fileId")
+    ordering_number = body.get("orderingNumber")
+    
+    if not file_id:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    if not ordering_number:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "orderingNumber is required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    print(f"[save_sales_drawing_to_product] Linking file {file_id} to product {ordering_number}")
+    
+    files_table = dynamodb.Table(FILES_TABLE)
+    products_table = dynamodb.Table(PRODUCTS_TABLE)
+    timestamp = int(time.time() * 1000)
+    iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+    
+    # Step 1: Get file info from files table
+    try:
+        file_response = files_table.get_item(Key={"fileId": file_id})
+        file_item = file_response.get("Item")
+        
+        if not file_item:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": f"File {file_id} not found"}),
+                "headers": get_cors_headers(),
+            }
+        
+        file_key = file_item.get("key") or file_item.get("s3Key") or ""
+        file_name = file_item.get("displayName") or file_item.get("uploadedFileName") or file_item.get("fileName") or ""
+        manufacturer = file_item.get("manufacturer") or ""
+        notes = file_item.get("notes") or ""
+        swagelok_link = file_item.get("SwagelokLink") or ""
+        
+        print(f"[save_sales_drawing_to_product] File info: key={file_key}, name={file_name}, manufacturer={manufacturer}")
+        
+    except Exception as e:
+        print(f"[save_sales_drawing_to_product] ERROR: Failed to get file info: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": f"Failed to get file info: {str(e)}"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Step 2: STRICT VALIDATION - Check if product exists
+    try:
+        product_response = products_table.get_item(Key={"orderingNumber": ordering_number})
+        existing_product = product_response.get("Item")
+        
+        if not existing_product:
+            print(f"[save_sales_drawing_to_product] Product {ordering_number} not found - STRICT validation failed")
+            return {
+                "statusCode": 404,
+                "body": json.dumps({
+                    "error": f"Product with ordering number '{ordering_number}' does not exist",
+                    "message": "Please create the product first via catalog or price list upload"
+                }),
+                "headers": get_cors_headers(),
+            }
+        
+        print(f"[save_sales_drawing_to_product] Product {ordering_number} found, proceeding with link")
+        
+    except Exception as e:
+        print(f"[save_sales_drawing_to_product] ERROR: Failed to check product existence: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": f"Failed to check product existence: {str(e)}"}),
+            "headers": get_cors_headers(),
+        }
+    
+    # Step 3: Create sales drawing pointer
+    sales_drawing_pointer: SalesDrawingPointer = {
+        "fileId": file_id,
+        "fileKey": file_key,
+        "fileName": file_name if file_name else None,
+        "manufacturer": manufacturer if manufacturer else None,
+        "notes": notes if notes else None,
+        "link": swagelok_link if swagelok_link else None,
+    }
+    
+    # Step 4: Get existing sales drawings and merge (avoid duplicates by fileId)
+    if "metadata" in existing_product:
+        # Old structure - migrate
+        existing_metadata = existing_product.get("metadata", {})
+        existing_sales_drawings = existing_metadata.get("salesDrawings", [])
+        existing_catalog_products = existing_metadata.get("catalogProducts", [])
+        existing_price_list_pointers = existing_metadata.get("priceListPointers", [])
+    else:
+        # New structure - direct pointers
+        existing_sales_drawings = existing_product.get("salesDrawings", [])
+        existing_catalog_products = existing_product.get("catalogProducts", [])
+        existing_price_list_pointers = existing_product.get("priceListPointers", [])
+    
+    # Check if this fileId already exists in sales drawings
+    existing_file_ids = {sd.get("fileId") for sd in existing_sales_drawings if isinstance(sd, dict)}
+    
+    if file_id in existing_file_ids:
+        print(f"[save_sales_drawing_to_product] Sales drawing {file_id} already linked to product {ordering_number}")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Sales drawing already linked to product",
+                "orderingNumber": ordering_number,
+                "fileId": file_id
+            }),
+            "headers": get_cors_headers(),
+        }
+    
+    # Replace existing sales drawings with new one (only one sales drawing per product)
+    # Remove any existing sales drawings for this product
+    merged_sales_drawings = [convert_floats_to_decimal(sales_drawing_pointer)]
+    
+    # Step 5: Update product with new sales drawing pointer
+    try:
+        product_item: Product = create_product_item(
+            ordering_number=ordering_number,
+            product_category=existing_product.get("productCategory", ""),
+            catalog_products=existing_catalog_products,
+            price_list_pointers=existing_price_list_pointers,
+            sales_drawings=merged_sales_drawings,
+            created_at=existing_product.get("createdAt", timestamp),
+            created_at_iso=existing_product.get("createdAtIso", iso_timestamp),
+            updated_at=timestamp,
+            updated_at_iso=iso_timestamp,
+        )
+        
+        # Validate structure
+        if not validate_product_structure(product_item):
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "Product structure validation failed"}),
+                "headers": get_cors_headers(),
+            }
+        
+        # Save updated product
+        products_table.put_item(Item=product_item)
+        
+        # Also update the files table with orderingNumber
+        files_table = dynamodb.Table(FILES_TABLE)
+        try:
+            files_table.update_item(
+                Key={"fileId": file_id},
+                UpdateExpression="SET orderingNumber = :on, updatedAt = :ua, updatedAtIso = :uai",
+                ExpressionAttributeValues={
+                    ":on": ordering_number,
+                    ":ua": timestamp,
+                    ":uai": iso_timestamp,
+                }
+            )
+            print(f"[save_sales_drawing_to_product] Updated files table with orderingNumber={ordering_number}")
+        except Exception as e:
+            print(f"[save_sales_drawing_to_product] WARNING: Failed to update files table: {e}")
+            # Don't fail the whole operation if files table update fails
+        
+        print(f"[save_sales_drawing_to_product] Successfully linked sales drawing {file_id} to product {ordering_number}")
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Sales drawing linked to product successfully",
+                "orderingNumber": ordering_number,
+                "fileId": file_id
+            }),
+            "headers": get_cors_headers(),
+        }
+        
+    except Exception as e:
+        print(f"[save_sales_drawing_to_product] ERROR: Failed to update product: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": f"Failed to update product: {str(e)}"}),
+            "headers": get_cors_headers(),
+        }
+
+
+def unlink_sales_drawing_from_product(event, context):
+    """
+    Unlink a sales drawing from a product by removing it from the product's salesDrawings array.
+    
+    Args:
+        Request body should contain:
+        - fileId: File ID of the sales drawing to unlink
+        - orderingNumber: Ordering number of the product
+    
+    Returns:
+        Success response or error
+    """
+    print(f"[unlink_sales_drawing_from_product] Starting request")
+    
+    http_method = event.get("requestContext", {}).get("http", {}).get("method", "")
+    if http_method == "OPTIONS" or event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "body": "",
+            "headers": get_cors_headers(),
+        }
+    
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
+    
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON body"}),
+            "headers": get_cors_headers(),
+        }
+    
+    file_id = body.get("fileId")
+    ordering_number = body.get("orderingNumber")
+    
+    if not file_id or not ordering_number:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "fileId and orderingNumber are required"}),
+            "headers": get_cors_headers(),
+        }
+    
+    products_table = dynamodb.Table(PRODUCTS_TABLE)
+    timestamp = int(time.time() * 1000)
+    iso_timestamp = datetime.utcnow().isoformat() + 'Z'
+    
+    try:
+        # Get product
+        response = products_table.get_item(Key={"orderingNumber": ordering_number})
+        existing_item = response.get("Item")
+        
+        if not existing_item:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": f"Product with ordering number '{ordering_number}' not found"}),
+                "headers": get_cors_headers(),
+            }
+        
+        # Get existing sales drawings
+        if "metadata" in existing_item:
+            existing_sales_drawings = existing_item.get("metadata", {}).get("salesDrawings", [])
+            existing_catalog_products = existing_item.get("metadata", {}).get("catalogProducts", [])
+            existing_price_list_pointers = existing_item.get("metadata", {}).get("priceListPointers", [])
+        else:
+            existing_sales_drawings = existing_item.get("salesDrawings", [])
+            existing_catalog_products = existing_item.get("catalogProducts", [])
+            existing_price_list_pointers = existing_item.get("priceListPointers", [])
+        
+        # Remove sales drawing with matching fileId
+        updated_sales_drawings = [
+            sd for sd in existing_sales_drawings
+            if not isinstance(sd, dict) or sd.get("fileId") != file_id
+        ]
+        
+        if len(updated_sales_drawings) == len(existing_sales_drawings):
+            # No change - sales drawing wasn't linked
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "message": "Sales drawing was not linked to this product",
+                    "orderingNumber": ordering_number,
+                    "fileId": file_id
+                }),
+                "headers": get_cors_headers(),
+            }
+        
+        # Update product
+        product_item: Product = create_product_item(
+            ordering_number=ordering_number,
+            product_category=existing_item.get("productCategory", ""),
+            catalog_products=existing_catalog_products,
+            price_list_pointers=existing_price_list_pointers,
+            sales_drawings=convert_floats_to_decimal(updated_sales_drawings),
+            created_at=existing_item.get("createdAt", timestamp),
+            created_at_iso=existing_item.get("createdAtIso", iso_timestamp),
+            updated_at=timestamp,
+            updated_at_iso=iso_timestamp,
+        )
+        
+        if not validate_product_structure(product_item):
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "Product structure validation failed"}),
+                "headers": get_cors_headers(),
+            }
+        
+        products_table.put_item(Item=product_item)
+        
+        # Also update the files table to clear orderingNumber
+        files_table = dynamodb.Table(FILES_TABLE)
+        try:
+            files_table.update_item(
+                Key={"fileId": file_id},
+                UpdateExpression="SET orderingNumber = :empty, updatedAt = :ua, updatedAtIso = :uai",
+                ExpressionAttributeValues={
+                    ":empty": "",
+                    ":ua": timestamp,
+                    ":uai": iso_timestamp,
+                }
+            )
+            print(f"[unlink_sales_drawing_from_product] Cleared orderingNumber from files table")
+        except Exception as e:
+            print(f"[unlink_sales_drawing_from_product] WARNING: Failed to update files table: {e}")
+            # Don't fail the whole operation if files table update fails
+        
+        print(f"[unlink_sales_drawing_from_product] Successfully unlinked sales drawing {file_id} from product {ordering_number}")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Sales drawing unlinked from product successfully",
+                "orderingNumber": ordering_number,
+                "fileId": file_id
+            }),
+            "headers": get_cors_headers(),
+        }
+        
+    except Exception as e:
+        error_msg = f"Failed to unlink sales drawing {file_id} from product {ordering_number}: {str(e)}"
+        print(f"[unlink_sales_drawing_from_product] ERROR: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": error_msg}),
+            "headers": get_cors_headers(),
+        }
+
+
 def resolve_catalog_product_pointers(catalog_product_pointers: List[Dict[str, Any]], ordering_number: str) -> List[Dict[str, Any]]:
     """
     Resolve catalog product pointers by fetching actual current data from catalog-products table.
@@ -2198,6 +2684,7 @@ def complete_file_review(event, context):
     """
     Mark file and catalog products as completed after review.
     Updates file status to 'completed' and catalog products status to 'completed'.
+    For sales drawings, only updates file status (no separate products table).
     """
     print(f"[complete_file_review] Starting request")
     
@@ -2229,9 +2716,21 @@ def complete_file_review(event, context):
     iso_timestamp = datetime.utcnow().isoformat() + 'Z'
     
     files_table = dynamodb.Table(FILES_TABLE)
-    catalog_products_table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
     
     try:
+        # Get file info to determine file type
+        file_response = files_table.get_item(Key={"fileId": file_id})
+        file_info = file_response.get("Item")
+        
+        if not file_info:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "File not found"}),
+                "headers": get_cors_headers(),
+            }
+        
+        business_file_type = file_info.get("businessFileType", "")
+        
         # Update file status to completed
         files_table.update_item(
             Key={"fileId": file_id},
@@ -2249,24 +2748,29 @@ def complete_file_review(event, context):
         )
         print(f"[complete_file_review] Updated file {file_id} status to completed")
         
-        # Update catalog products status to completed
-        try:
-            catalog_products_table.update_item(
-                Key={"fileId": file_id},
-                UpdateExpression="SET #status = :status, #updatedAt = :updatedAt",
-                ExpressionAttributeNames={
-                    "#status": "status",
-                    "#updatedAt": "updatedAt",
-                },
-                ExpressionAttributeValues={
-                    ":status": "completed",
-                    ":updatedAt": timestamp,
-                },
-            )
-            print(f"[complete_file_review] Updated catalog products {file_id} status to completed")
-        except Exception as e:
-            print(f"[complete_file_review] WARNING: Failed to update catalog products status: {e}")
-            # Don't fail the whole operation if catalog products update fails
+        # Update catalog products status to completed (only for Catalog files)
+        if business_file_type == "Catalog":
+            catalog_products_table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
+            try:
+                catalog_products_table.update_item(
+                    Key={"fileId": file_id},
+                    UpdateExpression="SET #status = :status, #updatedAt = :updatedAt",
+                    ExpressionAttributeNames={
+                        "#status": "status",
+                        "#updatedAt": "updatedAt",
+                    },
+                    ExpressionAttributeValues={
+                        ":status": "completed",
+                        ":updatedAt": timestamp,
+                    },
+                )
+                print(f"[complete_file_review] Updated catalog products {file_id} status to completed")
+            except Exception as e:
+                print(f"[complete_file_review] WARNING: Failed to update catalog products status: {e}")
+                # Don't fail the whole operation if catalog products update fails
+        elif business_file_type == "Sales Drawing":
+            print(f"[complete_file_review] Sales drawing file - no separate products table to update")
+        # Price list files don't have a separate status update either
         
         return {
             "statusCode": 200,

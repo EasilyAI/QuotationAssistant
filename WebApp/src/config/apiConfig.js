@@ -12,7 +12,9 @@ const normalizeEndpoint = (endpoint = '') =>
 
 export const API_CONFIG = {
   // Base URL for the file processing service (extractCatalogInfo)
-  FILE_API_BASE_URL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:3000',
+  FILE_API_BASE_URL: 
+  // process.env.REACT_APP_API_BASE_URL || 
+  'http://localhost:3000',
 
   // Base URL for the product search service (product-search-service)
   SEARCH_API_BASE_URL:
@@ -37,6 +39,8 @@ export const API_CONFIG = {
     PRODUCTS_CHECK_EXISTING: '/api/products/check-existing',
     PRODUCTS_FROM_CATALOG: '/api/products/from-catalog',
     PRODUCTS_FROM_PRICE_LIST: '/api/products/from-price-list',
+    SALES_DRAWING_TO_PRODUCT: '/api/products/sales-drawing',
+    UNLINK_SALES_DRAWING: '/api/products/unlink-sales-drawing',
   },
 
   // Product search service endpoints (see searchService/serverless.yml)

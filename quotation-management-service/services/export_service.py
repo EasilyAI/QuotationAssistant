@@ -10,7 +10,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
-from services.quotation_service import get_quotation, get_table
+from services.quotation_service import get_quotation, get_quotations_table
 
 logger = logging.getLogger(__name__)
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -174,7 +174,7 @@ def export_stock_check(quotation_id: str) -> Optional[BytesIO]:
     excel_data = generate_stock_check_excel(quotation)
     
     # Update quotation with export timestamp (optional metadata)
-    table = get_table()
+    table = get_quotations_table()
     try:
         table.update_item(
             Key={'quotation_id': quotation_id},
@@ -213,7 +213,7 @@ def export_priority_import(quotation_id: str) -> Optional[BytesIO]:
     excel_data = generate_priority_import_excel(quotation)
     
     # Update quotation with export timestamp (optional metadata)
-    table = get_table()
+    table = get_quotations_table()
     try:
         table.update_item(
             Key={'quotation_id': quotation_id},

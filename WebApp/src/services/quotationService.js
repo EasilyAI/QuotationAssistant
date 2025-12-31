@@ -1,5 +1,19 @@
-import { buildQuotationApiUrl } from '../config/apiConfig';
+import { buildQuotationApiUrl, getQuotationApiBaseUrl } from '../config/apiConfig';
 import { authenticatedFetch } from '../utils/apiClient';
+
+/**
+ * Build quotations endpoint URL, handling cases where base URL already includes /quotations
+ */
+const buildQuotationsUrl = (endpoint = '') => {
+  const baseUrl = getQuotationApiBaseUrl();
+  if (baseUrl.endsWith('/quotations')) {
+    // Base URL already has /quotations, so append endpoint directly
+    return endpoint ? `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}` : baseUrl;
+  } else {
+    // Base URL doesn't have /quotations, so use buildQuotationApiUrl
+    return buildQuotationApiUrl(`/quotations${endpoint}`);
+  }
+};
 
 /**
  * Transform backend quotation format to frontend format
@@ -125,7 +139,7 @@ export const createQuotation = async (quotationData) => {
   const backendData = transformQuotationToBackend(quotationData);
   
   const response = await authenticatedFetch(
-    buildQuotationApiUrl('/quotations'),
+    buildQuotationsUrl(),
     {
       method: 'POST',
       body: JSON.stringify(backendData)
@@ -164,7 +178,7 @@ export const getQuotations = async ({ status, search, recent, incomplete, limit 
     params.set('limit', String(limit));
   }
 
-  const url = `${buildQuotationApiUrl('/quotations')}?${params.toString()}`;
+  const url = `${buildQuotationsUrl()}?${params.toString()}`;
 
   const response = await authenticatedFetch(url, { method: 'GET' }, 'quotation');
 
@@ -185,7 +199,7 @@ export const getQuotations = async ({ status, search, recent, incomplete, limit 
  */
 export const getQuotation = async (quotationId) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}`),
+    buildQuotationsUrl(`/${quotationId}`),
     { method: 'GET' },
     'quotation'
   );
@@ -218,7 +232,7 @@ export const updateQuotation = async (quotationId, quotationData) => {
   const backendData = transformQuotationToBackend(quotationData);
   
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}`),
+    buildQuotationsUrl(`/${quotationId}`),
     {
       method: 'PUT',
       body: JSON.stringify(backendData)
@@ -240,7 +254,7 @@ export const updateQuotation = async (quotationId, quotationData) => {
  */
 export const updateQuotationStatus = async (quotationId, status) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/status`),
+    buildQuotationsUrl(`/${quotationId}/status`),
     {
       method: 'PATCH',
       body: JSON.stringify({ status })
@@ -262,7 +276,7 @@ export const updateQuotationStatus = async (quotationId, status) => {
  */
 export const deleteQuotation = async (quotationId) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}`),
+    buildQuotationsUrl(`/${quotationId}`),
     { method: 'DELETE' },
     'quotation'
   );
@@ -282,7 +296,7 @@ export const addLineItem = async (quotationId, lineData) => {
   const backendLine = transformLineToBackend(lineData);
   
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/lines`),
+    buildQuotationsUrl(`/${quotationId}/lines`),
     {
       method: 'POST',
       body: JSON.stringify(backendLine)
@@ -310,7 +324,7 @@ export const batchAddLineItems = async (quotationId, linesData) => {
   const backendLines = linesData.map(transformLineToBackend);
   
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/lines/batch`),
+    buildQuotationsUrl(`/${quotationId}/lines/batch`),
     {
       method: 'POST',
       body: JSON.stringify({ lines: backendLines })
@@ -338,7 +352,7 @@ export const updateLineItem = async (quotationId, lineId, lineData) => {
   const backendLine = transformLineToBackend(lineData);
   
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/lines/${lineId}`),
+    buildQuotationsUrl(`/${quotationId}/lines/${lineId}`),
     {
       method: 'PUT',
       body: JSON.stringify(backendLine)
@@ -364,7 +378,7 @@ export const updateLineItem = async (quotationId, lineId, lineData) => {
  */
 export const deleteLineItem = async (quotationId, lineId) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/lines/${lineId}`),
+    buildQuotationsUrl(`/${quotationId}/lines/${lineId}`),
     { method: 'DELETE' },
     'quotation'
   );
@@ -389,7 +403,7 @@ export const applyGlobalMargin = async (quotationId, marginPercent) => {
   const marginDecimal = marginPercent / 100;
   
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/lines/apply-margin`),
+    buildQuotationsUrl(`/${quotationId}/lines/apply-margin`),
     {
       method: 'PATCH',
       body: JSON.stringify({ global_margin_pct: marginDecimal })
@@ -415,7 +429,7 @@ export const applyGlobalMargin = async (quotationId, marginPercent) => {
  */
 export const refreshPrices = async (quotationId) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/lines/refresh-prices`),
+    buildQuotationsUrl(`/${quotationId}/lines/refresh-prices`),
     { method: 'POST' },
     'quotation'
   );
@@ -438,7 +452,7 @@ export const refreshPrices = async (quotationId) => {
  */
 export const exportStockCheck = async (quotationId) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/exports/stock-check`),
+    buildQuotationsUrl(`/${quotationId}/exports/stock-check`),
     { method: 'POST' },
     'quotation'
   );
@@ -477,7 +491,7 @@ export const exportStockCheck = async (quotationId) => {
  */
 export const exportPriorityImport = async (quotationId) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/exports/priority-import`),
+    buildQuotationsUrl(`/${quotationId}/exports/priority-import`),
     { method: 'POST' },
     'quotation'
   );
@@ -516,7 +530,7 @@ export const exportPriorityImport = async (quotationId) => {
  */
 export const generateEmailDraft = async (quotationId, customerEmail) => {
   const response = await authenticatedFetch(
-    buildQuotationApiUrl(`/quotations/${quotationId}/email-draft`),
+    buildQuotationsUrl(`/${quotationId}/email-draft`),
     {
       method: 'POST',
       body: JSON.stringify({ customer_email: customerEmail })

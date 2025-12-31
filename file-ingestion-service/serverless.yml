@@ -2,6 +2,9 @@ service: hb-file-processing
 
 frameworkVersion: "3"
 
+# Load variables from local .env / .env.* files so ${env:...} works in all commands
+useDotenv: true
+
 plugins:
   - serverless-offline
   - serverless-python-requirements
@@ -60,12 +63,13 @@ provider:
         - X-Amz-Date
         - X-Amz-Request-Id
     # JWT Authorizer (built-in, simpler than Lambda authorizer)
+    # Note: Authorizer requires COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID from .env
     authorizers:
       cognitoAuthorizer:
         identitySource: $request.header.Authorization
-        issuerUrl: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID}
+        issuerUrl: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID, ''}
         audience:
-          - ${env:COGNITO_APP_CLIENT_ID}
+          - ${env:COGNITO_APP_CLIENT_ID, ''}
 
   environment:
     UPLOAD_BUCKET: ${self:custom.uploadBucket}
@@ -75,6 +79,9 @@ provider:
     PRICE_LIST_PRODUCTS_TABLE: ${self:custom.priceListProductsTable}
     # PYTHONPATH: layer path for local dev (serverless-offline) and Lambda (/opt/python is auto-added in Lambda)
     PYTHONPATH: "layer-shared/python:/opt/python"
+    # AWS Configuration for local development
+    AWS_PROFILE: ${env:AWS_PROFILE, 'hb-client'}
+    AWS_REGION: ${self:provider.region}
     # Cognito Configuration (optional - for JWT authorizer)
     COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, ''}
     COGNITO_APP_CLIENT_ID: ${env:COGNITO_APP_CLIENT_ID, ''}
@@ -279,6 +286,25 @@ functions:
     events:
       - httpApi:
           path: /api/products/from-price-list
+          method: post
+
+  # HTTP API for UI -> link sales drawing to product
+  saveSalesDrawingToProduct:
+    handler: src/get_files.save_sales_drawing_to_product
+    layers:
+      - { Ref: SharedLambdaLayer }
+    events:
+      - httpApi:
+          path: /api/products/sales-drawing
+          method: post
+
+  unlinkSalesDrawingFromProduct:
+    handler: src/get_files.unlink_sales_drawing_from_product
+    layers:
+      - { Ref: SharedLambdaLayer }
+    events:
+      - httpApi:
+          path: /api/products/unlink-sales-drawing
           method: post
 
   listProducts:

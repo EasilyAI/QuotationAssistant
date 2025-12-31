@@ -206,8 +206,8 @@
 }
 
 .files-table-header-cell.actions {
-  flex: 0 0 180px;
-  min-width: 180px;
+  flex: 0 0 200px;
+  min-width: 200px;
   color: var(--color-text-secondary);
 }
 
@@ -300,10 +300,10 @@
 }
 
 .files-table-cell.actions {
-  flex: 0 0 180px;
-  min-width: 180px;
+  flex: 0 0 200px;
+  min-width: 200px;
   overflow: visible;
-  padding: 8px 8px;
+  padding: 8px 12px;
 }
 
 /* Status Badge */
@@ -340,27 +340,29 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 20px;
   white-space: nowrap;
   width: 100%;
   justify-content: center;
+  flex-wrap: nowrap;
 }
 
 .action-link {
   background: none;
   border: none;
-  padding: 0;
+  padding: 4px 8px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 20px;
   color: var(--color-primary);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
   white-space: nowrap;
   flex-shrink: 0;
+  min-width: fit-content;
 }
 
 .action-link:hover {

@@ -20,7 +20,7 @@ export interface SalesDrawingFormData {
   fileType: BusinessFileType.SalesDrawing;
   fileName: string;
   orderingNumber: string;
-  manufacturer: string;
+  manufacturer?: string;
   SwagelokLink?: string;
   year: string;
   notes: string;

@@ -59,7 +59,6 @@ const FileUpload = () => {
           fileType: BusinessFileType.SalesDrawing,
           fileName: '',
           orderingNumber: '',
-          manufacturer: '',
           SwagelokLink: '',
           year,
           notes: '',
@@ -336,8 +335,16 @@ const FileUpload = () => {
             'completed': 'Processing completed!'
           };
           
+          const salesDrawingStatusMessages: Record<string, string> = {
+            'pending_upload': 'Preparing upload...',
+            'pending_review': 'Upload completed! Ready for review.',
+            'completed': 'Upload completed!'
+          };
+          
           const statusMessages = fileType === BusinessFileType.PriceList 
             ? priceListStatusMessages 
+            : fileType === BusinessFileType.SalesDrawing
+            ? salesDrawingStatusMessages
             : catalogStatusMessages;
           
           setProcessingStatus(statusMessages[status] || info.processingStage || 'Processing...');
@@ -371,10 +378,23 @@ const FileUpload = () => {
       console.log('Processing completed:', fileInfo);
       setIsProcessing(false);
 
-      // Step 3: Get the extracted products based on file type
-      console.log('Fetching products...');
-      const productsData: FileProductsResponse = await getFileProducts(fileId, fileType);
-      console.log('Products fetched:', productsData);
+      // Step 3: Get the extracted products based on file type (skip for Sales Drawings)
+      let productsData: FileProductsResponse;
+      if (fileType === BusinessFileType.SalesDrawing) {
+        // Sales Drawings don't have products - create empty response
+        productsData = { fileId, products: [], count: 0 };
+      } else {
+        console.log('Fetching products...');
+        try {
+          productsData = await getFileProducts(fileId, fileType);
+          console.log('Products fetched:', productsData);
+        } catch (error) {
+          console.error('Failed to fetch products:', error);
+          // For other types, create empty response but still show modal
+          productsData = { fileId, products: [], count: 0 };
+          // Don't throw - allow user to see completion modal even if products fetch failed
+        }
+      }
 
       // Step 4: Show completion modal instead of navigating immediately
       const paramType = getParamFromFileType(fileType);
@@ -463,6 +483,7 @@ const FileUpload = () => {
     const totalWarnings = fileInfo.totalWarnings || processingDetails?.totalWarnings || 0;
     
     const isPriceList = fileType === BusinessFileType.PriceList;
+    const isSalesDrawing = fileType === BusinessFileType.SalesDrawing;
     const hasErrors = invalidProductsCount > 0 || totalErrors > 0;
 
     return (
@@ -486,17 +507,32 @@ const FileUpload = () => {
               {hasErrors ? 'Processing Complete with Warnings' : 'Processing Complete!'}
             </h2>
             <p className="completion-modal-subtitle">
-              {isPriceList 
-                ? (hasErrors 
-                    ? 'Your price list has been processed. Some rows have validation issues that need review.'
-                    : 'Your price list has been successfully processed and all products are valid.')
-                : 'Your file has been successfully processed and products have been saved.'}
+              {isSalesDrawing
+                ? 'Your sales drawing has been uploaded successfully. You can now link it to a product.'
+                : isPriceList 
+                  ? (hasErrors 
+                      ? 'Your price list has been processed. Some rows have validation issues that need review.'
+                      : 'Your price list has been successfully processed and all products are valid.')
+                  : 'Your file has been successfully processed and products have been saved.'}
             </p>
           </div>
 
           <div className="completion-modal-body">
-            <div className="completion-stats">
-              {isPriceList ? (
+            {isSalesDrawing ? (
+              // Sales Drawing - simple text format, no cards
+              <div className="completion-info" style={{ textAlign: 'left', padding: '20px 0' }}>
+                <p style={{ marginBottom: '12px', fontSize: '15px', color: '#1a1a1a', paddingLeft: '10px' }}>
+                  <strong>File Name:</strong> {fileInfo.displayName || fileInfo.uploadedFileName || 'Drawing'}
+                </p>
+                {fileInfo.orderingNumber && (
+                  <p style={{ marginBottom: '12px', fontSize: '15px', color: '#1a1a1a', paddingLeft: '10px' }}>
+                    <strong>Ordering Number:</strong> {fileInfo.orderingNumber}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="completion-stats">
+                {isPriceList ? (
                 // Price list stats
                 <>
                   <div className="completion-stat-item highlight">
@@ -546,18 +582,21 @@ const FileUpload = () => {
                     </div>
                   )}
                 </>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
-            <div className="completion-info">
-              <p className="completion-info-text">
-                {isPriceList 
-                  ? (hasErrors 
-                      ? 'Please review the products and fix any validation errors before finalizing.'
-                      : 'All products have been saved. You can review them now or continue later.')
-                  : 'All products have been saved to the catalog. You can review them now or continue later.'}
-              </p>
-            </div>
+            {!isSalesDrawing && (
+              <div className="completion-info">
+                <p className="completion-info-text">
+                  {isPriceList 
+                    ? (hasErrors 
+                        ? 'Please review the products and fix any validation errors before finalizing.'
+                        : 'All products have been saved. You can review them now or continue later.')
+                    : 'All products have been saved to the catalog. You can review them now or continue later.'}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="completion-modal-actions">
@@ -688,18 +727,6 @@ const FileUpload = () => {
                 className="form-input"
                 placeholder="Enter ordering number"
                 value={(formData as SalesDrawingFormData).orderingNumber}
-                onChange={handleInputChange}
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Manufacturer</label>
-              <input
-                type="text"
-                name="manufacturer"
-                className="form-input"
-                placeholder="Enter manufacturer name"
-                value={(formData as SalesDrawingFormData).manufacturer}
                 onChange={handleInputChange}
               />
             </div>

@@ -11,8 +11,23 @@ import boto3
 from .product_types import ProductData, strip_catalog_snapshots
 from .serialization import convert_decimals_to_native
 
+# Configure DynamoDB client
+# In Lambda, use IAM role (no profile). Locally, use profile if available.
+is_lambda = bool(os.environ.get("LAMBDA_TASK_ROOT"))
+dynamodb_endpoint = os.environ.get("DYNAMODB_ENDPOINT")
+aws_profile = os.environ.get("AWS_PROFILE") or os.environ.get("AWS_DEFAULT_PROFILE")
+region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
-dynamodb = boto3.resource("dynamodb")
+if dynamodb_endpoint:
+    # Use DynamoDB Local
+    dynamodb = boto3.resource("dynamodb", endpoint_url=dynamodb_endpoint)
+elif not is_lambda and aws_profile:
+    # Use AWS profile (for local development only)
+    session = boto3.Session(profile_name=aws_profile, region_name=region)
+    dynamodb = session.resource("dynamodb")
+else:
+    # Use default AWS credentials (IAM role in Lambda, or env vars/credentials file locally)
+    dynamodb = boto3.resource("dynamodb", region_name=region)
 
 PRODUCT_TABLE = os.environ.get("PRODUCT_TABLE", "hb-products")
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")

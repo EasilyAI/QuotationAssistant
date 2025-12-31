@@ -73,6 +73,54 @@ export const saveProductsFromPriceList = async (products) => {
 };
 
 /**
+ * Link a sales drawing to a product by ordering number
+ * @param {string} fileId - File ID of the sales drawing
+ * @param {string} orderingNumber - Ordering number of the product
+ * @returns {Promise<Object>} Link result
+ */
+export const saveSalesDrawingToProduct = async (fileId, orderingNumber) => {
+  const response = await authenticatedFetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.SALES_DRAWING_TO_PRODUCT),
+    {
+      method: 'POST',
+      body: JSON.stringify({ fileId, orderingNumber })
+    },
+    'file'
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to link sales drawing to product' }));
+    throw new Error(error.message || error.error || `Failed to link sales drawing to product: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
+ * Unlink a sales drawing from a product
+ * @param {string} fileId - File ID of the sales drawing
+ * @param {string} orderingNumber - Ordering number of the product
+ * @returns {Promise<Object>} Unlink result
+ */
+export const unlinkSalesDrawingFromProduct = async (fileId, orderingNumber) => {
+  const response = await authenticatedFetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.UNLINK_SALES_DRAWING),
+    {
+      method: 'POST',
+      body: JSON.stringify({ fileId, orderingNumber })
+    },
+    'file'
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to unlink sales drawing from product' }));
+    throw new Error(error.message || error.error || `Failed to unlink sales drawing from product: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+/**
  * Fetch a product by its ordering number
  * @param {string} orderingNumber
  * @returns {Promise<Object>}

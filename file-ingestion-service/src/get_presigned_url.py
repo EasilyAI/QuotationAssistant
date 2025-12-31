@@ -1,20 +1,63 @@
 import json
 import os
+import sys
 import uuid
 import time
 from datetime import datetime
 
 import boto3
 
+# Add shared directory to path for imports
+CURRENT_DIR = os.path.dirname(__file__)
+SERVICE_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+SHARED_DIR = os.path.abspath(os.path.join(SERVICE_ROOT, "..", "shared"))
+if SHARED_DIR not in sys.path:
+    sys.path.append(SHARED_DIR)
+
 from utils.corsHeaders import get_cors_headers
 from utils.file_details import normalize_file_name, normalize_catalog_serial_number
 
-s3 = boto3.client("s3")
-dynamodb = boto3.resource("dynamodb")
+# Configure AWS clients for local development
+# When running serverless offline, we need to use AWS profile or credentials
+dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT')
+# Check both environment variable and os.environ (serverless-offline may use os.environ)
+aws_profile = os.getenv('AWS_PROFILE') or os.environ.get('AWS_PROFILE') or os.getenv('AWS_DEFAULT_PROFILE') or os.environ.get('AWS_DEFAULT_PROFILE')
+region = os.getenv('AWS_REGION') or os.environ.get('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION') or os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
 
+# Check if we're in real AWS Lambda (not serverless-offline)
+# Serverless-offline may set LAMBDA_TASK_ROOT, but we can detect real Lambda by checking
+# if we're in /var/task (real Lambda) vs local filesystem
+is_real_lambda = os.path.exists('/var/task') and os.getenv('LAMBDA_TASK_ROOT')
+
+# Debug logging
+print(f"[get_presigned_url] AWS Config - endpoint: {dynamodb_endpoint or 'None'}, profile: {aws_profile or 'None'}, region: {region}, is_real_lambda: {is_real_lambda}, LAMBDA_TASK_ROOT: {os.getenv('LAMBDA_TASK_ROOT') or 'None'}")
+
+# Create AWS session and clients with consistent credentials
+if dynamodb_endpoint:
+    # Use DynamoDB Local
+    print(f"[get_presigned_url] Using DynamoDB Local endpoint: {dynamodb_endpoint}")
+    dynamodb = boto3.resource('dynamodb', endpoint_url=dynamodb_endpoint)
+    s3 = boto3.client("s3", region_name=region)
+elif aws_profile and not is_real_lambda:
+    # Use AWS profile (for local development, including serverless-offline)
+    print(f"[get_presigned_url] Using AWS profile: {aws_profile} in region: {region}")
+    try:
+        session = boto3.Session(profile_name=aws_profile, region_name=region)
+        dynamodb = session.resource('dynamodb')
+        s3 = session.client('s3')
+    except Exception as e:
+        print(f"[get_presigned_url] WARNING: Failed to use profile {aws_profile}: {e}, falling back to default credentials")
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+        s3 = boto3.client("s3", region_name=region)
+else:
+    # Use default AWS credentials (IAM role in Lambda, or env vars/credentials file locally)
+    print(f"[get_presigned_url] Using default AWS credentials in region: {region} (Real Lambda: {is_real_lambda}, Profile: {aws_profile or 'None'})")
+    dynamodb = boto3.resource('dynamodb', region_name=region)
+    s3 = boto3.client("s3", region_name=region)
 BUCKET = "hb-files-raw"
 # BUCKET = os.environ["UPLOAD_BUCKET"]
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")
+print(f"[get_presigned_url] FILES_TABLE: {FILES_TABLE}")
 
 
 def get_presigned_url(event, context):
@@ -85,7 +128,7 @@ def get_presigned_url(event, context):
                 }
     except ImportError:
         # Fallback if shared module not available
-        logger.warning("Shared input validation not available, using basic validation")
+        print(f"[get_presigned_url] WARNING: Shared input validation not available, using basic validation")
         # Basic path traversal check
         if '..' in uploaded_file_name or '/' in uploaded_file_name or '\\' in uploaded_file_name:
             return {
