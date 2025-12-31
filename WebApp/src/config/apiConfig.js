@@ -12,20 +12,16 @@ const normalizeEndpoint = (endpoint = '') =>
 
 export const API_CONFIG = {
   // Base URL for the file processing service (extractCatalogInfo)
-  // Set via REACT_APP_API_BASE_URL environment variable
   FILE_API_BASE_URL: process.env.REACT_APP_API_BASE_URL || 'http://localhost:3000',
 
   // Base URL for the product search service (product-search-service)
-  // Set via REACT_APP_SEARCH_API_BASE_URL environment variable
-  // Defaults to FILE_API_BASE_URL for local/dev convenience
   SEARCH_API_BASE_URL:
-    // process.env.REACT_APP_SEARCH_API_BASE_URL ||
+    process.env.REACT_APP_SEARCH_API_BASE_URL ||
     'http://localhost:3000',
 
   // Base URL for the quotation management service
-  // Set via REACT_APP_QUOTATION_API_BASE_URL environment variable
   QUOTATION_API_BASE_URL:
-    // process.env.REACT_APP_QUOTATION_API_BASE_URL ||
+    process.env.REACT_APP_QUOTATION_API_BASE_URL ||
     'http://localhost:3004',
 
   // Extract Catalog Info service endpoints (see extractCatalogInfo/serverless.yml)
