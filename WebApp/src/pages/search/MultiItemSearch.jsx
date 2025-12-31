@@ -6,8 +6,10 @@ import { fetchAutocompleteSuggestions } from '../../services/searchService';
 import BatchSearchResultsDialog from '../../components/BatchSearchResultsDialog';
 import BatchValidationDialog from '../../components/BatchValidationDialog';
 import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
+import AddToQuotationDialog from '../../components/AddToQuotationDialog';
 import { fetchProductByOrderingNumber } from '../../services/productsService';
 import { getFileDownloadUrl, getFileInfo } from '../../services/fileInfoService';
+import { batchAddLineItems } from '../../services/quotationService';
 import { ProductCategory } from '../../types';
 import './MultiItemSearch.css';
 
@@ -51,6 +53,7 @@ const MultiItemSearch = () => {
   const [validationErrorsMinimized, setValidationErrorsMinimized] = useState(true); // Start minimized
   const [autocompleteData, setAutocompleteData] = useState({}); // { itemId: { suggestions: [], loading: false, show: false } }
   const autocompleteInputRefs = useRef({});
+  const [showAddToQuotationDialog, setShowAddToQuotationDialog] = useState(false);
 
   // Set uploaded file if restoring state
   React.useEffect(() => {
@@ -256,9 +259,9 @@ const MultiItemSearch = () => {
   const processedCount = matchedCount + manualCount;
   const progressPercentage = totalCount > 0 ? (processedCount / totalCount) * 100 : 0;
 
-  const handleSaveToQuotation = () => {
-    // Convert all items to quotation format (both complete and incomplete)
-    const quotationItems = items.map(item => {
+  // Convert items to quotation format
+  const convertItemsToQuotationFormat = () => {
+    return items.map(item => {
       const selectedMatchData = item.selectedMatch 
         ? item.matches.find(m => m.id === item.selectedMatch)
         : null;
@@ -286,6 +289,10 @@ const MultiItemSearch = () => {
         isIncomplete: isIncomplete
       };
     });
+  };
+
+  const handleSaveToQuotation = () => {
+    const quotationItems = convertItemsToQuotationFormat();
 
     if (quotationItems.length === 0) {
       alert('No items to save to quotation.');
@@ -300,6 +307,57 @@ const MultiItemSearch = () => {
     if (!window.confirm(confirmMessage)) {
       return;
     }
+
+    // Open the dialog to choose existing quotation or create new
+    setShowAddToQuotationDialog(true);
+  };
+
+  // Handle selecting an existing quotation
+  const handleSelectQuotation = async (quotationId) => {
+    const quotationItems = convertItemsToQuotationFormat();
+    
+    // Save batch search state to sessionStorage for later return
+    sessionStorage.setItem('batchSearchState', JSON.stringify({
+      uploadedFileName: uploadedFile?.name,
+      items: items,
+      timestamp: new Date().toISOString()
+    }));
+
+    try {
+      // Transform items for batch add
+      const transformedItems = quotationItems.map(item => ({
+        orderingNumber: item.orderingNumber || item.orderingNo || '',
+        productName: item.productName || item.requestedItem || '',
+        description: item.description || item.specs || item.requestedItem || '',
+        quantity: item.quantity || 1,
+        base_price: item.price,
+        margin_pct: item.margin ? item.margin / 100 : undefined,
+        drawing_link: item.sketchFile,
+        catalog_link: item.catalogLink,
+        notes: item.notes,
+        source: 'search', // Valid values: 'search', 'manual', 'import'
+        original_request: item.requestedItem || item.originalRequest || ''
+      }));
+
+      // Add items to existing quotation
+      await batchAddLineItems(quotationId, transformedItems);
+
+      // Navigate to the quotation edit page
+      navigate(`/quotations/edit/${quotationId}`, { 
+        state: { 
+          source: 'batch-search',
+          batchSearchAvailable: true
+        } 
+      });
+    } catch (error) {
+      console.error('Error adding items to quotation:', error);
+      alert(`Failed to add items to quotation: ${error.message || 'Unknown error'}`);
+    }
+  };
+
+  // Handle creating a new quotation
+  const handleCreateNew = () => {
+    const quotationItems = convertItemsToQuotationFormat();
 
     // Save batch search state to sessionStorage for later return
     sessionStorage.setItem('batchSearchState', JSON.stringify({
@@ -1072,6 +1130,16 @@ const MultiItemSearch = () => {
           product={previewProduct}
           highlightTerm={previewOrderingNo}
           title="Catalog Preview"
+        />
+
+        {/* Add to Quotation Dialog */}
+        <AddToQuotationDialog
+          open={showAddToQuotationDialog}
+          onOpenChange={setShowAddToQuotationDialog}
+          productName={`${items.length} item${items.length !== 1 ? 's' : ''} from batch search`}
+          orderingNo=""
+          onSelectQuotation={handleSelectQuotation}
+          onCreateNew={handleCreateNew}
         />
       </div>
     </div>

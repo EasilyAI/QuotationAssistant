@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { mockQuotations } from '../data/mockQuotations';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { getQuotations } from '../services/quotationService';
 import './AddToQuotationDialog.css';
 
 const AddToQuotationDialog = ({
@@ -11,20 +11,44 @@ const AddToQuotationDialog = ({
   onCreateNew,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [quotations, setQuotations] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchQuotations = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await getQuotations({ limit: 100 });
+      setQuotations(result.quotations || []);
+    } catch (err) {
+      setError(err.message || 'Failed to load quotations');
+      setQuotations([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch quotations when dialog opens
+  useEffect(() => {
+    if (open) {
+      fetchQuotations();
+    }
+  }, [open, fetchQuotations]);
 
   const filteredQuotations = useMemo(() => {
     if (!searchQuery.trim()) {
-      return mockQuotations;
+      return quotations;
     }
     
     const query = searchQuery.toLowerCase();
-    return mockQuotations.filter(
+    return quotations.filter(
       (q) =>
-        q.name.toLowerCase().includes(query) ||
-        q.quotationNumber.toLowerCase().includes(query) ||
-        q.customer.toLowerCase().includes(query)
+        q.name?.toLowerCase().includes(query) ||
+        q.quotationNumber?.toLowerCase().includes(query) ||
+        q.customer?.toLowerCase().includes(query)
     );
-  }, [searchQuery]);
+  }, [searchQuery, quotations]);
 
   const handleSelectQuotation = (quotationId) => {
     onSelectQuotation?.(quotationId);
@@ -45,13 +69,22 @@ const AddToQuotationDialog = ({
       <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">Add to Quotation</h2>
-          {(productName || orderingNo) && (
-            <p className="dialog-subtitle">
-              {productName && <span>{productName}</span>}
-              {productName && orderingNo && <span> • </span>}
-              {orderingNo && <span>{orderingNo}</span>}
-            </p>
-          )}
+          {(() => {
+            // Determine what to display - avoid showing orderingNo twice
+            const showProductName = productName;
+            const showOrderingNo = orderingNo && (!productName || (productName !== orderingNo && !productName.includes(orderingNo)));
+            const showSeparator = showProductName && showOrderingNo;
+            
+            if (!showProductName && !showOrderingNo) return null;
+            
+            return (
+              <p className="dialog-subtitle">
+                {showProductName && <span>{productName}</span>}
+                {showSeparator && <span> • </span>}
+                {showOrderingNo && <span>{orderingNo}</span>}
+              </p>
+            );
+          })()}
           <button 
             className="dialog-close"
             onClick={() => onOpenChange(false)}
@@ -70,12 +103,23 @@ const AddToQuotationDialog = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="search-input"
+              style={{ marginLeft: '18px' }}
             />
           </div>
 
           {/* Quotation List */}
           <div className="quotation-list">
-            {filteredQuotations.map((quotation, index) => (
+            {loading && (
+              <div className="no-results">
+                Loading quotations...
+              </div>
+            )}
+            {error && (
+              <div className="no-results" style={{ color: '#d32f2f' }}>
+                {error}
+              </div>
+            )}
+            {!loading && !error && filteredQuotations.map((quotation, index) => (
               <button
                 key={quotation.id}
                 onClick={() => handleSelectQuotation(quotation.id)}
@@ -100,7 +144,7 @@ const AddToQuotationDialog = ({
             ))}
 
             {/* No Results Message */}
-            {filteredQuotations.length === 0 && searchQuery && (
+            {!loading && !error && filteredQuotations.length === 0 && searchQuery && (
               <div className="no-results">
                 No quotations found matching "{searchQuery}"
               </div>

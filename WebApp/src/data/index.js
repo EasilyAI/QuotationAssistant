@@ -1,6 +1,5 @@
 // Central export point for all mock data
 export * from './mockProducts';
-export * from './mockQuotations';
 export * from './mockSearchResults';
 export * from './mockBatchItems';
 export * from './mockQuotationItems';
