@@ -56,7 +56,7 @@ provider:
     
     # AWS Configuration (for offline/local development)
     AWS_PROFILE: ${opt:profile, 'hb-client'}
-    AWS_REGION: ${opt:region, 'us-east-1'}
+    # Note: AWS_REGION is automatically provided by AWS Lambda and cannot be set manually
     
     # DynamoDB Configuration
     QUOTATIONS_TABLE: ${self:custom.quotationsTable}

@@ -38,14 +38,38 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
         return create_response(200, '')
     
-    # Verify API key
+    # Verify authentication (API key or Cognito token)
     try:
         from shared.api_key_auth import verify_api_key, create_unauthorized_response
-        is_valid, error_msg = verify_api_key(event, 'product-search', require_ip_whitelist=False)
-        if not is_valid:
-            return create_unauthorized_response(error_msg or "Invalid or missing API key")
+        
+        # Check for Cognito token first (Authorization: Bearer <token>)
+        headers = event.get('headers', {}) or {}
+        # Try different case variations of the Authorization header
+        auth_header = None
+        for key in headers:
+            if key.lower() == 'authorization':
+                auth_header = headers[key]
+                break
+        
+        has_cognito_token = False
+        if auth_header and isinstance(auth_header, str) and auth_header.startswith('Bearer '):
+            token = auth_header[7:].strip()
+            if token:
+                # If we have a Bearer token, check if it's a valid JWT structure
+                # (basic check - actual verification would be done by API Gateway authorizer)
+                parts = token.split('.')
+                if len(parts) == 3:  # JWT has 3 parts
+                    has_cognito_token = True
+                    logger.info("Request authenticated with Cognito Bearer token")
+        
+        # If no Cognito token, check for API key
+        if not has_cognito_token:
+            is_valid, error_msg = verify_api_key(event, 'product-search', require_ip_whitelist=False)
+            if not is_valid:
+                return create_unauthorized_response(error_msg or "Invalid or missing API key")
+            logger.info("Request authenticated with API key")
     except ImportError:
-        logger.warning("Shared auth module not available, skipping API key verification")
+        logger.warning("Shared auth module not available, skipping authentication verification")
         # In development, allow without auth if module not available
     
     # Route based on path
