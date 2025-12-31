@@ -1,4 +1,6 @@
 import { API_CONFIG, buildSearchApiUrl } from '../config/apiConfig';
+import { authenticatedFetch } from '../utils/apiClient';
+import { getSearchApiKey } from '../utils/apiKeys';
 
 /**
  * Execute a product search against the search API.
@@ -51,9 +53,7 @@ export const searchProducts = async ({
 
   const url = `${buildSearchApiUrl(API_CONFIG.SEARCH_ENDPOINTS.SEARCH)}?${params.toString()}`;
 
-  const response = await fetch(url, {
-    method: 'GET',
-  });
+  const response = await authenticatedFetch(url, { method: 'GET' }, 'search');
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to execute search' }));
@@ -100,6 +100,9 @@ export const fetchAutocompleteSuggestions = async ({
 
   const response = await fetch(url, {
     method: 'GET',
+    headers: {
+      'X-Api-Key': getSearchApiKey()
+    },
     signal, // Support request cancellation
   });
 

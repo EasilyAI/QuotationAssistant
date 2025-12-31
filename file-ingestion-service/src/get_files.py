@@ -32,6 +32,14 @@ def get_files(event, context):
         dict: All files from DynamoDB
     """
     print(f"[get_files] Starting request processing")
+    
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        print(f"[get_files] Authentication failed")
+        return error_response
+    
     table = dynamodb.Table(FILES_TABLE)
     
     response = table.scan()
@@ -69,6 +77,13 @@ def get_file_info(event, context):
             "headers": get_cors_headers(),
         }
     
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        print(f"[get_file_info] Authentication failed")
+        return error_response
+    
     # Extract fileId from path parameters
     # For HTTP API v2, path parameters are in event["pathParameters"]
     path_params = event.get("pathParameters") or {}
@@ -82,6 +97,21 @@ def get_file_info(event, context):
             "body": json.dumps({"error": "fileId is required"}),
             "headers": get_cors_headers(),
         }
+    
+    # Validate file ID format
+    try:
+        from shared.input_validation import validate_file_id
+        is_valid, error_msg = validate_file_id(file_id)
+        if not is_valid:
+            print(f"[get_file_info] ERROR: Invalid fileId format: {error_msg}")
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": error_msg or "Invalid file ID format"}),
+                "headers": get_cors_headers(),
+            }
+    except ImportError:
+        # Fallback if shared module not available
+        pass
     
     # Get file information from DynamoDB
     table = dynamodb.Table(FILES_TABLE)
@@ -133,6 +163,13 @@ def get_file_download_url(event, context):
             "body": "",
             "headers": get_cors_headers(),
         }
+    
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        print(f"[get_file_download_url] Authentication failed")
+        return error_response
 
     try:
         body = json.loads(event.get("body") or "{}")
@@ -152,6 +189,22 @@ def get_file_download_url(event, context):
             "body": json.dumps({"error": "S3 key is required"}),
             "headers": get_cors_headers(),
         }
+
+    # Validate and sanitize S3 key to prevent path traversal
+    try:
+        from shared.input_validation import sanitize_path_parameter
+        is_valid, sanitized_key, error_msg = sanitize_path_parameter(key, "S3 key")
+        if not is_valid:
+            print(f"[get_file_download_url] ERROR: Invalid S3 key: {error_msg}")
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": error_msg or "Invalid S3 key"}),
+                "headers": get_cors_headers(),
+            }
+        key = sanitized_key
+    except ImportError:
+        # Fallback if shared module not available
+        pass
 
     # Normalize key (strip leading slash)
     normalized_key = key.lstrip("/")
@@ -396,6 +449,12 @@ def update_catalog_products(event, context):
             "headers": get_cors_headers(),
         }
 
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
+
     path_params = event.get("pathParameters") or {}
     file_id = path_params.get("fileId")
     print(f"[update_catalog_products] Extracted fileId: {file_id}")
@@ -525,6 +584,12 @@ def update_price_list_products(event, context):
             "body": "",
             "headers": get_cors_headers(),
         }
+
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
 
     path_params = event.get("pathParameters") or {}
     file_id = path_params.get("fileId")
@@ -729,6 +794,12 @@ def check_file_exists(event, context):
             "headers": get_cors_headers(),
         }
     
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
+    
     # Parse request body
     try:
         body = json.loads(event.get("body") or "{}")
@@ -914,6 +985,12 @@ def delete_file(event, context):
             "body": "",
             "headers": get_cors_headers(),
         }
+    
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
     
     # Extract fileId from path parameters
     path_params = event.get("pathParameters") or {}
@@ -1152,6 +1229,12 @@ def check_existing_products(event, context):
             "headers": get_cors_headers(),
         }
     
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
+    
     try:
         body = json.loads(event.get("body") or "{}")
     except json.JSONDecodeError:
@@ -1230,6 +1313,12 @@ def save_products_from_catalog(event, context):
             "body": "",
             "headers": get_cors_headers(),
         }
+    
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
     
     try:
         body = json.loads(event.get("body") or "{}")
@@ -1434,6 +1523,12 @@ def save_products_from_price_list(event, context):
             "body": "",
             "headers": get_cors_headers(),
         }
+    
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
     
     try:
         body = json.loads(event.get("body") or "{}")
@@ -1971,6 +2066,12 @@ def list_products(event, context):
             "headers": get_cors_headers(),
         }
 
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
+
     query_params = event.get("queryStringParameters") or {}
     category = (query_params.get("category") or "").strip() or None
     cursor_param = query_params.get("cursor") or query_params.get("lastKey")
@@ -2107,6 +2208,12 @@ def complete_file_review(event, context):
             "body": "",
             "headers": get_cors_headers(),
         }
+    
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        return error_response
     
     path_params = event.get("pathParameters") or {}
     file_id = path_params.get("fileId")

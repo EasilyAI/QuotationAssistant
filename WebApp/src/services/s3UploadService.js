@@ -1,8 +1,8 @@
 import { BusinessFileType } from '../types/index';
 import { API_CONFIG, buildFileApiUrl } from '../config/apiConfig';
+import { authenticatedFetch } from '../utils/apiClient';
 
 /** Service for uploading files directly to S3 using presigned URLs */
-
 
 /** Request a presigned URL from the backend API */
 const getPresignedUrl = async (fileName, fileType, contentType, formData = null) => {
@@ -17,15 +17,14 @@ const getPresignedUrl = async (fileName, fileType, contentType, formData = null)
     requestBody.formData = formData;
   }
   
-  const response = await fetch(buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRESIGNED_URL), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      // TODO: Add authentication header if needed
-      // 'Authorization': `Bearer ${getAuthToken()}`,
+  const response = await authenticatedFetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRESIGNED_URL),
+    {
+      method: 'POST',
+      body: JSON.stringify(requestBody)
     },
-    body: JSON.stringify(requestBody),
-  });
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to get presigned URL' }));

@@ -660,10 +660,19 @@ const MultiItemSearch = () => {
                       
                       return (
                       <React.Fragment key={item.id}>
-                        <tr className={`${rowClassName} ${item.isExpanded ? 'row-expanded' : ''}`}>
+                        <tr 
+                          className={`${rowClassName} ${item.isExpanded ? 'row-expanded' : ''} ${item.matches.length > 0 ? 'row-clickable' : ''}`}
+                          onClick={item.matches.length > 0 ? () => toggleExpanded(item.id) : undefined}
+                        >
                           <td className="expand-cell">
                             {item.matches.length > 0 && (
-                              <button onClick={() => toggleExpanded(item.id)} className="expand-button">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleExpanded(item.id);
+                                }} 
+                                className="expand-button"
+                              >
                                 <span className="expand-icon">
                                   {item.isExpanded ? '−' : '+'}
                                 </span>
@@ -691,6 +700,7 @@ const MultiItemSearch = () => {
                                     className="ordering-number-link"
                                     onClick={(e) => {
                                       e.preventDefault();
+                                      e.stopPropagation();
                                       window.open(`/product/${selectedMatchData.orderingNo}`, '_blank');
                                     }}
                                   >
@@ -706,6 +716,7 @@ const MultiItemSearch = () => {
                                     className="ordering-number-link manual-entry-link"
                                     onClick={(e) => {
                                       e.preventDefault();
+                                      e.stopPropagation();
                                       window.open(`/product/${item.manualOrderingNo}`, '_blank');
                                     }}
                                   >
@@ -725,6 +736,7 @@ const MultiItemSearch = () => {
                                     className="manual-ordering-input"
                                     placeholder="Enter ordering number manually"
                                     defaultValue=""
+                                    onClick={(e) => e.stopPropagation()}
                                     onChange={async (e) => {
                                       const value = e.target.value.trim();
                                       if (value.length >= 2) {
@@ -785,7 +797,10 @@ const MultiItemSearch = () => {
                                     }}
                                   />
                                   {autocompleteData[item.id]?.show && autocompleteData[item.id]?.suggestions?.length > 0 && (
-                                    <div className="autocomplete-dropdown">
+                                    <div 
+                                      className="autocomplete-dropdown"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
                                       {autocompleteData[item.id].suggestions.map((suggestion, idx) => {
                                         const orderingNo = suggestion.orderingNumber || suggestion.orderingNo || '';
                                         const displayText = suggestion.searchText || suggestion.text || orderingNo;
@@ -793,7 +808,8 @@ const MultiItemSearch = () => {
                                           <div
                                             key={idx}
                                             className="autocomplete-item"
-                                            onClick={() => {
+                                            onClick={(e) => {
+                                              e.stopPropagation();
                                               setItems(items.map(itm => 
                                                 itm.id === item.id 
                                                   ? { ...itm, manualOrderingNo: orderingNo, status: 'Match Found' }
@@ -868,6 +884,7 @@ const MultiItemSearch = () => {
                                                     className="ordering-link"
                                                     onClick={(e) => {
                                                       e.preventDefault();
+                                                      e.stopPropagation();
                                                       window.open(`/product/${orderingNo}`, '_blank');
                                                     }}
                                                   >
@@ -919,13 +936,17 @@ const MultiItemSearch = () => {
                                                 <div className="action-buttons-wrapper">
                                                   <button
                                                     className="action-btn-primary"
-                                                    onClick={() => handleChooseMatch(item.id, match.id)}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleChooseMatch(item.id, match.id);
+                                                    }}
                                                   >
                                                     {item.selectedMatch === match.id ? 'Selected ✓' : 'Choose This'}
                                                   </button>
                                                   <button
                                                     className="action-btn-secondary"
-                                                    onClick={async () => {
+                                                    onClick={async (e) => {
+                                                      e.stopPropagation();
                                                       if (orderingNo) {
                                                         await handleOpenPreview(orderingNo);
                                                       }

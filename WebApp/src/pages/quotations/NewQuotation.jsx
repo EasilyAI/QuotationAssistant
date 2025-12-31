@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
-import { mockQuotations } from '../../data/mockQuotations';
 import { QuotationStatus } from '../../types/index';
 import './NewQuotation.css';
 
@@ -16,25 +15,14 @@ const NewQuotation = () => {
   const batchSearchAvailable = location.state?.batchSearchAvailable || false;
   const existingMetadata = location.state?.metadata;
 
-  // If editing, try to get existing quotation data
-  const existingQuotation = isEditMode ? mockQuotations.find(q => q.id === id) : null;
+  // Note: For editing metadata, we'll load the quotation in EditQuotation page
+  // This page is just for creating new quotations or editing metadata
 
   // Initialize form data based on mode
   const getInitialFormData = () => {
     if (existingMetadata) {
       // Data passed from EditQuotation
       return existingMetadata;
-    } else if (existingQuotation) {
-      // Data from mock quotations
-      return {
-        quotationName: existingQuotation.name,
-        customer: existingQuotation.customer,
-        currency: existingQuotation.currency,
-        defaultMargin: existingQuotation.defaultMargin,
-        notes: existingQuotation.notes,
-        createdDate: existingQuotation.createdDate,
-        status: existingQuotation.status
-      };
     } else {
       // New quotation
       return {
@@ -67,6 +55,20 @@ const NewQuotation = () => {
     }
   };
 
+  const handleMarginChange = (e) => {
+    const value = e.target.value;
+    // Allow empty string for better UX when user is deleting/typing
+    if (value === '') {
+      handleChange('defaultMargin', '');
+    } else {
+      const numValue = Number(value);
+      // Only update if it's a valid number
+      if (!isNaN(numValue)) {
+        handleChange('defaultMargin', numValue);
+      }
+    }
+  };
+
   const validateForm = () => {
     const newErrors = {};
     
@@ -78,8 +80,15 @@ const NewQuotation = () => {
       newErrors.customer = 'Customer name is required';
     }
     
-    if (formData.defaultMargin < 0 || formData.defaultMargin > 100) {
-      newErrors.defaultMargin = 'Margin must be between 0 and 100';
+    // Handle margin validation - allow empty or valid number
+    const marginValue = typeof formData.defaultMargin === 'string' && formData.defaultMargin === '' 
+      ? null 
+      : formData.defaultMargin;
+    
+    if (marginValue !== null && marginValue !== undefined) {
+      if (marginValue < 0 || marginValue > 100) {
+        newErrors.defaultMargin = 'Margin must be between 0 and 100';
+      }
     }
 
     setErrors(newErrors);
@@ -95,16 +104,26 @@ const NewQuotation = () => {
 
     if (isEditMode) {
       // Editing existing quotation metadata - go back to edit page
+      // Ensure defaultMargin is a number (not empty string) before submitting
+      const submitData = {
+        ...formData,
+        defaultMargin: formData.defaultMargin === '' ? (existingMetadata?.defaultMargin || 20) : formData.defaultMargin
+      };
       navigate(`/quotations/edit/${id}`, {
         state: {
-          metadata: formData
+          metadata: submitData
         }
       });
     } else {
       // Creating new quotation - continue to items page
+      // Ensure defaultMargin is a number (not empty string) before submitting
+      const submitData = {
+        ...formData,
+        defaultMargin: formData.defaultMargin === '' ? 20 : formData.defaultMargin
+      };
       navigate('/quotations/edit/new', {
         state: {
-          metadata: formData,
+          metadata: submitData,
           items: initialItems,
           source: sourceInfo,
           batchSearchAvailable: batchSearchAvailable
@@ -160,10 +179,15 @@ const NewQuotation = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="quotation-form">
-          <div className="form-section">
-            <h2 className="section-title">Basic Information</h2>
+          <div className="form-card">
+            <div className="section-header">
+              <div className="section-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              </div>
+              <h2 className="section-title">Basic Information</h2>
+            </div>
             
-            <div className="form-row">
+            <div className="form-grid">
               <div className="form-group">
                 <label htmlFor="quotationName" className="form-label required">
                   Quotation Name
@@ -171,6 +195,7 @@ const NewQuotation = () => {
                 <input
                   id="quotationName"
                   type="text"
+                  placeholder="e.g. Project Apollo, Q1 Supply"
                   value={formData.quotationName}
                   onChange={(e) => handleChange('quotationName', e.target.value)}
                   className={`form-input ${errors.quotationName ? 'error' : ''}`}
@@ -198,9 +223,7 @@ const NewQuotation = () => {
                   <span className="error-message">{errors.customer}</span>
                 )}
               </div>
-            </div>
 
-            <div className="form-row">
               <div className="form-group">
                 <label htmlFor="createdDate" className="form-label">
                   Date Created
@@ -232,10 +255,15 @@ const NewQuotation = () => {
             </div>
           </div>
 
-          <div className="form-section">
-            <h2 className="section-title">Pricing Settings</h2>
+          <div className="form-card">
+            <div className="section-header">
+              <div className="section-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+              </div>
+              <h2 className="section-title">Pricing Settings</h2>
+            </div>
             
-            <div className="form-row">
+            <div className="form-grid">
               <div className="form-group">
                 <label htmlFor="currency" className="form-label">
                   Currency
@@ -263,8 +291,8 @@ const NewQuotation = () => {
                   <input
                     id="defaultMargin"
                     type="number"
-                    value={formData.defaultMargin}
-                    onChange={(e) => handleChange('defaultMargin', Number(e.target.value))}
+                    value={formData.defaultMargin === '' ? '' : formData.defaultMargin}
+                    onChange={handleMarginChange}
                     className={`form-input ${errors.defaultMargin ? 'error' : ''}`}
                     min="0"
                     max="100"
@@ -280,8 +308,13 @@ const NewQuotation = () => {
             </div>
           </div>
 
-          <div className="form-section">
-            <h2 className="section-title">Additional Information</h2>
+          <div className="form-card">
+            <div className="section-header">
+              <div className="section-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              </div>
+              <h2 className="section-title">Additional Information</h2>
+            </div>
             
             <div className="form-group full-width">
               <label htmlFor="notes" className="form-label">

@@ -1,0 +1,298 @@
+service: quotation-management-service
+
+frameworkVersion: '3'
+
+# Load variables from local .env / .env.* files so ${env:...} works in all commands
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: python3.11
+  architecture: x86_64
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  profile: ${opt:profile, 'hb-client'}  # Use AWS profile for offline/local development
+  memorySize: 512
+  timeout: 30
+  
+  httpApi:
+    cors:
+      allowedOrigins:
+        - "http://localhost:3000"
+        - "http://localhost:3001"
+        - "https://catalog-searcher-omers-projects-e3a112ba.vercel.app"
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - X-Requested-With
+        - X-Amz-Date
+        - X-Api-Key
+        - X-Amz-Security-Token
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      allowCredentials: true  # Required for Cognito tokens
+      maxAge: 3600
+      exposedResponseHeaders:
+        - Content-Type
+        - X-Amz-Date
+        - X-Amz-Request-Id
+    # JWT Authorizer (built-in, simpler than Lambda authorizer)
+    # Note: Authorizer requires COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID from .env
+    authorizers:
+      cognitoAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID, ''}
+        audience:
+          - ${env:COGNITO_APP_CLIENT_ID, ''}
+  
+  environment:
+    # Ensure local/offline Python can locate service packages (including shared modules at root)
+    PYTHONPATH: ${env:PYTHONPATH, '../:./'}
+    
+    # AWS Configuration (for offline/local development)
+    AWS_PROFILE: ${opt:profile, 'hb-client'}
+    AWS_REGION: ${opt:region, 'us-east-1'}
+    
+    # DynamoDB Configuration
+    QUOTATIONS_TABLE: ${self:custom.quotationsTable}
+    PRODUCT_TABLE: ${self:custom.productsTable}
+    PRICE_LIST_PRODUCTS_TABLE: ${self:custom.priceListProductsTable}
+    
+    # S3 Configuration (for reading sketch drawings only)
+    FILES_BUCKET: ${self:custom.filesBucket}
+    
+    # Auth - Support both API key (legacy) and Cognito (new)
+    # Note: These should be defined in .env file at root directory
+    QUOTATION_API_KEY: ${env:QUOTATION_API_KEY, ''}
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, ''}
+    COGNITO_APP_CLIENT_ID: ${env:COGNITO_APP_CLIENT_ID, ''}
+    COGNITO_REGION: ${env:COGNITO_REGION, 'us-east-1'}
+    
+    # VAT Configuration
+    VAT_RATE: ${env:VAT_RATE, '0.18'}
+    
+    # Logging
+    LOG_LEVEL: INFO
+  
+  iam:
+    role:
+      statements:
+        # DynamoDB permissions
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+            - dynamodb:Scan
+          Resource:
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.quotationsTable}
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.quotationsTable}/index/*
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.productsTable}
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.priceListProductsTable}
+        
+        # S3 permissions for sketch drawings (read-only from hb-files-raw)
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:ListBucket
+          Resource:
+            - arn:aws:s3:::${self:custom.filesBucket}
+            - arn:aws:s3:::${self:custom.filesBucket}/*
+        
+        # CloudWatch Logs
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: '*'
+        
+        # Secrets Manager access for API keys
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+            - secretsmanager:DescribeSecret
+          Resource:
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:quotation-api-key-*
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:file-ingestion-api-key-*
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:product-search-api-key-*
+
+custom:
+  quotationsTable: quotations
+  productsTable: hb-products
+  priceListProductsTable: hb-pricelist-products
+  filesBucket: hb-files-raw
+  serverless-offline:
+    httpPort: 3004
+    lambdaPort: 3003
+    useChildProcesses: true
+    noPrependStageInUrl: true
+  pythonRequirements:
+    # Build deps into a Lambda layer (Linux wheels) and keep function zips small
+    layer: true
+    requirementsFile: layer/requirements.txt
+    dockerizePip: false
+    pipCmdExtraArgs:
+      - "--platform"
+      - "manylinux2014_x86_64"
+      - "--only-binary"
+      - ":all:"
+      - "--implementation"
+      - "cp"
+      - "--python-version"
+      - "3.11"
+      - "--abi"
+      - "cp311"
+    slim: false
+    strip: false
+    zip: true
+    invalidateCaches: true
+    useDownloadCache: false
+    useStaticCache: false
+    # Use the explicit pyenv path so packaging always runs with Python 3.11
+    pythonBin: "/Users/omerlewinsky/.pyenv/versions/3.11.9/bin/python3.11"
+    noDeploy:
+      - boto3
+      - botocore
+      - docutils
+      - jmespath
+      - pip
+      - python-dateutil
+      - s3transfer
+      - setuptools
+      - six
+      - urllib3
+
+functions:
+  quotationApi:
+    handler: api/handler.handler
+    description: Quotation Management API
+    memorySize: 512
+    timeout: 30
+    layers:
+      - { Ref: PythonRequirementsLambdaLayer }
+    events:
+      # Quotation Management
+      - httpApi:
+          path: /quotations
+          method: post
+      - httpApi:
+          path: /quotations
+          method: get
+      - httpApi:
+          path: /quotations/{quotationId}
+          method: get
+      - httpApi:
+          path: /quotations/{quotationId}
+          method: put
+      - httpApi:
+          path: /quotations/{quotationId}/status
+          method: patch
+      - httpApi:
+          path: /quotations/{quotationId}
+          method: delete
+      # Line Items
+      - httpApi:
+          path: /quotations/{quotationId}/lines
+          method: post
+      - httpApi:
+          path: /quotations/{quotationId}/lines/{lineId}
+          method: put
+      - httpApi:
+          path: /quotations/{quotationId}/lines/{lineId}
+          method: delete
+      - httpApi:
+          path: /quotations/{quotationId}/lines/batch
+          method: post
+      - httpApi:
+          path: /quotations/{quotationId}/lines/apply-margin
+          method: patch
+      - httpApi:
+          path: /quotations/{quotationId}/lines/refresh-prices
+          method: post
+      # Exports
+      - httpApi:
+          path: /quotations/{quotationId}/exports/stock-check
+          method: post
+      - httpApi:
+          path: /quotations/{quotationId}/exports/priority-import
+          method: post
+      - httpApi:
+          path: /quotations/{quotationId}/exports/{exportType}/download
+          method: get
+      # Email Draft
+      - httpApi:
+          path: /quotations/{quotationId}/email-draft
+          method: post
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline
+
+package:
+  individually: false
+  patterns:
+    - '!node_modules/**'
+    - '!.venv/**'
+    - '!__pycache__/**'
+    - '!*.pyc'
+    - '!.pytest_cache/**'
+    - '!tests/**'
+    - '!.serverless/**'
+    - '!.git/**'
+    - '!.env'
+    - '!.env.*'
+    - '!*.md'
+    - '!scripts/**'
+    - '!documentation/**'
+    - 'api/**'
+    - 'schemas/**'
+    - 'services/**'
+    - '../shared/**'
+
+resources:
+  Resources:
+    QuotationsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.quotationsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: quotation_id
+            AttributeType: S
+          - AttributeName: status
+            AttributeType: S
+          - AttributeName: created_at
+            AttributeType: S
+        KeySchema:
+          - AttributeName: quotation_id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: StatusIndex
+            KeySchema:
+              - AttributeName: status
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: CreatedAtIndex
+            KeySchema:
+              - AttributeName: created_at
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+    
+  Outputs:
+    QuotationApiUrl:
+      Description: Quotation Management API URL
+      Value:
+        Fn::Sub: https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+      Export:
+        Name: ${self:service}-${self:provider.stage}-api-url
+

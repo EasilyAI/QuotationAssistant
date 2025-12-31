@@ -133,13 +133,13 @@ def handle_batch_search(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Validation error: {str(e)}")
         return create_response(400, {
             'error': 'Invalid parameter',
-            'message': str(e)
+            'message': 'Failed to process batch search'
         })
     except Exception as e:
         logger.error(f"Batch search error: {str(e)}", exc_info=True)
         return create_response(500, {
             'error': 'Internal server error',
-            'message': str(e)
+            'message': 'Failed to process batch search'
         })
 
 

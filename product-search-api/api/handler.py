@@ -38,6 +38,16 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
         return create_response(200, '')
     
+    # Verify API key
+    try:
+        from shared.api_key_auth import verify_api_key, create_unauthorized_response
+        is_valid, error_msg = verify_api_key(event, 'product-search', require_ip_whitelist=False)
+        if not is_valid:
+            return create_unauthorized_response(error_msg or "Invalid or missing API key")
+    except ImportError:
+        logger.warning("Shared auth module not available, skipping API key verification")
+        # In development, allow without auth if module not available
+    
     # Route based on path
     path = event.get('rawPath', '').lower()
     method = event.get('requestContext', {}).get('http', {}).get('method', '').upper()

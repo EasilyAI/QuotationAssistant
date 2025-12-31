@@ -77,7 +77,7 @@ def handle_get_product(event: Dict[str, Any]) -> Dict[str, Any]:
             500,
             {
                 "error": "Internal server error",
-                "message": str(e),
+                "message": "Failed to retrieve product",
             },
         )
 

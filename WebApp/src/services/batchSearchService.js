@@ -1,4 +1,5 @@
 import { buildSearchApiUrl } from '../config/apiConfig';
+import { authenticatedFetch } from '../utils/apiClient';
 
 /**
  * Execute a batch product search against the search API.
@@ -42,11 +43,10 @@ export const batchSearchProducts = async ({
 
   const url = buildSearchApiUrl('/batch-search');
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+  const response = await authenticatedFetch(
+    url,
+    {
+      method: 'POST',
     body: JSON.stringify({
       items: items.map((item) => ({
         orderingNumber: item.orderingNumber || null,
@@ -59,7 +59,9 @@ export const batchSearchProducts = async ({
       use_ai: useAI,
       result_size: resultSize,
     }),
-  });
+    },
+    'search'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({

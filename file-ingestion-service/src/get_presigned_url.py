@@ -32,6 +32,13 @@ def get_presigned_url(event, context):
             "headers": get_cors_headers(),
         }
     
+    # Verify API key authentication
+    from utils.auth import verify_request_auth
+    is_authorized, error_response = verify_request_auth(event)
+    if not is_authorized:
+        print(f"[get_presigned_url] Authentication failed")
+        return error_response
+    
     # API Gateway HTTP API sends body as a JSON string
     body = json.loads(event.get("body") or "{}")
     print(f"[get_presigned_url] Parsed request body: {json.dumps(body, default=str)}")
@@ -51,6 +58,41 @@ def get_presigned_url(event, context):
             "body": json.dumps({"error": "fileName is required"}),
             "headers": get_cors_headers(),
         }
+    
+    # Validate and sanitize filename to prevent path traversal
+    try:
+        from shared.input_validation import sanitize_filename, validate_file_type
+        is_valid, sanitized_filename, error_msg = sanitize_filename(uploaded_file_name)
+        if not is_valid:
+            print(f"[get_presigned_url] ERROR: Invalid filename: {error_msg}")
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": error_msg or "Invalid filename"}),
+                "headers": get_cors_headers(),
+            }
+        uploaded_file_name = sanitized_filename
+        
+        # Validate file extension
+        if "." in uploaded_file_name:
+            ext = uploaded_file_name.rsplit(".", 1)[-1].lower()
+            is_valid_ext, ext_error = validate_file_type(ext)
+            if not is_valid_ext:
+                print(f"[get_presigned_url] ERROR: Invalid file type: {ext_error}")
+                return {
+                    "statusCode": 400,
+                    "body": json.dumps({"error": ext_error or "Invalid file type"}),
+                    "headers": get_cors_headers(),
+                }
+    except ImportError:
+        # Fallback if shared module not available
+        logger.warning("Shared input validation not available, using basic validation")
+        # Basic path traversal check
+        if '..' in uploaded_file_name or '/' in uploaded_file_name or '\\' in uploaded_file_name:
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "Invalid filename"}),
+                "headers": get_cors_headers(),
+            }
 
     # Generate fileId and S3 key
     file_id = str(uuid.uuid4())

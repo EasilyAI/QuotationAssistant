@@ -1,18 +1,15 @@
 import { API_CONFIG, buildFileApiUrl } from '../config/apiConfig';
 import { BusinessFileType } from '../types/index';
+import { authenticatedFetch } from '../utils/apiClient';
 
 /** Service for retrieving file information and checking file existence */
 
-
-
 export const getFiles = async () => {
-  const response = await fetch(buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.FILES), {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      // 'Authorization': `Bearer ${getAuthToken()}`,
-    },
-  });
+  const response = await authenticatedFetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.FILES),
+    { method: 'GET' },
+    'file'
+  );
   return response.json();
 };
 
@@ -26,15 +23,11 @@ export const getFileInfo = async (fileId) => {
   // Add cache-busting query parameter to ensure fresh data (doesn't trigger CORS preflight)
   const timestamp = Date.now();
   const url = buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}?_t=${timestamp}`);
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      // TODO: Add authentication header if needed
-      // 'Authorization': `Bearer ${getAuthToken()}`,
-    },
-    cache: 'no-store', // Prevent browser caching (fetch option, not a header)
-  });
+  const response = await authenticatedFetch(
+    url,
+    { method: 'GET', cache: 'no-store' },
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to get file information' }));
@@ -50,13 +43,14 @@ export const getFileInfo = async (fileId) => {
  * @returns {Promise<{url: string}>}
  */
 export const getFileDownloadUrl = async (key) => {
-  const response = await fetch(buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.DOWNLOAD_URL), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  const response = await authenticatedFetch(
+    buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.DOWNLOAD_URL),
+    {
+      method: 'POST',
+      body: JSON.stringify({ key })
     },
-    body: JSON.stringify({ key }),
-  });
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to get file download URL' }));
@@ -97,14 +91,11 @@ export const getCatalogProducts = async (fileId) => {
  * @returns {Promise<Object>} Products data from the file
  */
 export const getPriceListProducts = async (fileId) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/price-list-products`),
-    {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
+    { method: 'GET' },
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to get price list products' }));
@@ -133,15 +124,14 @@ export const getFileProducts = async (fileId, businessFileType = 'Catalog') => {
  * @param {Array<object>} products
  */
 export const updateCatalogProducts = async (fileId, products) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/catalog-products`),
     {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
+      method: 'PUT',
+      body: JSON.stringify({ products })
     },
-    body: JSON.stringify({ products }),
-  });
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update catalog products' }));
@@ -157,15 +147,14 @@ export const updateCatalogProducts = async (fileId, products) => {
  * @param {Array<object>} products
  */
 export const updatePriceListProducts = async (fileId, products) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/price-list-products`),
     {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
+      method: 'PUT',
+      body: JSON.stringify({ products })
     },
-    body: JSON.stringify({ products }),
-  });
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update price list products' }));
@@ -197,14 +186,11 @@ export const updateFileProducts = async (fileId, products) => {
  * @param {string} fileId
  */
 export const completeFileReview = async (fileId) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}/complete`),
-    {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
+    { method: 'PUT' },
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update file status' }));
@@ -348,17 +334,14 @@ export const checkFileExistsInS3 = async (formData, fileType) => {
 
     console.log('[checkFileExistsInS3] Request payload for backend check_file_exists:', requestBody);
 
-    const response = await fetch(
+    const response = await authenticatedFetch(
       buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.CHECK_EXISTS),
       {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // TODO: Add authentication header if needed
-        // 'Authorization': `Bearer ${getAuthToken()}`,
+        method: 'POST',
+        body: JSON.stringify(requestBody)
       },
-      body: JSON.stringify(requestBody),
-    });
+      'file'
+    );
 
     const result = await response.json().catch(() => ({}));
 
@@ -460,16 +443,11 @@ export const validateFileDoesNotExist = async (formData, fileType) => {
  * @returns {Promise<Object>} Deletion result
  */
 export const deleteFile = async (fileId) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(`${API_CONFIG.FILE_ENDPOINTS.FILES}/${fileId}`),
-    {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      // TODO: Add authentication header if needed
-      // 'Authorization': `Bearer ${getAuthToken()}`,
-    },
-  });
+    { method: 'DELETE' },
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete file' }));

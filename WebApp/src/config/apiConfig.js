@@ -22,6 +22,12 @@ export const API_CONFIG = {
     // process.env.REACT_APP_SEARCH_API_BASE_URL ||
     'http://localhost:3000',
 
+  // Base URL for the quotation management service
+  // Set via REACT_APP_QUOTATION_API_BASE_URL environment variable
+  QUOTATION_API_BASE_URL:
+    // process.env.REACT_APP_QUOTATION_API_BASE_URL ||
+    'http://localhost:3004',
+
   // Extract Catalog Info service endpoints (see extractCatalogInfo/serverless.yml)
   FILE_ENDPOINTS: {
     FILES: '/api/files',
@@ -44,6 +50,15 @@ export const API_CONFIG = {
     PRODUCT: '/product', // append /{orderingNumber} in callers
   },
 
+  // Quotation management service endpoints
+  QUOTATION_ENDPOINTS: {
+    QUOTATIONS: '/quotations',
+    QUOTATION: '/quotations', // append /{quotationId} in callers
+    LINES: '/quotations', // append /{quotationId}/lines in callers
+    EXPORTS: '/quotations', // append /{quotationId}/exports/{type} in callers
+    EMAIL_DRAFT: '/quotations', // append /{quotationId}/email-draft in callers
+  },
+
   // S3 Bucket Configuration (public values, configurable per environment)
   S3_BUCKET: process.env.REACT_APP_S3_BUCKET || 'hb-files-raw',
   S3_REGION: process.env.REACT_APP_S3_REGION || 'us-east-1',
@@ -52,10 +67,15 @@ export const API_CONFIG = {
 export const getFileApiBaseUrl = () => normalizeBaseUrl(API_CONFIG.FILE_API_BASE_URL);
 export const getSearchApiBaseUrl = () =>
   normalizeBaseUrl(API_CONFIG.SEARCH_API_BASE_URL || API_CONFIG.FILE_API_BASE_URL);
+export const getQuotationApiBaseUrl = () =>
+  normalizeBaseUrl(API_CONFIG.QUOTATION_API_BASE_URL);
 
 export const buildFileApiUrl = (endpoint = '') =>
   `${getFileApiBaseUrl()}${normalizeEndpoint(endpoint)}`;
 
 export const buildSearchApiUrl = (endpoint = '') =>
   `${getSearchApiBaseUrl()}${normalizeEndpoint(endpoint)}`;
+
+export const buildQuotationApiUrl = (endpoint = '') =>
+  `${getQuotationApiBaseUrl()}${normalizeEndpoint(endpoint)}`;
 
