@@ -19,6 +19,338 @@ import {
 } from '../../services/quotationService';
 import './EditQuotation.css';
 
+// Inline Editable Number Component with Fixed Size
+const InlineEditableNumber = ({ value, onChange, placeholder, min, max, step = 1, suffix = '', className = '' }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempValue, setTempValue] = useState(value);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    setTempValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleSave = () => {
+    onChange(tempValue);
+    setIsEditing(false);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleSave();
+    } else if (e.key === 'Escape') {
+      setTempValue(value);
+      setIsEditing(false);
+    }
+  };
+
+  const handleIncrement = () => {
+    const newValue = (value || 0) + step;
+    if (max === undefined || newValue <= max) {
+      onChange(newValue);
+    }
+  };
+
+  const handleDecrement = () => {
+    const newValue = (value || 0) - step;
+    if (min === undefined || newValue >= min) {
+      onChange(newValue);
+    }
+  };
+
+  return (
+    <div className={`inline-number-with-stepper ${className}`}>
+      <div 
+        className={`number-value ${isEditing ? 'editing' : ''}`}
+        onClick={() => !isEditing && setIsEditing(true)}
+        title={!isEditing ? "Click to edit" : ""}
+      >
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            type="number"
+            value={tempValue || ''}
+            onChange={(e) => setTempValue(Number(e.target.value))}
+            onBlur={handleSave}
+            onKeyDown={handleKeyDown}
+            min={min}
+            max={max}
+            step={step}
+            className="number-input-inline"
+          />
+        ) : (
+          <span className="number-display">{value || value === 0 ? `${value}${suffix}` : placeholder}</span>
+        )}
+      </div>
+      <div className="stepper-buttons-vertical">
+        <button 
+          className="stepper-btn-up" 
+          onClick={handleIncrement}
+          disabled={max !== undefined && value >= max}
+          title="Increase"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+            <path d="M18 15L12 9L6 15" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        <button 
+          className="stepper-btn-down" 
+          onClick={handleDecrement}
+          disabled={min !== undefined && value <= min}
+          title="Decrease"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+            <path d="M6 9L12 15L18 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Inline Editable Price Component with better formatting
+const InlineEditablePrice = ({ value, onChange, currency = 'USD', placeholder = 'Set price' }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempValue, setTempValue] = useState(value);
+  const inputRef = useRef(null);
+
+  // Currency symbol mapping
+  const getCurrencySymbol = (curr) => {
+    const symbols = {
+      'USD': '$',
+      'EUR': '€',
+      'GBP': '£',
+      'ILS': '₪',
+      'JPY': '¥'
+    };
+    return symbols[curr] || curr;
+  };
+
+  // Format price with proper decimals (only show if not .00)
+  const formatPrice = (val) => {
+    if (val == null || val === '') return null;
+    const num = Number(val);
+    // If it's a whole number, show no decimals, otherwise show up to 2
+    if (Number.isInteger(num)) {
+      return num.toString();
+    }
+    return num.toFixed(2).replace(/\.?0+$/, '');
+  };
+
+  useEffect(() => {
+    setTempValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleSave = () => {
+    onChange(tempValue);
+    setIsEditing(false);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleSave();
+    } else if (e.key === 'Escape') {
+      setTempValue(value);
+      setIsEditing(false);
+    }
+  };
+
+  const hasValue = value != null && value !== '';
+  const isEmpty = !hasValue;
+  const symbol = getCurrencySymbol(currency);
+  const formattedPrice = formatPrice(value);
+
+  if (isEditing) {
+    return (
+      <div className="inline-price-editing">
+        <span className="price-currency">{symbol}</span>
+        <input
+          ref={inputRef}
+          type="number"
+          value={tempValue || ''}
+          onChange={(e) => setTempValue(Number(e.target.value))}
+          onBlur={handleSave}
+          onKeyDown={handleKeyDown}
+          step="0.01"
+          className="inline-price-input"
+          placeholder="0.00"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className={`inline-price-display ${isEmpty ? 'empty' : ''}`}
+      onClick={() => setIsEditing(true)}
+      title={isEmpty ? 'Click to set price' : 'Click to edit price'}
+    >
+      {hasValue ? (
+        <>
+          <span className="currency-symbol">{symbol}</span>
+          <span className="price-value">{formattedPrice}</span>
+        </>
+      ) : placeholder}
+    </div>
+  );
+};
+
+// Actions Menu Component
+const ActionsMenu = ({ 
+  onEditMetadata, 
+  onPullPrices, 
+  onApplyMargin, 
+  onReturnToBatchSearch,
+  onExportManufacturer,
+  onExportERP,
+  onExportCustomerEmail,
+  globalMargin,
+  setGlobalMargin,
+  quotationId,
+  incompleteCount
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const handleAction = (action) => {
+    action();
+    setIsOpen(false);
+  };
+
+  return (
+    <div className="actions-menu-container" ref={menuRef}>
+      <button 
+        onClick={() => setIsOpen(!isOpen)} 
+        className="btn-actions-menu"
+        title="More actions"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="1" fill="currentColor"/>
+          <circle cx="12" cy="5" r="1" fill="currentColor"/>
+          <circle cx="12" cy="19" r="1" fill="currentColor"/>
+        </svg>
+      </button>
+      
+      {isOpen && (
+        <div className="actions-menu-dropdown">
+          <button onClick={() => handleAction(onEditMetadata)} className="menu-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M11 4H4C3.46957 4 2.96086 4.21071 2.58579 4.58579C2.21071 4.96086 2 5.46957 2 6V20C2 20.5304 2.21071 21.0391 2.58579 21.4142C2.96086 21.7893 3.46957 22 4 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M18.5 2.50001C18.8978 2.10219 19.4374 1.87869 20 1.87869C20.5626 1.87869 21.1022 2.10219 21.5 2.50001C21.8978 2.89784 22.1213 3.4374 22.1213 4.00001C22.1213 4.56262 21.8978 5.10219 21.5 5.50001L12 15L8 16L9 12L18.5 2.50001Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Edit Quotation Info
+          </button>
+          
+          <button 
+            onClick={() => handleAction(onPullPrices)} 
+            className="menu-item"
+            disabled={!quotationId}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M21 12C21 16.9706 16.9706 21 12 21M21 12C21 7.02944 16.9706 3 12 3M21 12H3M12 21C7.02944 21 3 16.9706 3 12M12 21C13.6569 21 15 16.9706 15 12C15 7.02944 13.6569 3 12 3M12 21C10.3431 21 9 16.9706 9 12C9 7.02944 10.3431 3 12 3M3 12C3 7.02944 7.02944 3 12 3" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+            Pull Prices from Catalog
+          </button>
+
+          <div className="menu-divider"></div>
+          
+          <div className="menu-item-with-input">
+            <label>Apply Margin to All:</label>
+            <div className="margin-input-group">
+              <input 
+                type="number" 
+                value={globalMargin} 
+                onChange={(e) => setGlobalMargin(Number(e.target.value))}
+                className="margin-input-inline"
+                placeholder="20"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <span>%</span>
+              <button onClick={() => handleAction(onApplyMargin)} className="btn-apply-inline">
+                Apply
+              </button>
+            </div>
+          </div>
+
+          {onReturnToBatchSearch && (
+            <>
+              <div className="menu-divider"></div>
+              <button onClick={() => handleAction(onReturnToBatchSearch)} className="menu-item warning">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Return to Batch Search ({incompleteCount})
+              </button>
+            </>
+          )}
+
+          <div className="menu-divider"></div>
+          <div className="menu-label">Export</div>
+          
+          <button 
+            onClick={() => handleAction(onExportManufacturer)} 
+            className="menu-item"
+            disabled={!quotationId}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Manufacturer Order List
+          </button>
+          
+          <button 
+            onClick={() => handleAction(onExportERP)} 
+            className="menu-item"
+            disabled={!quotationId}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            ERP Input File
+          </button>
+          
+          <button 
+            onClick={() => handleAction(onExportCustomerEmail)} 
+            className="menu-item"
+            disabled={!quotationId}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Customer Email Template
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const EditQuotation = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -405,14 +737,34 @@ const EditQuotation = () => {
     setHasUnsavedChanges(true);
   };
 
+  const [searchingIndex, setSearchingIndex] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
   const handleSearchProduct = (index) => {
-    // Navigate to single search with callback
+    setSearchingIndex(index);
+    setSearchQuery('');
+  };
+
+  const handleSearchSubmit = (index) => {
+    if (!searchQuery.trim()) return;
+    
+    // Navigate to search with pre-filled query
     navigate('/search', { 
       state: { 
         returnTo: `/quotations/edit/${id}`,
-        quotationIndex: index 
+        quotationIndex: index,
+        initialQuery: searchQuery.trim()
       } 
     });
+  };
+
+  const handleSearchKeyDown = (e, index) => {
+    if (e.key === 'Enter') {
+      handleSearchSubmit(index);
+    } else if (e.key === 'Escape') {
+      setSearchingIndex(null);
+      setSearchQuery('');
+    }
   };
 
   const handleExportManufacturer = async () => {
@@ -658,175 +1010,125 @@ const EditQuotation = () => {
 
   return (
     <div className="edit-quotation-page">
-      {/* Breadcrumbs */}
-      <div className="breadcrumbs" style={{padding: '16px 24px 0'}}>
-        <button onClick={() => navigate('/dashboard')} className="breadcrumb-link">Home</button>
-        <span className="breadcrumb-separator">›</span>
-        <button onClick={() => navigate('/quotations')} className="breadcrumb-link">Quotations</button>
-        <span className="breadcrumb-separator">›</span>
-        <span className="breadcrumb-current">
-          {isNewQuotation ? 'New Quotation' : `Edit ${quotation.quotationNumber}`}
-        </span>
-        {sourceInfo && (
+      {/* Compact Header */}
+      <div className="quotation-header-compact">
+        <div className="header-left-section">
+          <button onClick={handleBack} className="back-button-icon" title="Back to quotations">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <div className="title-section">
+            <h1 className="quotation-name">{quotation.quotationName || quotation.name}</h1>
+            <div className="quotation-meta-compact">
+              <span className="meta-item customer-name">
+                {quotation.customer?.name || quotation.customer || 'No customer'}
+              </span>
+              {sourceInfo && (
+                <>
+                  <span className="meta-separator">•</span>
+                  <span className="meta-item source-info">from {sourceInfo.replace('-', ' ')}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="header-right-section">
+          <select 
+            value={quotation.status} 
+            onChange={(e) => handleStatusChange(e.target.value)}
+            className="status-dropdown-compact"
+            title="Change quotation status"
+          >
+          {Object.values(QuotationStatus).map(status => (
+            <option key={status} value={status}>{status}</option>
+          ))}
+          </select>
+          {hasUnsavedChanges && <span className="unsaved-dot" title="Unsaved changes">•</span>}
+          <button onClick={handleSave} className="btn-save-compact" title="Save quotation">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H16L21 8V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M17 21V13H7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M7 3V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Save
+          </button>
+          <ActionsMenu 
+            onEditMetadata={handleEditMetadata}
+            onPullPrices={handlePullPrices}
+            onApplyMargin={handleApplyGlobalMargin}
+            onReturnToBatchSearch={batchSearchAvailable && incompleteCount > 0 ? handleReturnToBatchSearch : null}
+            onExportManufacturer={handleExportManufacturer}
+            onExportERP={handleExportERP}
+            onExportCustomerEmail={handleExportCustomerEmail}
+            globalMargin={globalMargin}
+            setGlobalMargin={setGlobalMargin}
+            quotationId={quotation?.id}
+            incompleteCount={incompleteCount}
+          />
+        </div>
+      </div>
+
+      {/* Compact Metrics Bar */}
+      <div className="quotation-metrics-bar-compact">
+        <button 
+          className={`metric-inline ${filterType === 'all' ? 'active' : ''}`}
+          onClick={() => setFilterType('all')}
+        >
+          <span className="metric-icon-inline">📋</span>
+          <span className="metric-text">{quotation.items?.length || 0} items</span>
+        </button>
+        
+        {noPriceCount > 0 && (
           <>
-            <span className="breadcrumb-separator">•</span>
-            <span className="breadcrumb-source">From {sourceInfo.replace('-', ' ')}</span>
+            <span className="metric-separator">|</span>
+            <button 
+              className={`metric-inline warning ${filterType === 'no-price' ? 'active' : ''}`}
+              onClick={() => setFilterType(filterType === 'no-price' ? 'all' : 'no-price')}
+            >
+              <span className="metric-icon-inline">⚠️</span>
+              <span className="metric-text">{noPriceCount} no price</span>
+            </button>
           </>
         )}
-      </div>
-
-      <div className="quotation-header">
-        <div className="quotation-title-section">
-          <div className="header-left">
-            <button onClick={handleBack} className="back-button">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-            <div className="title-info">
-              <h1 className="quotation-title">{quotation.quotationName}</h1>
-              <div className="header-meta">
-                <span className="quotation-number">{quotation.quotationNumber}</span>
-                <span className="separator">•</span>
-                <span className="quotation-customer">{quotation.customer}</span>
-                <span className="separator">•</span>
-                <span className="item-count">{quotation.items.length} items</span>
-                <span className="separator">•</span>
-                <span className="total-value">{quotation.currency} {financials.total.toFixed(2)}</span>
-                {incompleteCount > 0 && (
-                  <>
-                    <span className="separator">•</span>
-                    <span className="incomplete-badge">{incompleteCount} incomplete</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="header-right">
-            <button onClick={handleEditMetadata} className="btn-edit-metadata">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M11 4H4C3.46957 4 2.96086 4.21071 2.58579 4.58579C2.21071 4.96086 2 5.46957 2 6V20C2 20.5304 2.21071 21.0391 2.58579 21.4142C2.96086 21.7893 3.46957 22 4 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M18.5 2.50001C18.8978 2.10219 19.4374 1.87869 20 1.87869C20.5626 1.87869 21.1022 2.10219 21.5 2.50001C21.8978 2.89784 22.1213 3.4374 22.1213 4.00001C22.1213 4.56262 21.8978 5.10219 21.5 5.50001L12 15L8 16L9 12L18.5 2.50001Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Edit Info
-            </button>
-            <select 
-              value={quotation.status} 
-              onChange={(e) => handleStatusChange(e.target.value)}
-              className={`status-select`}
+        
+        {noDrawingCount > 0 && (
+          <>
+            <span className="metric-separator">|</span>
+            <button 
+              className={`metric-inline info ${filterType === 'no-drawing' ? 'active' : ''}`}
+              onClick={() => setFilterType(filterType === 'no-drawing' ? 'all' : 'no-drawing')}
             >
-            {Object.values(QuotationStatus).map(status => (
-              <option key={status} value={status}>{status}</option>
-            ))}
-            </select>
-            {hasUnsavedChanges && <span className="unsaved-indicator">Unsaved changes</span>}
-            <button onClick={handleSave} className="btn-save">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H16L21 8V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M17 21V13H7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M7 3V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Save
+              <span className="metric-icon-inline">📄</span>
+              <span className="metric-text">{noDrawingCount} no drawing</span>
             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Metrics Section */}
-      <div className="quotation-metrics-bar">
-        <div className="metrics-group">
-          <div 
-            className={`metric-card ${filterType === 'all' ? 'active' : ''}`}
-            onClick={() => setFilterType('all')}
-          >
-            <div className="metric-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
-            </div>
-            <div className="metric-info">
-              <span className="metric-value">{quotation.items?.length || 0}</span>
-              <span className="metric-label">Total Items</span>
-            </div>
-          </div>
-          <div 
-            className={`metric-card warning ${filterType === 'no-price' ? 'active' : ''} ${noPriceCount > 0 ? 'has-issues' : ''}`}
-            onClick={() => setFilterType(filterType === 'no-price' ? 'all' : 'no-price')}
-          >
-            <div className="metric-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-            </div>
-            <div className="metric-info">
-              <span className="metric-value">{noPriceCount}</span>
-              <span className="metric-label">No Price</span>
-            </div>
-          </div>
-          <div 
-            className={`metric-card info ${filterType === 'no-drawing' ? 'active' : ''} ${noDrawingCount > 0 ? 'has-issues' : ''}`}
-            onClick={() => setFilterType(filterType === 'no-drawing' ? 'all' : 'no-drawing')}
-          >
-            <div className="metric-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg>
-            </div>
-            <div className="metric-info">
-              <span className="metric-value">{noDrawingCount}</span>
-              <span className="metric-label">No Drawings</span>
-            </div>
-          </div>
-          <div 
-            className={`metric-card danger ${filterType === 'incomplete' ? 'active' : ''} ${incompleteCount > 0 ? 'has-issues' : ''}`}
-            onClick={() => setFilterType(filterType === 'incomplete' ? 'all' : 'incomplete')}
-          >
-            <div className="metric-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-            </div>
-            <div className="metric-info">
-              <span className="metric-value">{incompleteCount}</span>
-              <span className="metric-label">Incomplete</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="quotation-controls-bar">
-        <div className="controls-left">
-          <div className="control-group">
-            <label>Margin:</label>
-            <input 
-              type="number" 
-              value={globalMargin} 
-              onChange={(e) => setGlobalMargin(Number(e.target.value))}
-              className="margin-input-small"
-              placeholder="20"
-            />
-            <span>%</span>
-            <button onClick={handleApplyGlobalMargin} className="btn-control">
-              Apply to All
+          </>
+        )}
+        
+        {incompleteCount > 0 && (
+          <>
+            <span className="metric-separator">|</span>
+            <button 
+              className={`metric-inline danger ${filterType === 'incomplete' ? 'active' : ''}`}
+              onClick={() => setFilterType(filterType === 'incomplete' ? 'all' : 'incomplete')}
+            >
+              <span className="metric-icon-inline">❌</span>
+              <span className="metric-text">{incompleteCount} incomplete</span>
             </button>
-          </div>
-          <button onClick={handlePullPrices} className="btn-control">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M21 12C21 16.9706 16.9706 21 12 21M21 12C21 7.02944 16.9706 3 12 3M21 12H3M12 21C7.02944 21 3 16.9706 3 12M12 21C13.6569 21 15 16.9706 15 12C15 7.02944 13.6569 3 12 3M12 21C10.3431 21 9 16.9706 9 12C9 7.02944 10.3431 3 12 3M3 12C3 7.02944 7.02944 3 12 3" stroke="currentColor" strokeWidth="2"/>
-            </svg>
-            Pull Prices
-          </button>
-          {batchSearchAvailable && incompleteCount > 0 && (
-            <button onClick={handleReturnToBatchSearch} className="btn-control btn-return-batch">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Return to Batch Search ({incompleteCount} incomplete)
-            </button>
-          )}
-        </div>
-        <div className="controls-right">
-          {filterType !== 'all' && (
+          </>
+        )}
+        
+        {filterType !== 'all' && (
+          <>
+            <span className="metric-separator">|</span>
             <button 
               onClick={() => setFilterType('all')}
-              className="btn-filter active"
+              className="btn-clear-filter"
             >
               Clear Filter
             </button>
-          )}
-        </div>
+          </>
+        )}
       </div>
 
       <div className="quotation-table-container">
@@ -838,11 +1140,11 @@ const EditQuotation = () => {
                 <th className="col-ordering">Ordering Number</th>
                 <th className="col-specs">Specifications</th>
                 <th className="col-qty">Qty</th>
-                <th className="col-price">Price</th>
+                <th className="col-price">Base Price</th>
                 <th className="col-margin">Margin</th>
-                <th className="col-final">Final Price</th>
-                <th className="col-files">Files</th>
-                <th className="col-actions"></th>
+                <th className="col-unit-price">Unit Price</th>
+                <th className="col-row-total">Row Total</th>
+                <th className="col-actions-group">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -863,22 +1165,66 @@ const EditQuotation = () => {
                   const originalIndex = quotation.items.findIndex(i => i.line_id === item.line_id || i.orderNo === item.orderNo);
                   const specItems = parseSpecs(item.specs || item.description || '');
                   const hasPriceIssue = item.price == null;
+                  const hasDrawingIssue = !item.sketchFile;
+                  const isIncomplete = item.isIncomplete || !item.orderingNumber;
+                  
+                  // Determine row class based on issues (use left border instead of background)
+                  let rowClass = '';
+                  const issues = [];
+                  if (hasPriceIssue) issues.push('no-price');
+                  if (hasDrawingIssue) issues.push('no-drawing');
+                  if (isIncomplete) issues.push('incomplete');
+                  
+                  if (issues.length > 0) {
+                    rowClass = `row-with-issues ${issues.join(' ')}`;
+                  }
                   
                   return (
-                <tr key={item.line_id || item.orderNo} className={`${item.isIncomplete ? 'incomplete-row' : ''} ${hasPriceIssue ? 'no-price-row' : ''}`}>
+                <tr key={item.line_id || item.orderNo} className={rowClass}>
                   <td className="col-num text-center">{item.orderNo}</td>
                   <td className="col-ordering">
-                    {item.isIncomplete || !item.orderingNumber ? (
-                      <button 
-                        onClick={() => handleSearchProduct(originalIndex)}
-                        className="search-product-btn"
-                      >
-                        Search Product
-                      </button>
+                    {isIncomplete ? (
+                      searchingIndex === originalIndex ? (
+                        <div className="search-input-inline-wrapper">
+                          <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onKeyDown={(e) => handleSearchKeyDown(e, originalIndex)}
+                            onBlur={() => {
+                              if (!searchQuery.trim()) {
+                                setSearchingIndex(null);
+                              }
+                            }}
+                            placeholder="Type to search..."
+                            className="search-input-inline"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => handleSearchSubmit(originalIndex)}
+                            className="search-submit-btn"
+                            disabled={!searchQuery.trim()}
+                            title="Search"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                              <path d="M21 21L15 15M17 10C17 13.866 13.866 17 10 17C6.13401 17 3 13.866 3 10C3 6.13401 6.13401 3 10 3C13.866 3 17 6.13401 17 10Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={() => handleSearchProduct(originalIndex)}
+                          className="search-product-btn"
+                          title="Click to search for a product"
+                        >
+                          Search Product
+                        </button>
+                      )
                     ) : (
                       <button
                         className="ordering-link"
                         onClick={() => navigate(`/product/${item.orderingNumber}`)}
+                        title="View product details"
                       >
                         {item.orderingNumber}
                       </button>
@@ -901,90 +1247,90 @@ const EditQuotation = () => {
                     )}
                   </td>
                   <td className="col-qty">
-                    <input 
-                      type="number" 
+                    <InlineEditableNumber
                       value={item.quantity}
-                      onChange={(e) => handleItemChange(originalIndex, 'quantity', Number(e.target.value))}
-                      className="table-input text-center"
-                      min="1"
+                      onChange={(val) => handleItemChange(originalIndex, 'quantity', val)}
+                      min={1}
+                      placeholder="1"
+                      className="qty-editable"
                     />
                   </td>
                   <td className="col-price">
-                    {hasPriceIssue ? (
-                      <div className="price-missing">
-                        <span className="price-missing-icon">⚠️</span>
-                        <input 
-                          type="number" 
-                          value=""
-                          onChange={(e) => handleItemChange(originalIndex, 'price', Number(e.target.value))}
-                          className="table-input price-input-missing"
-                          step="0.01"
-                          placeholder="Set price"
-                        />
-                      </div>
-                    ) : (
-                      <input 
-                        type="number" 
-                        value={item.price}
-                        onChange={(e) => handleItemChange(originalIndex, 'price', Number(e.target.value))}
-                        className="table-input text-right"
-                        step="0.01"
-                      />
-                    )}
+                    <InlineEditablePrice
+                      value={item.price}
+                      onChange={(val) => handleItemChange(originalIndex, 'price', val)}
+                      currency={quotation.currency}
+                      placeholder="Set price"
+                    />
                   </td>
                   <td className="col-margin">
-                    <div className="margin-input-wrapper">
-                      <input 
-                        type="number" 
-                        value={item.margin}
-                        onChange={(e) => handleItemChange(originalIndex, 'margin', Number(e.target.value))}
-                        className="table-input text-center"
-                        min="0"
-                        max="100"
-                      />
-                      <span className="margin-suffix">%</span>
-                    </div>
+                    <InlineEditableNumber
+                      value={item.margin}
+                      onChange={(val) => handleItemChange(originalIndex, 'margin', val)}
+                      min={0}
+                      max={100}
+                      suffix="%"
+                      placeholder="0%"
+                      className="margin-editable"
+                    />
                   </td>
-                  <td className="col-final final-price text-right">
+                  <td className="col-unit-price text-right">
                     {hasPriceIssue ? (
                       <span className="price-tbd">TBD</span>
                     ) : (
-                      <span>{quotation.currency} {calculateItemPrice(item).toFixed(2)}</span>
+                      <span className="unit-price-display">
+                        <span className="currency-symbol">{quotation.currency === 'USD' ? '$' : quotation.currency === 'EUR' ? '€' : quotation.currency === 'ILS' ? '₪' : quotation.currency}</span>
+                        {' '}
+                        <span className="price-value">{Number.isInteger(calculateItemPrice(item)) ? calculateItemPrice(item) : calculateItemPrice(item).toFixed(2).replace(/\.?0+$/, '')}</span>
+                      </span>
                     )}
                   </td>
-                  <td className="col-files">
-                    <div className="file-buttons">
+                  <td className="col-row-total text-right">
+                    {hasPriceIssue ? (
+                      <span className="price-tbd">TBD</span>
+                    ) : (
+                      <span className="row-total-display">
+                        <span className="currency-symbol">{quotation.currency === 'USD' ? '$' : quotation.currency === 'EUR' ? '€' : quotation.currency === 'ILS' ? '₪' : quotation.currency}</span>
+                        {' '}
+                        <span className="price-value">{Number.isInteger(calculateItemPrice(item) * item.quantity) ? (calculateItemPrice(item) * item.quantity) : (calculateItemPrice(item) * item.quantity).toFixed(2).replace(/\.?0+$/, '')}</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="col-actions-group">
+                    <div className="action-buttons-compact">
                       <button
-                        className={`file-btn-labeled ${item.sketchFile ? 'has-file' : 'no-file'}`}
+                        className={`icon-btn preview-btn ${item.sketchFile ? 'has-file' : 'no-file'}`}
                         onClick={() => item.orderingNumber && handleOpenPreview(item.orderingNumber, 'sketch')}
                         disabled={!item.orderingNumber || isPreviewLoading}
-                        title={item.sketchFile ? 'View Sales Drawing' : 'No drawing available'}
+                        title={item.sketchFile ? 'Click to view sales drawing' : 'No drawing available'}
                       >
-                        <span className="file-icon">📄</span>
-                        <span className="file-label">Drawing</span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
                       </button>
                       <button
-                        className={`file-btn-labeled ${item.orderingNumber ? 'has-file' : 'no-file'}`}
+                        className={`icon-btn preview-btn ${item.orderingNumber ? 'has-file' : 'no-file'}`}
                         onClick={() => item.orderingNumber && handleOpenPreview(item.orderingNumber, 'catalog')}
                         disabled={!item.orderingNumber || isPreviewLoading}
-                        title="View Catalog Source"
+                        title={item.orderingNumber ? 'Click to view catalog' : 'No catalog available'}
                       >
-                        <span className="file-icon">📖</span>
-                        <span className="file-label">Catalog</span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M6.5 2H20V22H6.5A2.5 2.5 0 0 1 4 19.5V4.5A2.5 2.5 0 0 1 6.5 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+                      <button 
+                        onClick={() => handleRemoveItem(originalIndex)}
+                        className="icon-btn delete-btn-compact"
+                        title="Delete this item"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="M3 6H5H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <path d="M8 6V4C8 3.44772 8.44772 3 9 3H15C15.5523 3 16 3.44772 16 4V6M19 6V20C19 20.5523 18.5523 21 18 21H6C5.44772 21 5 20.5523 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
                       </button>
                     </div>
-                  </td>
-                  <td className="col-actions text-center">
-                    <button 
-                      onClick={() => handleRemoveItem(originalIndex)}
-                      className="delete-btn"
-                      title="Remove item"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                        <path d="M3 6H5H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                        <path d="M8 6V4C8 3.44772 8.44772 3 9 3H15C15.5523 3 16 3.44772 16 4V6M19 6V20C19 20.5523 18.5523 21 18 21H6C5.44772 21 5 20.5523 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    </button>
                   </td>
                 </tr>
               );
@@ -1002,29 +1348,15 @@ const EditQuotation = () => {
         </div>
       </div>
 
-      <div className="quotation-footer">
-        <div className="financials-compact">
-          <span className="financial-item">Subtotal: <strong>${financials.subtotal.toFixed(2)}</strong></span>
-          <span className="separator">|</span>
-          <span className="financial-item">Margin: <strong>${financials.marginTotal.toFixed(2)}</strong></span>
-          <span className="separator">|</span>
-          <span className="financial-item grand">Total: <strong>${financials.total.toFixed(2)}</strong></span>
+      <div className="quotation-footer-slim">
+        <div className="footer-financials">
+          <span className="financial-mini">Subtotal: <strong>${Number.isInteger(financials.subtotal) ? financials.subtotal : financials.subtotal.toFixed(2).replace(/\.?0+$/, '')}</strong></span>
+          <span className="financial-mini">Margin: <strong>${Number.isInteger(financials.marginTotal) ? financials.marginTotal : financials.marginTotal.toFixed(2).replace(/\.?0+$/, '')}</strong></span>
+          <span className="financial-total">Total: <strong>${Number.isInteger(financials.total) ? financials.total : financials.total.toFixed(2).replace(/\.?0+$/, '')}</strong></span>
         </div>
 
-        <div className="action-buttons">
-          <div className="export-dropdown">
-            <button className="btn-export">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '8px'}}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-              Export ▼
-            </button>
-            <div className="export-menu">
-              <button onClick={handleExportManufacturer}>Manufacturer Order List</button>
-              <button onClick={handleExportERP}>ERP Input File</button>
-              <button onClick={handleExportCustomerEmail}>Customer Email Template</button>
-            </div>
-          </div>
-          <button onClick={handleFinalizeQuotation} className="btn-finalize">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '8px'}}><polyline points="20 6 9 17 4 12"></polyline></svg>
+        <div className="footer-actions">
+          <button onClick={handleFinalizeQuotation} className="btn-finalize-slim" title="Finalize and send quotation">
             Finalize Quotation
           </button>
         </div>
