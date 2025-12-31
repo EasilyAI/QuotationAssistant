@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { QuotationStatus } from '../../types/index';
+import { getQuotation, updateQuotation } from '../../services/quotationService';
 import './NewQuotation.css';
 
 const NewQuotation = () => {
@@ -14,9 +15,6 @@ const NewQuotation = () => {
   const sourceInfo = location.state?.source;
   const batchSearchAvailable = location.state?.batchSearchAvailable || false;
   const existingMetadata = location.state?.metadata;
-
-  // Note: For editing metadata, we'll load the quotation in EditQuotation page
-  // This page is just for creating new quotations or editing metadata
 
   // Initialize form data based on mode
   const getInitialFormData = () => {
@@ -38,8 +36,41 @@ const NewQuotation = () => {
   };
 
   const [formData, setFormData] = useState(getInitialFormData());
-
   const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(isEditMode && !existingMetadata);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  // Fetch quotation data when in edit mode and no existingMetadata is provided
+  useEffect(() => {
+    const fetchQuotationData = async () => {
+      if (isEditMode && !existingMetadata && id) {
+        setLoading(true);
+        setError(null);
+        try {
+          const quotation = await getQuotation(id);
+          
+          // Map quotation data to form fields
+          setFormData({
+            quotationName: quotation.name || '',
+            customer: quotation.customer || '',
+            currency: quotation.currency || 'USD',
+            defaultMargin: quotation.defaultMargin !== undefined ? quotation.defaultMargin : 20,
+            notes: quotation.notes || '',
+            createdDate: quotation.createdDate || new Date().toISOString().split('T')[0],
+            status: quotation.status || QuotationStatus.DRAFT
+          });
+        } catch (err) {
+          console.error('Error fetching quotation:', err);
+          setError(err.message || 'Failed to load quotation data');
+        } finally {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchQuotationData();
+  }, [id, isEditMode, existingMetadata]);
 
   const handleChange = (field, value) => {
     setFormData(prev => ({
@@ -95,7 +126,7 @@ const NewQuotation = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!validateForm()) {
@@ -103,17 +134,28 @@ const NewQuotation = () => {
     }
 
     if (isEditMode) {
-      // Editing existing quotation metadata - go back to edit page
-      // Ensure defaultMargin is a number (not empty string) before submitting
-      const submitData = {
-        ...formData,
-        defaultMargin: formData.defaultMargin === '' ? (existingMetadata?.defaultMargin || 20) : formData.defaultMargin
-      };
-      navigate(`/quotations/edit/${id}`, {
-        state: {
-          metadata: submitData
-        }
-      });
+      // Editing existing quotation metadata - save to API
+      setSaving(true);
+      try {
+        // Ensure defaultMargin is a number (not empty string) before submitting
+        const submitData = {
+          ...formData,
+          defaultMargin: formData.defaultMargin === '' ? (existingMetadata?.defaultMargin || 20) : formData.defaultMargin
+        };
+        
+        await updateQuotation(id, submitData);
+        
+        // Navigate back to edit page after successful save
+        navigate(`/quotations/edit/${id}`, {
+          state: {
+            metadata: submitData
+          }
+        });
+      } catch (err) {
+        console.error('Error updating quotation:', err);
+        setError(err.message || 'Failed to update quotation');
+        setSaving(false);
+      }
     } else {
       // Creating new quotation - continue to items page
       // Ensure defaultMargin is a number (not empty string) before submitting
@@ -143,6 +185,56 @@ const NewQuotation = () => {
       }
     }
   };
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="new-quotation-page">
+        <div className="breadcrumbs">
+          <button onClick={() => navigate('/dashboard')} className="breadcrumb-link">Home</button>
+          <span className="breadcrumb-separator">›</span>
+          <button onClick={() => navigate('/quotations')} className="breadcrumb-link">Quotations</button>
+          <span className="breadcrumb-separator">›</span>
+          <span className="breadcrumb-current">Edit Information</span>
+        </div>
+        <div className="new-quotation-content">
+          <div className="loading-state">
+            <div className="loading-spinner"></div>
+            <p>Loading quotation data...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="new-quotation-page">
+        <div className="breadcrumbs">
+          <button onClick={() => navigate('/dashboard')} className="breadcrumb-link">Home</button>
+          <span className="breadcrumb-separator">›</span>
+          <button onClick={() => navigate('/quotations')} className="breadcrumb-link">Quotations</button>
+          <span className="breadcrumb-separator">›</span>
+          <span className="breadcrumb-current">Edit Information</span>
+        </div>
+        <div className="new-quotation-content">
+          <div className="error-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <h3>Error Loading Quotation</h3>
+            <p>{error}</p>
+            <button onClick={() => navigate('/quotations')} className="btn-primary">
+              Back to Quotations
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="new-quotation-page">
@@ -335,19 +427,28 @@ const NewQuotation = () => {
             <button type="button" onClick={handleCancel} className="btn-cancel">
               {isEditMode ? 'Cancel' : 'Cancel'}
             </button>
-            <button type="submit" className="btn-submit">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                {isEditMode ? (
-                  <>
-                    <path d="M19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H16L21 8V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M17 21V13H7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M7 3V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </>
-                ) : (
-                  <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                )}
-              </svg>
-              {isEditMode ? 'Save & Return' : 'Continue to Items'}
+            <button type="submit" className="btn-submit" disabled={saving}>
+              {saving ? (
+                <>
+                  <div className="loading-spinner-small"></div>
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    {isEditMode ? (
+                      <>
+                        <path d="M19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H16L21 8V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M17 21V13H7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M7 3V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </>
+                    ) : (
+                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    )}
+                  </svg>
+                  {isEditMode ? 'Save & Return' : 'Continue to Items'}
+                </>
+              )}
             </button>
           </div>
         </form>
