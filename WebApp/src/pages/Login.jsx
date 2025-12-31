@@ -1,16 +1,90 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { signIn, isAuthenticated, completeNewPasswordChallenge } from '../services/authService';
 import './Login.css';
 
 const Login = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [cognitoUserForPasswordChange, setCognitoUserForPasswordChange] = useState(null);
+  const [userAttributesForPasswordChange, setUserAttributesForPasswordChange] = useState(null);
+  const [requiredAttributesForPasswordChange, setRequiredAttributesForPasswordChange] = useState([]);
 
-  const handleLogin = (e) => {
+  // Redirect if already authenticated
+  useEffect(() => {
+    const checkAuth = async () => {
+      const authenticated = await isAuthenticated();
+      if (authenticated) {
+        navigate('/dashboard');
+      }
+    };
+    checkAuth();
+  }, [navigate]);
+
+  const handleLogin = async (e) => {
     e.preventDefault();
-    // Mock login - in real app, verify credentials
-    navigate('/dashboard');
+    setError('');
+    setLoading(true);
+
+    try {
+      const result = await signIn(email, password);
+      
+      // Check if new password is required
+      if (result.code === 'NEW_PASSWORD_REQUIRED') {
+        setCognitoUserForPasswordChange(result.cognitoUser);
+        setUserAttributesForPasswordChange(result.userAttributes || {});
+        setRequiredAttributesForPasswordChange(result.requiredAttributes || []);
+        setShowPasswordChange(true);
+        setLoading(false);
+        return;
+      }
+      
+      // Normal login success
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Invalid email or password');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    // Validate passwords match
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    // Validate password strength (basic check)
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters long');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      await completeNewPasswordChallenge(
+        cognitoUserForPasswordChange, 
+        newPassword,
+        userAttributesForPasswordChange,
+        requiredAttributesForPasswordChange
+      );
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Failed to set new password');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -27,37 +101,127 @@ const Login = () => {
             <p className="login-subtitle">Sign in to your account</p>
           </div>
 
-          <form onSubmit={handleLogin} className="login-form">
-            <div className="form-group">
-              <label htmlFor="email" className="form-label">Email</label>
-              <input
-                id="email"
-                type="email"
-                className="form-input"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
+          {!showPasswordChange ? (
+            <form onSubmit={handleLogin} className="login-form">
+              <div className="form-group">
+                <label htmlFor="email" className="form-label">Email</label>
+                <input
+                  id="email"
+                  type="email"
+                  className="form-input"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={loading}
+                />
+              </div>
 
-            <div className="form-group">
-              <label htmlFor="password" className="form-label">Password</label>
-              <input
-                id="password"
-                type="password"
-                className="form-input"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
+              <div className="form-group">
+                <label htmlFor="password" className="form-label">Password</label>
+                <input
+                  id="password"
+                  type="password"
+                  className="form-input"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={loading}
+                />
+              </div>
 
-            <button type="submit" className="btn-primary login-button">
-              Sign In
-            </button>
-          </form>
+              {error && (
+                <div className="login-error" style={{ color: 'red', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                  {error}
+                </div>
+              )}
+
+              <button 
+                type="submit" 
+                className="btn-primary login-button"
+                disabled={loading}
+              >
+                {loading ? 'Signing in...' : 'Sign In'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handlePasswordChange} className="login-form">
+              <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: '#e3f2fd', borderRadius: '4px' }}>
+                <p style={{ margin: 0, fontSize: '0.875rem', color: '#1976d2' }}>
+                  This is your first login. Please set a new password.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="newPassword" className="form-label">New Password</label>
+                <input
+                  id="newPassword"
+                  type="password"
+                  className="form-input"
+                  placeholder="Enter new password (min 8 characters)"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  disabled={loading}
+                  minLength={8}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="confirmPassword" className="form-label">Confirm New Password</label>
+                <input
+                  id="confirmPassword"
+                  type="password"
+                  className="form-input"
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  disabled={loading}
+                  minLength={8}
+                />
+              </div>
+
+              {error && (
+                <div className="login-error" style={{ color: 'red', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                  {error}
+                </div>
+              )}
+
+              <button 
+                type="submit" 
+                className="btn-primary login-button"
+                disabled={loading}
+              >
+                {loading ? 'Setting password...' : 'Set New Password'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordChange(false);
+                  setCognitoUserForPasswordChange(null);
+                  setUserAttributesForPasswordChange(null);
+                  setRequiredAttributesForPasswordChange([]);
+                  setNewPassword('');
+                  setConfirmPassword('');
+                  setError('');
+                }}
+                className="btn-secondary"
+                style={{ 
+                  marginTop: '0.5rem', 
+                  width: '100%',
+                  backgroundColor: 'transparent',
+                  color: '#666',
+                  border: '1px solid #ddd'
+                }}
+                disabled={loading}
+              >
+                Back to Login
+              </button>
+            </form>
+          )}
 
           <p className="login-footer">
             Don't have an account? Contact your administrator

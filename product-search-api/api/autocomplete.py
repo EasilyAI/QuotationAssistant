@@ -76,6 +76,6 @@ def handle_autocomplete(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Autocomplete error: {str(e)}", exc_info=True)
         return create_response(500, {
             'error': 'Internal server error',
-            'message': str(e)
+            'message': 'Failed to process autocomplete request'
         })
 

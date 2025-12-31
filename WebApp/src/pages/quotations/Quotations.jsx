@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mockQuotations } from '../../data/mockQuotations';
 import { QuotationStatus } from '../../types/index';
+import { getQuotations, deleteQuotation } from '../../services/quotationService';
 import './Quotations.css';
 
 const Quotations = () => {
@@ -9,18 +9,67 @@ const Quotations = () => {
   
   const [filterStatus, setFilterStatus] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [quotations, setQuotations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  
+  // Prevent duplicate fetch in StrictMode
+  const abortControllerRef = useRef(null);
 
   const statusLabels = Object.values(QuotationStatus).map(status => status);
 
-  const filteredQuotations = mockQuotations.filter(q => {
-    const matchesStatus = filterStatus === 'all' || q.status === filterStatus;
-    const matchesSearch = q.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         q.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         q.quotationNumber.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesSearch;
+  // Fetch quotations on mount and when filters change
+  useEffect(() => {
+    // Abort any previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    
+    const fetchQuotations = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await getQuotations({
+          status: filterStatus === 'all' ? undefined : filterStatus,
+          search: searchQuery || undefined,
+          limit: 100
+        });
+        setQuotations(result.quotations || []);
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.error('Error fetching quotations:', err);
+        setError(err.message || 'Failed to load quotations');
+        setQuotations([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchQuotations();
+    
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [filterStatus, searchQuery]);
+
+  const filteredQuotations = quotations.filter(q => {
+    const matchesSearch = !searchQuery || 
+      q.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (q.customer && q.customer.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (q.quotationNumber && q.quotationNumber.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesSearch;
   });
   
-  const statusCounts = { all: mockQuotations.length, ...Object.values(QuotationStatus).reduce((acc, status) => ({ ...acc, [status]: mockQuotations.filter(q => q.status === status).length }), {}) };
+  const statusCounts = { 
+    all: quotations.length, 
+    ...Object.values(QuotationStatus).reduce((acc, status) => ({ 
+      ...acc, 
+      [status]: quotations.filter(q => q.status === status).length 
+    }), {}) 
+  };
 
   const handleCreateNew = () => {
     navigate('/quotations/new');
@@ -34,10 +83,16 @@ const Quotations = () => {
     navigate(`/quotations/metadata/${id}`);
   };
 
-  const handleDeleteQuotation = (id) => {
+  const handleDeleteQuotation = async (id) => {
     if (window.confirm('Are you sure you want to delete this quotation?')) {
-      // TODO: Implement delete API call
-      console.log('Delete quotation:', id);
+      try {
+        await deleteQuotation(id);
+        // Remove from local state
+        setQuotations(prev => prev.filter(q => q.id !== id));
+      } catch (err) {
+        console.error('Error deleting quotation:', err);
+        alert(err.message || 'Failed to delete quotation');
+      }
     }
   };
 
@@ -127,7 +182,23 @@ const Quotations = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredQuotations.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan="7" className="empty-cell">
+                      <div className="empty-state">
+                        <p>Loading quotations...</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : error ? (
+                  <tr>
+                    <td colSpan="7" className="empty-cell">
+                      <div className="empty-state">
+                        <p style={{ color: 'red' }}>Error: {error}</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : filteredQuotations.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="empty-cell">
                       <div className="empty-state">
@@ -141,7 +212,11 @@ const Quotations = () => {
                   </tr>
                 ) : (
                   filteredQuotations.map((quotation) => (
-                    <tr key={quotation.id}>
+                    <tr 
+                      key={quotation.id} 
+                      onClick={() => handleEditQuotation(quotation.id)}
+                      className="clickable-row"
+                    >
                       <td className="col-quotation-name">
                         <div className="quotation-name-cell">
                           <span className="quotation-number">{quotation.quotationNumber}</span>
@@ -150,7 +225,7 @@ const Quotations = () => {
                       </td>
                       <td className="col-customer text-secondary">{quotation.customer}</td>
                       <td className="col-items text-secondary">{quotation.itemCount}</td>
-                      <td className="col-value">${quotation.totalValue.toFixed(2)}</td>
+                      <td className="col-value">{quotation.currency || 'USD'} {typeof quotation.totalValue === 'number' ? quotation.totalValue.toFixed(2) : (parseFloat(quotation.totalValue) || 0).toFixed(2)}</td>
                       <td className="col-status">
                         <div className={`status-badge status-${quotation.status.replace(/ /g, '-').toLowerCase()}`}>
                           {statusLabels[quotation.status] || quotation.status}
@@ -167,15 +242,23 @@ const Quotations = () => {
                           </button>
                           <button 
                             className="action-link"
-                            onClick={() => handleEditMetadata(quotation.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEditMetadata(quotation.id);
+                            }}
+                            title="Edit Info"
                           >
-                            Edit Info
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                           </button>
                           <button 
                             className="action-link danger"
-                            onClick={() => handleDeleteQuotation(quotation.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteQuotation(quotation.id);
+                            }}
+                            title="Delete"
                           >
-                            Delete
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
                           </button>
                         </div>
                       </td>

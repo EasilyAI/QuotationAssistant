@@ -1,4 +1,5 @@
 import { API_CONFIG, buildFileApiUrl, buildSearchApiUrl } from '../config/apiConfig';
+import { authenticatedFetch } from '../utils/apiClient';
 
 /**
  * Check for existing products by ordering numbers
@@ -6,15 +7,14 @@ import { API_CONFIG, buildFileApiUrl, buildSearchApiUrl } from '../config/apiCon
  * @returns {Promise<Object>} Object with existing products keyed by orderingNumber
  */
 export const checkExistingProducts = async (orderingNumbers) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS_CHECK_EXISTING),
     {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+      method: 'POST',
+      body: JSON.stringify({ orderingNumbers })
     },
-    body: JSON.stringify({ orderingNumbers }),
-  });
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to check existing products' }));
@@ -31,15 +31,14 @@ export const checkExistingProducts = async (orderingNumbers) => {
  * @returns {Promise<Object>} Save result
  */
 export const saveProductsFromCatalog = async (products) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS_FROM_CATALOG),
     {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+      method: 'POST',
+      body: JSON.stringify({ products })
     },
-    body: JSON.stringify({ products }),
-  });
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to save products from catalog' }));
@@ -56,15 +55,14 @@ export const saveProductsFromCatalog = async (products) => {
  * @returns {Promise<Object>} Save result
  */
 export const saveProductsFromPriceList = async (products) => {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildFileApiUrl(API_CONFIG.FILE_ENDPOINTS.PRODUCTS_FROM_PRICE_LIST),
     {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+      method: 'POST',
+      body: JSON.stringify({ products })
     },
-    body: JSON.stringify({ products }),
-  });
+    'file'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to save products from price list' }));
@@ -84,11 +82,11 @@ export const fetchProductByOrderingNumber = async (orderingNumber) => {
     throw new Error('orderingNumber is required');
   }
 
-  const response = await fetch(
+  const response = await authenticatedFetch(
     buildSearchApiUrl(`${API_CONFIG.SEARCH_ENDPOINTS.PRODUCT}/${encodeURIComponent(orderingNumber)}`),
-    {
-    method: 'GET',
-  });
+    { method: 'GET' },
+    'search'
+  );
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to fetch product' }));
@@ -120,7 +118,7 @@ export const fetchProducts = async (params = {}) => {
   const url = `${buildSearchApiUrl(API_CONFIG.SEARCH_ENDPOINTS.PRODUCT)}${
     searchParams.toString() ? `?${searchParams.toString()}` : ''
   }`;
-  const response = await fetch(url);
+  const response = await authenticatedFetch(url, { method: 'GET' }, 'search');
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to fetch products' }));

@@ -1,0 +1,18 @@
+{
+  "name": "quotation-management-service",
+  "version": "1.0.0",
+  "description": "Quotation Management Service - AWS Serverless Framework",
+  "scripts": {
+    "deploy": "DOTENV_CONFIG_PATH=../.env node -r dotenv/config node_modules/serverless/bin/serverless.js deploy",
+    "deploy:dev": "serverless deploy --stage dev",
+    "offline": "DOTENV_CONFIG_PATH=../.env node -r dotenv/config node_modules/serverless/bin/serverless.js offline",
+    "logs": "serverless logs -f quotationApi -t"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "serverless": "^3.38.0",
+    "serverless-offline": "^13.3.3",
+    "serverless-python-requirements": "^6.1.0"
+  }
+}
+

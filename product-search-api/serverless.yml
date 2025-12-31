@@ -14,6 +14,35 @@ provider:
   memorySize: 512  # Lightweight - Bedrock embeddings via API
   timeout: 30
   
+  httpApi:
+    cors:
+      allowedOrigins:
+        - "http://localhost:3000"
+        - "http://localhost:3001"
+        - "https://catalog-searcher-omers-projects-e3a112ba.vercel.app"
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - X-Requested-With
+        - X-Amz-Date
+        - X-Api-Key
+        - X-Amz-Security-Token
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      allowCredentials: true  # Required for Cognito tokens
+      maxAge: 3600
+    # JWT Authorizer (built-in, simpler than Lambda authorizer)
+    authorizers:
+      cognitoAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID}
+        audience:
+          - ${env:COGNITO_APP_CLIENT_ID}
+  
   environment:
     # Ensure local/offline Python can locate service packages
     PYTHONPATH: ${env:PYTHONPATH, './'}
@@ -40,6 +69,11 @@ provider:
     # Relevance Level Thresholds (configurable)
     RELEVANCE_HIGH_THRESHOLD: ${env:RELEVANCE_HIGH_THRESHOLD, '0.70'}
     RELEVANCE_MEDIUM_THRESHOLD: ${env:RELEVANCE_MEDIUM_THRESHOLD, '0.50'}
+    
+    # Cognito Configuration (optional - for JWT authorizer)
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, ''}
+    COGNITO_APP_CLIENT_ID: ${env:COGNITO_APP_CLIENT_ID, ''}
+    COGNITO_REGION: ${env:COGNITO_REGION, 'us-east-1'}
   
   iam:
     role:
@@ -79,6 +113,17 @@ provider:
             - logs:CreateLogStream
             - logs:PutLogEvents
           Resource: '*'
+        
+        # Secrets Manager access for API keys
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+            - secretsmanager:DescribeSecret
+          Resource:
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:product-search-api-key-*
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:qdrant-api-key-*
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:file-ingestion-api-key-*
+            - arn:aws:secretsmanager:${aws:region}:${aws:accountId}:secret:quotation-api-key-*
 
 custom:
   uploadBucket: hb-files-raw

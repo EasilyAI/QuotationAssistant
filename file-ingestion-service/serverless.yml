@@ -37,7 +37,9 @@ provider:
   httpApi:
     cors:
       allowedOrigins:
-        - "*"  # TODO: Replace with specific origins in production (e.g., ["http://localhost:3000", "https://yourdomain.com"])
+        - "http://localhost:3000"
+        - "http://localhost:3001"
+        - "https://catalog-searcher-omers-projects-e3a112ba.vercel.app"
       allowedHeaders:
         - Content-Type
         - Authorization
@@ -51,12 +53,19 @@ provider:
         - PUT
         - DELETE
         - OPTIONS
-      allowCredentials: false
+      allowCredentials: true  # Required for Cognito tokens
       maxAge: 3600
       exposedResponseHeaders:
         - Content-Type
         - X-Amz-Date
         - X-Amz-Request-Id
+    # JWT Authorizer (built-in, simpler than Lambda authorizer)
+    authorizers:
+      cognitoAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${self:provider.region}.amazonaws.com/${env:COGNITO_USER_POOL_ID}
+        audience:
+          - ${env:COGNITO_APP_CLIENT_ID}
 
   environment:
     UPLOAD_BUCKET: ${self:custom.uploadBucket}
@@ -66,6 +75,10 @@ provider:
     PRICE_LIST_PRODUCTS_TABLE: ${self:custom.priceListProductsTable}
     # PYTHONPATH: layer path for local dev (serverless-offline) and Lambda (/opt/python is auto-added in Lambda)
     PYTHONPATH: "layer-shared/python:/opt/python"
+    # Cognito Configuration (optional - for JWT authorizer)
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, ''}
+    COGNITO_APP_CLIENT_ID: ${env:COGNITO_APP_CLIENT_ID, ''}
+    COGNITO_REGION: ${env:COGNITO_REGION, 'us-east-1'}
 
   iamRoleStatements:
     # S3 access for generating presigned URLs and accessing uploaded files
@@ -103,6 +116,16 @@ provider:
         - textract:StartDocumentAnalysis
         - textract:GetDocumentAnalysis
       Resource: "*"
+    
+    # Secrets Manager access for API keys
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+        - secretsmanager:DescribeSecret
+      Resource:
+        - arn:aws:secretsmanager:${self:provider.region}:*:secret:file-ingestion-api-key-*
+        - arn:aws:secretsmanager:${self:provider.region}:*:secret:quotation-api-key-*
+        - arn:aws:secretsmanager:${self:provider.region}:*:secret:product-search-api-key-*
 
 layers:
   shared:

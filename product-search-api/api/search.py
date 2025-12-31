@@ -125,6 +125,6 @@ def handle_search(
         logger.error(f"Search error: {str(e)}", exc_info=True)
         return create_response(500, {
             'error': 'Internal server error',
-            'message': str(e)
+            'message': 'Failed to process search request'
         })
 

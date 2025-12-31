@@ -18,6 +18,14 @@ const Settings = () => {
       status: 'pending',
       location: 'webApp/src/types/products.ts',
       priority: 'high'
+    },
+    {
+      id: 3,
+      title: 'Email Default Content',
+      description: 'Make email default content configurable instead of hardcoded. Currently the email body template is hardcoded in quotation-management-service/services/email_service.py (lines 103-143). This requires creating a settings API endpoint and database table to store configurable email templates, or using environment variables for template customization.',
+      status: 'pending',
+      location: 'quotation-management-service/services/email_service.py',
+      priority: 'high'
     }
   ];
 

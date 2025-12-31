@@ -68,7 +68,7 @@ def create_response(
     headers: Dict[str, str] = None
 ) -> Dict[str, Any]:
     """
-    Create standardized API Gateway response.
+    Create standardized API Gateway response with security headers.
     
     Args:
         status_code: HTTP status code
@@ -82,7 +82,13 @@ def create_response(
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Api-Key',
+        # Security headers
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'X-XSS-Protection': '1; mode=block',
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
     }
     
     if headers:

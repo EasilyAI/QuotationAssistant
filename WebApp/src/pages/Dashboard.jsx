@@ -1,15 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDraftQuotations, getRecentQuotations } from '../data/mockQuotations';
+import { getQuotations, deleteQuotation } from '../services/quotationService';
 import { getInProgressUploads } from '../data/mockUploads';
 import './Dashboard.css';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('open-drafts');
+  const [draftQuotations, setDraftQuotations] = useState([]);
+  const [recentQuotations, setRecentQuotations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const draftQuotations = getDraftQuotations();
-  const recentQuotations = getRecentQuotations(3);
+  // Fetch quotations on mount
+  useEffect(() => {
+    const fetchQuotations = async () => {
+      setLoading(true);
+      setError(null);
+      
+      try {
+        // Fetch drafts (incomplete or draft status)
+        const draftsResult = await getQuotations({
+          incomplete: true,
+          status: 'Draft',
+          limit: 10
+        });
+        setDraftQuotations(draftsResult.quotations || []);
+        
+        // Fetch recent quotations
+        const recentResult = await getQuotations({
+          recent: true,
+          limit: 3
+        });
+        setRecentQuotations(recentResult.quotations || []);
+      } catch (err) {
+        console.error('Error fetching quotations:', err);
+        setError(err.message || 'Failed to load quotations');
+        setDraftQuotations([]);
+        setRecentQuotations([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchQuotations();
+  }, []);
   
   const displayedQuotations = activeTab === 'open-drafts' ? draftQuotations : recentQuotations;
 
@@ -32,10 +67,17 @@ const Dashboard = () => {
     navigate(`/quotations/edit/${id}`);
   };
 
-  const handleDeleteQuotation = (id) => {
+  const handleDeleteQuotation = async (id) => {
     if (window.confirm('Are you sure you want to delete this quotation?')) {
-      // TODO: Implement delete API call
-      console.log('Delete quotation:', id);
+      try {
+        await deleteQuotation(id);
+        // Remove from local state
+        setDraftQuotations(prev => prev.filter(q => q.id !== id));
+        setRecentQuotations(prev => prev.filter(q => q.id !== id));
+      } catch (err) {
+        console.error('Error deleting quotation:', err);
+        alert(err.message || 'Failed to delete quotation');
+      }
     }
   };
 
@@ -105,7 +147,26 @@ const Dashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {displayedQuotations.map((quotation) => (
+                {loading ? (
+                  <tr>
+                    <td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>
+                      Loading...
+                    </td>
+                  </tr>
+                ) : error ? (
+                  <tr>
+                    <td colSpan="4" style={{ textAlign: 'center', padding: '20px', color: 'red' }}>
+                      Error: {error}
+                    </td>
+                  </tr>
+                ) : displayedQuotations.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>
+                      No quotations found
+                    </td>
+                  </tr>
+                ) : (
+                  displayedQuotations.map((quotation) => (
                   <tr key={quotation.id} className={quotation.incompleteItems > 0 ? 'has-incomplete' : ''}>
                     <td className="col-quotation-name">
                       <div className="quotation-name-cell">
@@ -134,7 +195,8 @@ const Dashboard = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>

@@ -214,6 +214,10 @@
   background-color: rgba(232, 237, 242, 0.3);
 }
 
+.data-table tbody tr.row-clickable {
+  cursor: pointer;
+}
+
 .data-table tbody tr.row-expanded {
   background-color: rgba(232, 237, 242, 0.3);
 }
