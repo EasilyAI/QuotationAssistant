@@ -6,6 +6,23 @@ import os
 import logging
 from typing import Dict, Any, List, Optional
 import boto3
+import sys
+
+# Add shared directory to path
+SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(SERVICE_ROOT, ".."))
+SHARED_DIR = os.path.abspath(os.path.join(REPO_ROOT, "shared"))
+
+for path in {SERVICE_ROOT, REPO_ROOT, SHARED_DIR}:
+    if path not in sys.path:
+        sys.path.append(path)
+
+try:
+    from shared.product_service import fetch_product
+except ImportError:
+    logger = logging.getLogger(__name__)
+    logger.warning("Could not import shared.product_service - sales drawings from products will not be available")
+    fetch_product = None
 
 from services.quotation_service import get_quotation
 
@@ -67,26 +84,49 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
     if not quotation:
         return None
     
-    # Collect all sketch drawings from line items
+    # Collect all sales drawings from line items and products
     attachments = []
     lines = quotation.get('lines', [])
+    processed_s3_keys = set()  # Track processed keys to avoid duplicates
     
     for line in lines:
+        # First, check for drawing_link from line item (legacy support)
         drawing_link = line.get('drawing_link')
         if drawing_link and drawing_link.strip():
-            # drawing_link is an S3 key
             s3_key = drawing_link.strip()
-            
-            # Generate presigned URL
-            presigned_url = generate_presigned_url_for_drawing(s3_key)
-            
-            if presigned_url:
-                filename = extract_filename_from_s3_key(s3_key)
-                attachments.append({
-                    'filename': filename,
-                    's3_key': s3_key,
-                    'presigned_url': presigned_url
-                })
+            if s3_key not in processed_s3_keys:
+                presigned_url = generate_presigned_url_for_drawing(s3_key)
+                if presigned_url:
+                    filename = extract_filename_from_s3_key(s3_key)
+                    attachments.append({
+                        'filename': filename,
+                        's3_key': s3_key,
+                        'presigned_url': presigned_url
+                    })
+                    processed_s3_keys.add(s3_key)
+        
+        # Then, fetch sales drawings from product (if ordering_number exists)
+        ordering_number = line.get('ordering_number', '').strip()
+        if ordering_number and fetch_product:
+            try:
+                product = fetch_product(ordering_number)
+                sales_drawings = product.get('salesDrawings', [])
+                
+                for sales_drawing in sales_drawings:
+                    file_key = sales_drawing.get('fileKey')
+                    if file_key and file_key not in processed_s3_keys:
+                        presigned_url = generate_presigned_url_for_drawing(file_key)
+                        if presigned_url:
+                            filename = sales_drawing.get('fileName') or extract_filename_from_s3_key(file_key)
+                            attachments.append({
+                                'filename': filename,
+                                's3_key': file_key,
+                                'presigned_url': presigned_url
+                            })
+                            processed_s3_keys.add(file_key)
+            except Exception as e:
+                logger.warning(f"Failed to fetch product {ordering_number} for sales drawings: {str(e)}")
+                # Continue processing other lines even if one fails
     
     # Generate email subject
     quotation_name = quotation.get('name', 'Quotation')
@@ -129,8 +169,21 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         if notes:
             body_lines.append(f"   - Notes: {notes}")
         
+        # Check if this line has sales drawings attached
+        has_drawing = False
         if line.get('drawing_link'):
-            body_lines.append(f"   - Drawing: Attached")
+            has_drawing = True
+        elif ordering_number and fetch_product:
+            try:
+                product = fetch_product(ordering_number)
+                sales_drawings = product.get('salesDrawings', [])
+                if sales_drawings:
+                    has_drawing = True
+            except Exception:
+                pass  # Ignore errors when checking for drawings
+        
+        if has_drawing:
+            body_lines.append(f"   - Sales Drawing: Attached")
     
     body_lines.extend([
         "",

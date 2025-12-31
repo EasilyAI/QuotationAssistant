@@ -6,7 +6,7 @@ import os
 import logging
 from typing import Dict, Any
 
-from api.utils import handle_cors_preflight, verify_api_key, create_response
+from api.utils import handle_cors_preflight, verify_auth, create_response
 from api.quotations import (
     handle_create_quotation,
     handle_get_quotations,
@@ -32,9 +32,7 @@ from api.email import handle_email_draft
 
 # Configure logging
 logger = logging.getLogger(__name__)
-# logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
-logger.setLevel('[Quotation Handler]')
-
+logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -49,21 +47,58 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Returns:
         API Gateway response
     """
-    logger.info(f"Request method: {event.get('requestContext', {}).get('http', {}).get('method')}")
-    logger.info(f"Request path: {event.get('rawPath')}")
+    method = event.get('requestContext', {}).get('http', {}).get('method', 'UNKNOWN')
+    path = event.get('rawPath', 'UNKNOWN')
+    
+    # Normalize path - remove duplicate /quotations if present
+    # Handle cases like /quotations/quotations or /quotations/quotations/...
+    original_path = path
+    while path.startswith('/quotations/quotations'):
+        path = path.replace('/quotations/quotations', '/quotations', 1)
+    
+    if path != original_path:
+        logger.warning(f"[HANDLER] Normalized duplicate path from {original_path} to {path}")
+    
+    logger.info(f"[HANDLER] Request method: {method}")
+    logger.info(f"[HANDLER] Request path: {path}")
+    
+    # Log headers for debugging (but mask sensitive values)
+    headers = event.get('headers', {}) or {}
+    logger.info(f"[HANDLER] Headers present: {list(headers.keys())}")
+    
+    # Check for API key in headers (log presence, not value)
+    api_key_headers = ['x-api-key', 'X-Api-Key', 'X-API-Key']
+    api_key_present = any(h in headers for h in api_key_headers)
+    logger.info(f"[HANDLER] API key header present: {api_key_present}")
+    
+    # Check for Authorization header
+    auth_header_present = any(k.lower() == 'authorization' for k in headers.keys())
+    logger.info(f"[HANDLER] Authorization header present: {auth_header_present}")
     
     # Handle CORS preflight
     cors_response = handle_cors_preflight(event)
     if cors_response:
+        logger.info(f"[HANDLER] CORS preflight request, returning 200")
         return cors_response
     
-    # Verify API key
-    if not verify_api_key(event):
-        return create_response(401, {'error': 'Unauthorized', 'message': 'Invalid or missing API key'})
+    # Verify authentication (Cognito token or API key)
+    logger.info(f"[HANDLER] Verifying authentication...")
+    from api.utils import verify_auth
+    auth_valid = verify_auth(event)
+    logger.info(f"[HANDLER] Authentication verification result: {auth_valid}")
     
-    # Route based on path and method
-    path = event.get('rawPath', '').lower()
-    method = event.get('requestContext', {}).get('http', {}).get('method', '').upper()
+    if not auth_valid:
+        logger.warning(f"[HANDLER] Authentication failed for {method} {path}")
+        # Log more details about why it failed
+        if not api_key_present and not auth_header_present:
+            logger.warning(f"[HANDLER] No authentication headers found (neither API key nor Authorization)")
+        elif auth_header_present and not api_key_present:
+            logger.warning(f"[HANDLER] Authorization header present but token validation failed")
+        return create_response(401, {'error': 'Unauthorized', 'message': 'Invalid or missing authentication'})
+    
+    # Route based on normalized path and method (use already normalized path)
+    path = path.lower()
+    method = method.upper()
     
     # Quotation Management
     if path == '/quotations' and method == 'POST':

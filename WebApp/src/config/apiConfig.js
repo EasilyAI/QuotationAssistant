@@ -40,6 +40,7 @@ export const API_CONFIG = {
     PRODUCTS_FROM_CATALOG: '/api/products/from-catalog',
     PRODUCTS_FROM_PRICE_LIST: '/api/products/from-price-list',
     SALES_DRAWING_TO_PRODUCT: '/api/products/sales-drawing',
+    UNLINK_SALES_DRAWING: '/api/products/unlink-sales-drawing',
   },
 
   // Product search service endpoints (see searchService/serverless.yml)

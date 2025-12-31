@@ -23,6 +23,8 @@ QUOTATIONS_TABLE = os.getenv('QUOTATIONS_TABLE', 'quotations')
 
 # Configure DynamoDB for local development
 # When running serverless offline, we need to use AWS profile or credentials
+# In Lambda, use IAM role (no profile). Locally, use profile if available.
+is_lambda = bool(os.getenv('LAMBDA_TASK_ROOT'))
 dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT')
 aws_profile = os.getenv('AWS_PROFILE', os.getenv('AWS_DEFAULT_PROFILE'))
 region = os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
@@ -31,14 +33,14 @@ if dynamodb_endpoint:
     # Use DynamoDB Local
     logger.info(f"Using DynamoDB Local endpoint: {dynamodb_endpoint}")
     dynamodb = boto3.resource('dynamodb', endpoint_url=dynamodb_endpoint)
-elif aws_profile:
-    # Use AWS profile (for serverless offline with real AWS)
+elif not is_lambda and aws_profile:
+    # Use AWS profile (for local development only, not in Lambda)
     logger.info(f"Using AWS profile: {aws_profile} in region: {region}")
     session = boto3.Session(profile_name=aws_profile, region_name=region)
     dynamodb = session.resource('dynamodb')
 else:
-    # Use default AWS credentials (from environment or ~/.aws/credentials)
-    logger.info(f"Using default AWS credentials in region: {region}")
+    # Use default AWS credentials (IAM role in Lambda, or env vars/credentials file locally)
+    logger.info(f"Using default AWS credentials in region: {region} (Lambda: {is_lambda})")
     dynamodb = boto3.resource('dynamodb', region_name=region)
 
 logger.info(f"QUOTATIONS_TABLE: {QUOTATIONS_TABLE}")

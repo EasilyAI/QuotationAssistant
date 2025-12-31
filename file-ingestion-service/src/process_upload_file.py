@@ -13,16 +13,45 @@ from utils.incomingEventParser import parse_s3_key
 from utils.corsHeaders import get_cors_headers
 from utils.helpers import convert_floats_to_decimal
 
+# Configure DynamoDB for local development
+# When running serverless offline, we need to use AWS profile or credentials
+dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT')
+aws_profile = os.getenv('AWS_PROFILE', os.getenv('AWS_DEFAULT_PROFILE'))
+region = os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
+
+# Check if we're in real AWS Lambda (not serverless-offline)
+# Serverless-offline may set LAMBDA_TASK_ROOT, but we can detect real Lambda by checking
+# if we're in /var/task (real Lambda) vs local filesystem
+is_real_lambda = os.path.exists('/var/task') and os.getenv('LAMBDA_TASK_ROOT')
+
+if dynamodb_endpoint:
+    # Use DynamoDB Local
+    print(f"[process_upload_file] Using DynamoDB Local endpoint: {dynamodb_endpoint}")
+    dynamodb = boto3.resource('dynamodb', endpoint_url=dynamodb_endpoint)
+elif aws_profile and not is_real_lambda:
+    # Use AWS profile (for local development, including serverless-offline)
+    print(f"[process_upload_file] Using AWS profile: {aws_profile} in region: {region}")
+    try:
+        session = boto3.Session(profile_name=aws_profile, region_name=region)
+        dynamodb = session.resource('dynamodb')
+    except Exception as e:
+        print(f"[process_upload_file] WARNING: Failed to use profile {aws_profile}: {e}, falling back to default credentials")
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+else:
+    # Use default AWS credentials (IAM role in Lambda, or env vars/credentials file locally)
+    print(f"[process_upload_file] Using default AWS credentials in region: {region} (Real Lambda: {is_real_lambda}, Profile: {aws_profile or 'None'})")
+    dynamodb = boto3.resource('dynamodb', region_name=region)
+
 s3 = boto3.client("s3")
-dynamodb = boto3.resource("dynamodb")
 s3_client = boto3.client("s3")
 
 BUCKET = "hb-files-raw"
-AWS_REGION = "us-east-1"
+AWS_REGION = region
 # BUCKET = os.environ["UPLOAD_BUCKET"]
 FILES_TABLE = os.environ["FILES_TABLE"]
 CATALOG_PRODUCTS_TABLE = os.environ.get("CATALOG_PRODUCTS_TABLE", "hb-catalog-products")
 PRICE_LIST_PRODUCTS_TABLE = os.environ.get("PRICE_LIST_PRODUCTS_TABLE", "hb-price-list-products")
+print(f"[process_upload_file] FILES_TABLE: {FILES_TABLE}, region: {region}")
 
 # Expected schema for price list files
 PRICE_LIST_SCHEMA = {
@@ -771,22 +800,69 @@ def process_price_list(file_id, s3_key):
 
 def process_sales_drawing(file_id, s3_key):
     """
-    Placeholder for processing sales drawing files.
-    TODO: Implement when requirements are defined.
+    Process an uploaded sales drawing file.
+    
+    Sales drawings require no processing - just storage. The file is stored in S3
+    and metadata is stored in the files table. The file will be linked to a product
+    during the review process.
+    
+    Args:
+        file_id: File ID from S3 metadata
+        s3_key: S3 key of the uploaded file
+    
+    Returns:
+        dict: Processing result with status
     """
-    print(f"[process_sales_drawing] Processing not implemented yet for file_id={file_id}")
+    print(f"[process_sales_drawing] Starting processing for file_id={file_id}, s3_key={s3_key}")
     
-    update_file_status(
-        file_id=file_id,
-        status="pending_review",
-        processingStage="Sales drawing processing not implemented"
-    )
-    
-    return {
-        "success": True,
-        "fileId": file_id,
-        "message": "Sales drawing processing not implemented"
-    }
+    try:
+        # Get file metadata from S3 to extract ordering number and other details
+        try:
+            s3_response = s3_client.head_object(Bucket=BUCKET, Key=s3_key)
+            metadata = s3_response.get('Metadata', {})
+            ordering_number = metadata.get('ordering_number', '')
+            manufacturer = metadata.get('manufacturer', '')
+            year = metadata.get('year', '')
+        except Exception as e:
+            print(f"[process_sales_drawing] WARNING: Failed to get S3 metadata: {e}")
+            ordering_number = ''
+            manufacturer = ''
+            year = ''
+        
+        # Update file status to pending_review (no processing needed)
+        update_file_status(
+            file_id=file_id,
+            status="pending_review",
+            processingStage="Sales drawing ready for review",
+            s3Key=s3_key
+        )
+        
+        print(f"[process_sales_drawing] Sales drawing processing completed successfully for file_id={file_id}")
+        
+        return {
+            "success": True,
+            "fileId": file_id,
+            "message": "Sales drawing ready for review"
+        }
+        
+    except Exception as e:
+        error_message = str(e)
+        print(f"[process_sales_drawing] ERROR: {error_message}")
+        import traceback
+        traceback.print_exc()
+        
+        update_file_status(
+            file_id=file_id,
+            status="failed",
+            processingStage="Processing failed",
+            error=error_message
+        )
+        
+        return {
+            "success": False,
+            "fileId": file_id,
+            "error": error_message
+        }
 
 
 from utils.textractClient import start_job, is_job_complete, get_job_results

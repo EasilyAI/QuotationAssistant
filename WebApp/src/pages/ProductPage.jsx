@@ -48,6 +48,20 @@ const buildSourcesFromPointers = (record = {}) => {
     });
   });
 
+  // Build sources from sales drawing pointers
+  const salesDrawings = record.salesDrawings || [];
+  salesDrawings.forEach(drawing => {
+    sources.push({
+      type: 'Sales Drawing',
+      year: drawing.fileName || 'Drawing',
+      pages: drawing.manufacturer || 'Unknown Manufacturer',
+      hasPrice: false,
+      fileId: drawing.fileId,
+      fileKey: drawing.fileKey,
+      link: drawing.link, // External link if available
+    });
+  });
+
   return sources;
 };
 
@@ -160,6 +174,8 @@ const ProductPage = () => {
   const [filePreviewUrl, setFilePreviewUrl] = useState(null);
   const [cachedPreviewUrlKey, setCachedPreviewUrlKey] = useState(null);
   const [cachedPreviewUrlTimestamp, setCachedPreviewUrlTimestamp] = useState(null);
+  const [salesDrawingPreviewUrl, setSalesDrawingPreviewUrl] = useState(null);
+  const [salesDrawingPreviewKey, setSalesDrawingPreviewKey] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -283,6 +299,29 @@ const ProductPage = () => {
     }
   }, [filePreviewUrl, cachedPreviewUrlKey, cachedPreviewUrlTimestamp]);
 
+  const handleViewSalesDrawing = useCallback(async (salesDrawing) => {
+    const fileKey = salesDrawing.fileKey;
+    if (!fileKey) {
+      alert('No sales drawing file reference available.');
+      return;
+    }
+
+    setIsPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const url = await ensurePreviewUrl(fileKey);
+      if (url) {
+        setSalesDrawingPreviewUrl(url);
+        setSalesDrawingPreviewKey(fileKey);
+        setIsPreviewOpen(true);
+      }
+    } catch (error) {
+      setPreviewError('Unable to open sales drawing preview.');
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }, [ensurePreviewUrl]);
+
   const handleViewInCatalog = useCallback(async () => {
     const catalogProducts = productRecord?.catalogProducts || [];
     const firstCatalogProduct = catalogProducts[0];
@@ -306,6 +345,8 @@ const ProductPage = () => {
 
   const closePreview = () => {
     setIsPreviewOpen(false);
+    setSalesDrawingPreviewUrl(null);
+    setSalesDrawingPreviewKey(null);
   };
 
   const priceSource = productDetails.sources.find((source) => source.hasPrice);
@@ -385,6 +426,12 @@ const ProductPage = () => {
                   alt={productDetails.productName}
                   onError={() => setImageError(true)}
                 />
+              ) : productRecord?.salesDrawings && productRecord.salesDrawings.length > 0 ? (
+                <div className="image-placeholder" style={{ cursor: 'pointer' }} onClick={() => handleViewSalesDrawing(productRecord.salesDrawings[0])}>
+                  <span role="img" aria-label="placeholder">📄</span>
+                  <p>Sales Drawing Available</p>
+                  <p style={{ fontSize: '12px', color: '#637887', marginTop: '4px' }}>Click to view</p>
+                </div>
               ) : (
                 <div className="image-placeholder">
                   <span role="img" aria-label="placeholder">📦</span>
@@ -456,19 +503,26 @@ const ProductPage = () => {
                 {productDetails.sources.length > 0 ? (
                   <div className="sources-list">
                     {productDetails.sources.map((source, index) => {
+                      const isSalesDrawing = source.type === 'Sales Drawing';
                       const Wrapper = source.link ? 'a' : 'div';
+                      const handleClick = isSalesDrawing && source.fileKey ? () => {
+                        handleViewSalesDrawing({ fileKey: source.fileKey });
+                      } : undefined;
+                      
                       return (
                         <Wrapper
                           key={`${source.type}-${index}`}
-                          className={`source-item ${source.link ? '' : 'source-item-static'}`}
+                          className={`source-item ${source.link ? '' : 'source-item-static'} ${isSalesDrawing ? 'source-item-clickable' : ''}`}
                           {...(source.link ? { href: source.link, target: '_blank', rel: 'noreferrer' } : {})}
+                          {...(handleClick ? { onClick: handleClick, style: { cursor: 'pointer' } } : {})}
                         >
                           <div className="source-info">
                             <span className="source-type">{source.type} ({source.year})</span>
                             {source.pages && <span className="source-pages">{source.pages}</span>}
                             {source.hasPrice && <span className="source-badge">Current Price</span>}
+                            {isSalesDrawing && <span className="source-badge" style={{ backgroundColor: '#2563eb', color: 'white' }}>View Drawing</span>}
                           </div>
-                          {source.link && (
+                          {(source.link || isSalesDrawing) && (
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                               <path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                             </svg>
@@ -575,11 +629,11 @@ const ProductPage = () => {
       <CatalogPreviewDialog
         isOpen={isPreviewOpen}
         onClose={closePreview}
-        catalogKey={productRecord?.catalogProducts?.[0]?.fileKey || productRecord?.catalogProducts?.[0]?._fileKey}
-        fileUrl={filePreviewUrl}
+        catalogKey={salesDrawingPreviewKey || (productRecord?.catalogProducts?.[0]?.fileKey || productRecord?.catalogProducts?.[0]?._fileKey)}
+        fileUrl={salesDrawingPreviewUrl || filePreviewUrl}
         product={productRecord?.catalogProducts?.[0]}
         highlightTerm={productDetails.orderingNo}
-        title="Catalog Preview"
+        title={salesDrawingPreviewKey ? "Sales Drawing Preview" : "Catalog Preview"}
       />
     </div>
   );

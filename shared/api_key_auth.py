@@ -62,36 +62,51 @@ def get_api_key(service_name: str) -> Optional[str]:
     Returns:
         API key or None if not found
     """
+    logger.info(f"[SHARED-AUTH] Getting API key for service: {service_name}")
+    
     # Try Secrets Manager first
     secret_name = f"{service_name}-api-key"
+    logger.info(f"[SHARED-AUTH] Checking Secrets Manager for: {secret_name}")
     secret = get_secret_from_secrets_manager(secret_name)
     if secret:
+        logger.info(f"[SHARED-AUTH] Found secret in Secrets Manager (length: {len(secret)})")
         # If secret is JSON, parse it
         try:
             secret_dict = json.loads(secret)
             # Support both single key and multiple keys format
             if isinstance(secret_dict, dict) and 'api_key' in secret_dict:
-                return secret_dict['api_key']
+                api_key = secret_dict['api_key']
+                logger.info(f"[SHARED-AUTH] Extracted API key from JSON secret (length: {len(api_key)})")
+                return api_key
             elif isinstance(secret_dict, list) and len(secret_dict) > 0:
                 # Multiple keys - return first one (or implement key rotation logic)
-                return secret_dict[0] if isinstance(secret_dict[0], str) else secret_dict[0].get('key')
+                api_key = secret_dict[0] if isinstance(secret_dict[0], str) else secret_dict[0].get('key')
+                logger.info(f"[SHARED-AUTH] Extracted API key from JSON array secret (length: {len(api_key)})")
+                return api_key
         except json.JSONDecodeError:
             # Not JSON, use as-is
+            logger.info(f"[SHARED-AUTH] Secret is not JSON, using as-is (length: {len(secret)})")
             return secret
+    else:
+        logger.info(f"[SHARED-AUTH] Secret not found in Secrets Manager, checking environment variables")
     
     # Fallback to environment variable
     env_var_name = f"{service_name.upper().replace('-', '_')}_API_KEY"
+    logger.info(f"[SHARED-AUTH] Checking environment variable: {env_var_name}")
     api_key = os.getenv(env_var_name)
     
     if not api_key:
         # Try common variations
-        env_var_name = f"{service_name}_API_KEY".upper()
-        api_key = os.getenv(env_var_name)
+        env_var_name_alt = f"{service_name}_API_KEY".upper()
+        logger.info(f"[SHARED-AUTH] Trying alternative environment variable: {env_var_name_alt}")
+        api_key = os.getenv(env_var_name_alt)
     
     if api_key:
-        logger.debug(f"Using API key from environment variable: {env_var_name}")
+        logger.info(f"[SHARED-AUTH] Using API key from environment variable: {env_var_name} (length: {len(api_key)})")
     else:
-        logger.warning(f"API key not found in Secrets Manager or environment variables for service: {service_name}")
+        logger.error(f"[SHARED-AUTH] API key not found in Secrets Manager or environment variables for service: {service_name}")
+        logger.error(f"[SHARED-AUTH] Checked: {secret_name} in Secrets Manager")
+        logger.error(f"[SHARED-AUTH] Checked environment variables: {service_name.upper().replace('-', '_')}_API_KEY and {service_name}_API_KEY".upper())
     
     return api_key
 
@@ -156,30 +171,61 @@ def verify_api_key(
     Returns:
         Tuple of (is_valid, error_message)
     """
-    headers = event.get('headers', {}) or {}
+    logger.info(f"[SHARED-AUTH] Verifying API key for service: {service_name}")
     
-    # Handle case-insensitive headers
-    api_key = (
-        headers.get('x-api-key') or 
-        headers.get('X-Api-Key') or 
-        headers.get('X-API-Key') or
-        headers.get('x-api-key', '').lower()  # Try lowercase key
-    )
+    headers = event.get('headers', {}) or {}
+    logger.info(f"[SHARED-AUTH] Headers keys: {list(headers.keys())[:10]}...")  # Log first 10 keys
+    
+    # Handle case-insensitive headers - check all variations
+    api_key = None
+    header_checked = None
+    
+    for header_name in ['x-api-key', 'X-Api-Key', 'X-API-Key']:
+        if header_name in headers:
+            api_key = headers[header_name]
+            header_checked = header_name
+            break
+    
+    # Also try case-insensitive lookup
+    if not api_key:
+        for key in headers.keys():
+            if key.lower() == 'x-api-key':
+                api_key = headers[key]
+                header_checked = key
+                break
     
     if not api_key:
+        logger.warning(f"[SHARED-AUTH] No API key found in headers")
+        logger.warning(f"[SHARED-AUTH] Checked headers: {list(headers.keys())}")
         return False, "Missing API key in X-Api-Key header"
     
+    logger.info(f"[SHARED-AUTH] Found API key in header '{header_checked}' (length: {len(api_key)})")
+    
     # Get expected API key
+    logger.info(f"[SHARED-AUTH] Retrieving expected API key for service: {service_name}")
     expected_key = get_api_key(service_name)
     
     if not expected_key:
-        logger.warning(f"API key not configured for service {service_name}")
+        logger.error(f"[SHARED-AUTH] API key not configured for service {service_name}")
+        logger.error(f"[SHARED-AUTH] Checked environment variable: {service_name.upper().replace('-', '_')}_API_KEY")
+        logger.error(f"[SHARED-AUTH] Also checked: {service_name}_API_KEY".upper())
         return False, "API key not configured"
+    
+    logger.info(f"[SHARED-AUTH] Expected API key retrieved (length: {len(expected_key)})")
     
     # Compare API keys (use constant-time comparison to prevent timing attacks)
     if not constant_time_compare(api_key, expected_key):
-        logger.warning(f"Invalid API key attempt from {event.get('requestContext', {}).get('http', {}).get('sourceIp', 'unknown')}")
+        source_ip = (
+            event.get('requestContext', {}).get('http', {}).get('sourceIp') or
+            event.get('requestContext', {}).get('identity', {}).get('sourceIp') or
+            event.get('requestContext', {}).get('identity', {}).get('sourceIpAddress') or
+            'unknown'
+        )
+        logger.warning(f"[SHARED-AUTH] Invalid API key attempt from {source_ip}")
+        logger.warning(f"[SHARED-AUTH] API key lengths - received: {len(api_key)}, expected: {len(expected_key)}")
         return False, "Invalid API key"
+    
+    logger.info(f"[SHARED-AUTH] API key matches successfully")
     
     # Check IP whitelist if required
     if require_ip_whitelist:
@@ -192,7 +238,7 @@ def verify_api_key(
         
         whitelist = get_ip_whitelist()
         if not is_ip_allowed(client_ip, whitelist):
-            logger.warning(f"IP {client_ip} not in whitelist")
+            logger.warning(f"[SHARED-AUTH] IP {client_ip} not in whitelist")
             return False, "IP address not allowed"
     
     return True, None

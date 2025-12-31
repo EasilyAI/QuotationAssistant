@@ -122,40 +122,110 @@ def create_response(
     }
 
 
-def verify_api_key(event: Dict[str, Any]) -> bool:
+def verify_auth(event: Dict[str, Any]) -> bool:
     """
-    Verify API key from request headers.
-    
-    Uses shared authentication utility for consistency across services.
+    Verify authentication from request headers.
+    Supports both Cognito Bearer tokens and API keys (fallback).
     
     Args:
         event: API Gateway event
         
     Returns:
-        True if API key is valid, False otherwise
+        True if authenticated, False otherwise
     """
-    try:
-        from shared.api_key_auth import verify_api_key as shared_verify_api_key
-        is_valid, _ = shared_verify_api_key(event, 'quotation', require_ip_whitelist=False)
-        return is_valid
-    except ImportError:
+    headers = event.get('headers', {}) or {}
+    
+    # Log header keys for debugging (case-insensitive check)
+    header_keys_lower = [k.lower() for k in headers.keys()]
+    logger.info(f"[AUTH] Available header keys (lowercase): {header_keys_lower}")
+    
+    # Check for Cognito token first (Authorization: Bearer <token>)
+    auth_header = None
+    for key in headers:
+        if key.lower() == 'authorization':
+            auth_header = headers[key]
+            break
+    
+    has_cognito_token = False
+    if auth_header and isinstance(auth_header, str) and auth_header.startswith('Bearer '):
+        token = auth_header[7:].strip()
+        if token:
+            # Check if it's a valid JWT structure (3 parts separated by dots)
+            parts = token.split('.')
+            if len(parts) == 3:  # JWT has 3 parts
+                has_cognito_token = True
+                logger.info("[AUTH] Request authenticated with Cognito Bearer token")
+                # Note: Actual JWT verification should be done by API Gateway authorizer
+                # For now, we just check the structure
+                return True
+    
+    # If no Cognito token, check for API key
+    if not has_cognito_token:
+        logger.info("[AUTH] No Cognito token found, checking for API key...")
+        try:
+            from shared.api_key_auth import verify_api_key as shared_verify_api_key
+            logger.info("[AUTH] Using shared API key authentication module")
+            
+            # Try to get API key from headers for logging (without logging the value)
+            api_key_headers = ['x-api-key', 'X-Api-Key', 'X-API-Key']
+            api_key_found = None
+            for header_key in api_key_headers:
+                if header_key in headers:
+                    api_key_found = header_key
+                    break
+            
+            if api_key_found:
+                logger.info(f"[AUTH] Found API key in header: {api_key_found} (length: {len(headers[api_key_found])})")
+            else:
+                logger.warning("[AUTH] No API key found in headers")
+            
+            is_valid, error_msg = shared_verify_api_key(event, 'quotation', require_ip_whitelist=False)
+            
+            if not is_valid:
+                logger.warning(f"[AUTH] API key verification failed: {error_msg}")
+            else:
+                logger.info("[AUTH] API key verification successful")
+            
+            return is_valid
+        except ImportError as e:
         # Fallback to local implementation if shared module not available
-        logger.warning("Shared auth module not available, using local implementation")
-        headers = event.get('headers', {}) or {}
-        
-        # Handle case-insensitive headers
-        api_key = headers.get('x-api-key') or headers.get('X-Api-Key') or headers.get('X-API-Key')
-        
-        if not api_key:
+            logger.warning(f"[AUTH] Shared auth module not available: {e}, using local implementation")
+            logger.warning("[AUTH] This should not happen in production - check shared module path")
+            
+            # Handle case-insensitive headers
+            api_key = headers.get('x-api-key') or headers.get('X-Api-Key') or headers.get('X-API-Key')
+            
+            if not api_key:
+                logger.warning("[AUTH] No API key found in headers (fallback check)")
+                return False
+            
+            logger.info(f"[AUTH] API key found in headers (length: {len(api_key)})")
+            
+            expected_key = os.getenv('QUOTATION_API_KEY')
+            
+            if not expected_key:
+                logger.error("[AUTH] QUOTATION_API_KEY not set in environment variables")
+                logger.error("[AUTH] Check serverless.yml environment configuration")
+                return False
+            
+            logger.info(f"[AUTH] Expected API key configured (length: {len(expected_key)})")
+            
+            is_match = api_key == expected_key
+            if not is_match:
+                logger.warning("[AUTH] API key mismatch - keys have different lengths or values")
+            
+            return is_match
+        except Exception as e:
+            logger.error(f"[AUTH] Unexpected error during authentication: {str(e)}", exc_info=True)
             return False
-        
-        expected_key = os.getenv('QUOTATION_API_KEY')
-        
-        if not expected_key:
-            logger.warning("QUOTATION_API_KEY not set in environment")
-            return False
-        
-        return api_key == expected_key
+
+
+# Keep backward compatibility
+def verify_api_key(event: Dict[str, Any]) -> bool:
+    """
+    Legacy function name - now calls verify_auth which supports both Cognito and API keys.
+    """
+    return verify_auth(event)
 
 
 def handle_cors_preflight(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:

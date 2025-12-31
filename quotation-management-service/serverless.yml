@@ -54,10 +54,6 @@ provider:
     # Ensure local/offline Python can locate service packages (including shared modules at root)
     PYTHONPATH: ${env:PYTHONPATH, '../:./'}
     
-    # AWS Configuration (for offline/local development)
-    AWS_PROFILE: ${opt:profile, 'hb-client'}
-    # Note: AWS_REGION is automatically provided by AWS Lambda and cannot be set manually
-    
     # DynamoDB Configuration
     QUOTATIONS_TABLE: ${self:custom.quotationsTable}
     PRODUCT_TABLE: ${self:custom.productsTable}
@@ -135,40 +131,10 @@ custom:
     useChildProcesses: true
     noPrependStageInUrl: true
   pythonRequirements:
-    # Build deps into a Lambda layer (Linux wheels) and keep function zips small
-    layer: true
-    requirementsFile: layer/requirements.txt
-    dockerizePip: false
-    pipCmdExtraArgs:
-      - "--platform"
-      - "manylinux2014_x86_64"
-      - "--only-binary"
-      - ":all:"
-      - "--implementation"
-      - "cp"
-      - "--python-version"
-      - "3.11"
-      - "--abi"
-      - "cp311"
-    slim: false
-    strip: false
-    zip: true
-    invalidateCaches: true
-    useDownloadCache: false
-    useStaticCache: false
-    # Use the explicit pyenv path so packaging always runs with Python 3.11
+    # Use default behavior - packages dependencies from root requirements.txt directly into function zip
+    # This matches the approach used in file-ingestion-service
+    # Specify Python binary path for local packaging (pyenv)
     pythonBin: "/Users/omerlewinsky/.pyenv/versions/3.11.9/bin/python3.11"
-    noDeploy:
-      - boto3
-      - botocore
-      - docutils
-      - jmespath
-      - pip
-      - python-dateutil
-      - s3transfer
-      - setuptools
-      - six
-      - urllib3
 
 functions:
   quotationApi:
@@ -176,8 +142,6 @@ functions:
     description: Quotation Management API
     memorySize: 512
     timeout: 30
-    layers:
-      - { Ref: PythonRequirementsLambdaLayer }
     events:
       # Quotation Management
       - httpApi:

@@ -326,7 +326,7 @@ const MultiItemSearch = () => {
     }
   };
 
-  // Handle opening catalog preview
+  // Handle opening catalog or sales drawing preview
   const handleOpenPreview = async (orderingNo) => {
     const trimmedOrderingNo = (orderingNo || '').trim();
     if (!trimmedOrderingNo || isPreviewLoading) {
@@ -337,43 +337,53 @@ const MultiItemSearch = () => {
       setIsPreviewLoading(true);
       setPreviewOrderingNo(trimmedOrderingNo);
 
-      // Fetch full product details (including catalogProducts with file references)
+      // Fetch full product details (including catalogProducts and salesDrawings)
       const productData = await fetchProductByOrderingNumber(trimmedOrderingNo);
       const catalogProducts = productData.catalogProducts || [];
+      const salesDrawings = productData.salesDrawings || [];
+      
+      let fileId = null;
+      let fileKey = null;
+      let previewProduct = null;
+
+      // First, try to get catalog preview
       const primaryCatalogProduct = catalogProducts[0];
-
-      const fileId =
-        primaryCatalogProduct &&
-        (primaryCatalogProduct._fileId ||
-          primaryCatalogProduct.fileId);
-
-      if (!primaryCatalogProduct || !fileId) {
-        throw new Error('No catalog source available for preview');
+      if (primaryCatalogProduct) {
+        fileId = primaryCatalogProduct._fileId || primaryCatalogProduct.fileId;
+        if (fileId) {
+          const fileInfo = await getFileInfo(fileId);
+          fileKey = fileInfo.s3Key || fileInfo.key;
+          if (fileKey) {
+            previewProduct = primaryCatalogProduct;
+          }
+        }
       }
 
-      // Resolve the file info to get the S3 key for the original catalog
-      const fileInfo = await getFileInfo(fileId);
-      const key = fileInfo.s3Key || fileInfo.key;
+      // If no catalog, try sales drawing
+      if (!fileKey && salesDrawings.length > 0) {
+        const primarySalesDrawing = salesDrawings[0];
+        fileKey = primarySalesDrawing.fileKey;
+      }
 
-      if (!key) {
-        throw new Error('No file key available for preview');
+      if (!fileKey) {
+        throw new Error('No catalog or sales drawing available for preview');
       }
 
       // Request a presigned download URL for secure preview access
-      const download = await getFileDownloadUrl(key);
+      const download = await getFileDownloadUrl(fileKey);
       if (!download || !download.url) {
         throw new Error('Missing preview URL');
       }
 
-      setPreviewProduct(primaryCatalogProduct);
-      setPreviewFileKey(key);
+      setPreviewProduct(previewProduct);
+      setPreviewFileKey(fileKey);
       setPreviewFileUrl(download.url);
       setIsPreviewOpen(true);
     } catch (error) {
-      console.error('Failed to open catalog preview', error);
+      console.error('Failed to open preview', error);
       const message =
         (error && error.message) ||
-        'Unable to open catalog preview. Please try again.';
+        'Unable to open preview. Please try again.';
       window.alert(message);
     } finally {
       setIsPreviewLoading(false);

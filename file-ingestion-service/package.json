@@ -4,11 +4,12 @@
   "description": "Serverless functions for file processing",
   "scripts": {
     "invoke:processUploadDemoEvent": "serverless invoke local -f processUploadedFile -p demo-event.json",
-    "offline": "serverless offline"
+    "deploy": "DOTENV_CONFIG_PATH=../.env node -r dotenv/config node_modules/serverless/bin/serverless.js deploy",
+    "offline": "DOTENV_CONFIG_PATH=../.env node -r dotenv/config node_modules/serverless/bin/serverless.js offline"
   },
   "devDependencies": {
+    "dotenv": "^16.6.1",
     "serverless-offline": "^13.0.0",
     "serverless-python-requirements": "^6.0.0"
   }
 }
-
