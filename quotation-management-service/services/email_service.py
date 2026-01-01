@@ -140,6 +140,9 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
     totals = quotation.get('totals', {})
     total = totals.get('total', 0.0)
     
+    # Convert to float to handle Decimal types from DynamoDB
+    total_float = float(total) if total is not None else 0.0
+    
     body_lines = [
         f"Dear {customer_name},",
         "",
@@ -148,7 +151,7 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         f"Quotation Number: {quotation_number}",
         f"Quotation Name: {quotation_name}",
         f"Total Items: {len(lines)}",
-        f"Grand Total: {currency} {total:.2f}",
+        f"Grand Total: {currency} {total_float:.2f}",
         "",
         "Items:"
     ]
@@ -158,12 +161,19 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         product_name = line.get('product_name', '')
         quantity = line.get('quantity', 1)
         final_price = line.get('final_price', 0.0)
-        line_total = final_price * quantity
+        
+        # Convert to float to handle Decimal types from DynamoDB
+        quantity_float = float(quantity) if quantity is not None else 1.0
+        final_price_float = float(final_price) if final_price is not None else 0.0
+        line_total = final_price_float * quantity_float
+        
         notes = line.get('notes', '')
         
         body_lines.append(f"\n{idx}. {product_name}")
-        body_lines.append(f"   - Quantity: {quantity}")
-        body_lines.append(f"   - Unit Price: {currency} {final_price:.2f}")
+        # Format quantity as integer if whole number, otherwise as decimal
+        quantity_str = f"{int(quantity_float)}" if quantity_float == int(quantity_float) else f"{quantity_float}"
+        body_lines.append(f"   - Quantity: {quantity_str}")
+        body_lines.append(f"   - Unit Price: {currency} {final_price_float:.2f}")
         body_lines.append(f"   - Subtotal: {currency} {line_total:.2f}")
         
         if notes:
@@ -187,7 +197,7 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
     
     body_lines.extend([
         "",
-        f"Grand Total: {currency} {total:.2f}",
+        f"Grand Total: {currency} {total_float:.2f}",
         "",
         "Please review and let us know if you have any questions.",
         "",

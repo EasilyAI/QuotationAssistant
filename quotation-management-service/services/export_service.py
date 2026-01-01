@@ -78,7 +78,7 @@ def generate_priority_import_excel(quotation: Dict[str, Any]) -> BytesIO:
     """
     Generate priority import Excel file for ERP ingestion.
     
-    Includes all quotation table fields.
+    Format: ordering_number, quantity, final_price
     
     Args:
         quotation: Quotation data
@@ -90,21 +90,11 @@ def generate_priority_import_excel(quotation: Dict[str, Any]) -> BytesIO:
     ws = wb.active
     ws.title = "Priority Import"
     
-    # Header row with all fields
+    # Header row - only ordering number, quantity, and price
     headers = [
-        'Order No',
         'Ordering Number',
-        'Requested Item',
-        'Product Name',
-        'Description',
         'Quantity',
-        'Base Price',
-        'Margin %',
-        'Final Price',
-        'Drawing Link',
-        'Catalog Link',
-        'Notes',
-        'Source'
+        'Price'
     ]
     ws.append(headers)
     
@@ -113,24 +103,23 @@ def generate_priority_import_excel(quotation: Dict[str, Any]) -> BytesIO:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal='center')
     
-    # Data rows
+    # Data rows - only lines with ordering_number
     lines = quotation.get('lines', [])
-    for idx, line in enumerate(lines, start=1):
-        ws.append([
-            idx,  # Order No
-            line.get('ordering_number', ''),
-            line.get('product_name', ''),  # Requested Item (using product_name)
-            line.get('product_name', ''),
-            line.get('description', ''),
-            line.get('quantity', 1),
-            line.get('base_price', 0.0),
-            line.get('margin_pct', '') if line.get('margin_pct') is not None else '',
-            line.get('final_price', 0.0),
-            line.get('drawing_link', ''),
-            line.get('catalog_link', ''),
-            line.get('notes', ''),
-            line.get('source', '')
-        ])
+    for line in lines:
+        ordering_number = line.get('ordering_number', '').strip()
+        if ordering_number:  # Only include lines with ordering number
+            quantity = line.get('quantity', 1)
+            final_price = line.get('final_price', 0.0)
+            
+            # Convert to float to handle Decimal types from DynamoDB
+            quantity_float = float(quantity) if quantity is not None else 1.0
+            final_price_float = float(final_price) if final_price is not None else 0.0
+            
+            ws.append([
+                ordering_number,
+                quantity_float,
+                final_price_float
+            ])
     
     # Auto-adjust column widths
     for column in ws.columns:

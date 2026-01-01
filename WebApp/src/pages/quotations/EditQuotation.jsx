@@ -221,7 +221,8 @@ const ActionsMenu = ({
   globalMargin,
   setGlobalMargin,
   quotationId,
-  incompleteCount
+  incompleteCount,
+  isPullingPrices = false
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
@@ -271,12 +272,26 @@ const ActionsMenu = ({
           <button 
             onClick={() => handleAction(onPullPrices)} 
             className="menu-item"
-            disabled={!quotationId}
+            disabled={!quotationId || isPullingPrices}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path d="M21 12C21 16.9706 16.9706 21 12 21M21 12C21 7.02944 16.9706 3 12 3M21 12H3M12 21C7.02944 21 3 16.9706 3 12M12 21C13.6569 21 15 16.9706 15 12C15 7.02944 13.6569 3 12 3M12 21C10.3431 21 9 16.9706 9 12C9 7.02944 10.3431 3 12 3M3 12C3 7.02944 7.02944 3 12 3" stroke="currentColor" strokeWidth="2"/>
-            </svg>
-            Pull Prices from Catalog
+            {isPullingPrices ? (
+              <>
+                <svg className="spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="32">
+                    <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
+                    <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
+                  </circle>
+                </svg>
+                Pulling Prices...
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M21 12C21 16.9706 16.9706 21 12 21M21 12C21 7.02944 16.9706 3 12 3M21 12H3M12 21C7.02944 21 3 16.9706 3 12M12 21C13.6569 21 15 16.9706 15 12C15 7.02944 13.6569 3 12 3M12 21C10.3431 21 9 16.9706 9 12C9 7.02944 10.3431 3 12 3M3 12C3 7.02944 7.02944 3 12 3" stroke="currentColor" strokeWidth="2"/>
+                </svg>
+                Pull Prices from Catalog
+              </>
+            )}
           </button>
 
           <div className="menu-divider"></div>
@@ -362,6 +377,7 @@ const EditQuotation = () => {
   const hasCreatedRef = useRef(false);
   const hasAddedNewItemRef = useRef(false);
   const hasLoadedRef = useRef(false);
+  const hasAutoPulledPricesRef = useRef(false);
   
   // Store initial values from location state in refs to prevent infinite loops
   // These are only read on initial mount
@@ -425,13 +441,14 @@ const EditQuotation = () => {
             
             // Add initial items if provided
             if (initialItems.length > 0) {
+              const defaultMarginPct = (metadata.defaultMargin || 20) / 100;
               const transformedItems = initialItems.map(item => ({
                 orderingNumber: item.orderingNumber || item.orderingNo,
                 productName: item.productName || item.requestedItem || '',
                 description: item.description || item.specs || item.requestedItem || '',
                 quantity: item.quantity || 1,
                 base_price: item.price,
-                margin_pct: item.margin ? item.margin / 100 : undefined,
+                margin_pct: item.margin ? item.margin / 100 : defaultMarginPct,
                 drawing_link: item.sketchFile,
                 catalog_link: item.catalogLink,
                 notes: item.notes,
@@ -508,13 +525,15 @@ const EditQuotation = () => {
       hasAddedNewItemRef.current = true;
       const addItem = async () => {
         try {
+          // Use quotation's defaultMargin if newItem.margin is not set
+          const defaultMarginPct = (quotation.defaultMargin || 20) / 100;
           const transformedItem = {
             orderingNumber: newItem.orderingNumber || newItem.orderingNo,
             productName: newItem.productName || newItem.requestedItem || '',
             description: newItem.description || newItem.specs || newItem.requestedItem || '',
             quantity: newItem.quantity || 1,
             base_price: newItem.price,
-            margin_pct: newItem.margin ? newItem.margin / 100 : undefined,
+            margin_pct: newItem.margin ? newItem.margin / 100 : defaultMarginPct,
             drawing_link: newItem.sketchFile,
             catalog_link: newItem.catalogLink,
             notes: newItem.notes,
@@ -538,6 +557,7 @@ const EditQuotation = () => {
   const [globalMargin, setGlobalMargin] = useState(metadata?.defaultMargin || quotation?.defaultMargin || 20);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPullingPrices, setIsPullingPrices] = useState(false);
   const [showOnlyIncomplete] = useState(false);
   const [filterType, setFilterType] = useState('all'); // 'all', 'incomplete', 'no-price', 'no-drawing'
   
@@ -547,6 +567,65 @@ const EditQuotation = () => {
       setGlobalMargin(quotation.defaultMargin);
     }
   }, [quotation?.defaultMargin]);
+
+  // Auto-apply default margin to items when quotation loads (only for items without margin set)
+  useEffect(() => {
+    if (quotation?.items && quotation?.defaultMargin) {
+      // Check if any items need margin update (null/undefined only)
+      const needsMarginUpdate = quotation.items.some(item => 
+        item.margin == null || item.margin === undefined
+      );
+      
+      if (needsMarginUpdate) {
+        setQuotation(prev => ({
+          ...prev,
+          items: prev.items.map(item => ({
+            ...item,
+            margin: item.margin != null && item.margin !== undefined ? item.margin : prev.defaultMargin
+          }))
+        }));
+      }
+    }
+  }, [quotation?.id]); // Only run when quotation ID changes (on initial load)
+
+  // Auto-pull prices when quotation loads (if it has items with ordering numbers)
+  useEffect(() => {
+    const autoPullPrices = async () => {
+      if (!quotation?.id || !quotation?.items || quotation.items.length === 0 || hasAutoPulledPricesRef.current) {
+        return;
+      }
+      
+      // Check if there are items with ordering numbers but no prices
+      const hasItemsNeedingPrices = quotation.items.some(item => 
+        item.orderingNumber && !item.price
+      );
+      
+      if (hasItemsNeedingPrices && !isPullingPrices) {
+        hasAutoPulledPricesRef.current = true;
+        try {
+          setIsPullingPrices(true);
+          const updatedItems = await refreshPrices(quotation.id);
+          setQuotation(prev => ({ ...prev, items: updatedItems }));
+        } catch (err) {
+          console.error('Error auto-pulling prices:', err);
+          // Don't show alert for auto-pull, just log it
+        } finally {
+          setIsPullingPrices(false);
+        }
+      }
+    };
+
+    // Only auto-pull if quotation is loaded and not a new quotation
+    if (quotation?.id && !isNewQuotation) {
+      autoPullPrices();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotation?.id]); // Only run when quotation ID changes (after initial load)
+  
+  // Reset auto-pull ref when quotation ID changes
+  useEffect(() => {
+    hasAutoPulledPricesRef.current = false;
+  }, [quotation?.id]);
 
   // Warn user about unsaved changes
   useEffect(() => {
@@ -600,6 +679,7 @@ const EditQuotation = () => {
     }
     
     try {
+      setIsPullingPrices(true);
       const updatedItems = await refreshPrices(quotation.id);
       setQuotation(prev => ({ ...prev, items: updatedItems }));
       setHasUnsavedChanges(true);
@@ -607,6 +687,8 @@ const EditQuotation = () => {
     } catch (err) {
       console.error('Error refreshing prices:', err);
       alert(err.message || 'Failed to refresh prices');
+    } finally {
+      setIsPullingPrices(false);
     }
   };
 
@@ -1031,6 +1113,7 @@ const EditQuotation = () => {
             setGlobalMargin={setGlobalMargin}
             quotationId={quotation?.id}
             incompleteCount={incompleteCount}
+            isPullingPrices={isPullingPrices}
           />
         </div>
       </div>

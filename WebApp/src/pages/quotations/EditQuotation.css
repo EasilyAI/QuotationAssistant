@@ -419,13 +419,13 @@
 
 .table-wrapper {
   overflow-x: auto;
-  max-height: calc(100vh - 320px);
+  max-height: calc((100vh - 320px) * 0.9); /* 10% shorter */
   overflow-y: auto;
 }
 
 @media (min-height: 900px) {
   .table-wrapper {
-    max-height: calc(100vh - 280px);
+    max-height: calc((100vh - 280px) * 0.9); /* 10% shorter */
   }
 }
 
@@ -437,14 +437,14 @@
 
 /* Column widths - Better proportions with row total */
 .col-num { width: 50px; }
-.col-ordering { width: 180px; }
-.col-specs { width: auto; min-width: 300px; }
-.col-qty { width: 90px; }
-.col-price { width: 120px; }
-.col-margin { width: 90px; }
-.col-unit-price { width: 110px; }
-.col-row-total { width: 130px; }
-.col-actions-group { width: 130px; text-align: right; }
+.col-ordering { width: 200px; }
+.col-specs { width: auto; min-width: 210px; } /* Reduced by 30% from 300px */
+.col-qty { width: 100px; }
+.col-price { width: 130px; }
+.col-margin { width: 100px; }
+.col-unit-price { width: 120px; }
+.col-row-total { width: 140px; }
+.col-actions-group { width: 140px; text-align: right; }
 
 .quotation-table thead {
   background: #f9fafb;
@@ -1042,6 +1042,20 @@
 .text-purple-800 { color: #5b21b6; }
 .bg-green-100 { background-color: #d1fae5; }
 .text-green-800 { color: #065f46; }
+
+/* Spinner animation for loading states */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
 
 /* Responsive */
 @media (max-width: 1024px) {

@@ -40,7 +40,10 @@ const MultiItemSearch = () => {
   };
 
   // Initialize with restored state if available, otherwise empty
-  const restoredState = restoreBatchSearchState();
+  // Only restore if we came from a quotation (to continue previous work)
+  // Otherwise, start fresh
+  const shouldRestoreState = cameFromQuotation;
+  const restoredState = shouldRestoreState ? restoreBatchSearchState() : null;
   const [items, setItems] = useState(restoredState?.items || []);
   const [isLoading, setIsLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -60,12 +63,12 @@ const MultiItemSearch = () => {
   const autocompleteInputRefs = useRef({});
   const [showAddToQuotationDialog, setShowAddToQuotationDialog] = useState(false);
 
-  // Set uploaded file if restoring state
+  // Set uploaded file if restoring state (only when coming from quotation)
   React.useEffect(() => {
-    if (restoredState?.uploadedFileName) {
+    if (shouldRestoreState && restoredState?.uploadedFileName) {
       setUploadedFile({ name: restoredState.uploadedFileName });
     }
-  }, [restoredState?.uploadedFileName]);
+  }, [shouldRestoreState, restoredState?.uploadedFileName]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -80,6 +83,13 @@ const MultiItemSearch = () => {
       setSearchError('Invalid file type. Please upload an Excel file (.xlsx or .xls)');
       return;
     }
+
+    // Clear previous state when uploading a new file
+    sessionStorage.removeItem('batchSearchState');
+    setItems([]);
+    setBatchSearchResults(null);
+    setCurrentPage(1);
+    setActiveTab('all');
 
     setIsLoading(true);
     setSearchError('');
@@ -398,8 +408,17 @@ const MultiItemSearch = () => {
 
   const handleDiscard = () => {
     if (window.confirm('Are you sure you want to discard all changes?')) {
+      // Clear sessionStorage to prevent restoring old state
+      sessionStorage.removeItem('batchSearchState');
+      // Clear all state
       setUploadedFile(null);
       setItems([]);
+      setParsedExcelData(null);
+      setValidationErrors([]);
+      setBatchSearchResults(null);
+      setSearchError('');
+      setCurrentPage(1);
+      setActiveTab('all');
       navigate('/dashboard');
     }
   };

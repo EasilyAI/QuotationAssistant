@@ -77,14 +77,15 @@ const transformQuotationToBackend = (frontendQuotation) => {
 /**
  * Transform backend line item format to frontend format
  */
-const transformLineFromBackend = (backendLine, index) => {
+const transformLineFromBackend = (backendLine, index, defaultMargin = 20) => {
   // Handle base_price - null or undefined means price not found
   const basePrice = backendLine.base_price;
   const hasPrice = basePrice != null && basePrice !== '' && !isNaN(parseFloat(basePrice));
   
   // Handle margin - convert from decimal to percentage
+  // If margin_pct is null/undefined, use the quotation's defaultMargin
   const marginPct = backendLine.margin_pct;
-  const margin = marginPct != null ? parseFloat(marginPct) * 100 : 20;
+  const margin = marginPct != null ? parseFloat(marginPct) * 100 : defaultMargin;
   
   return {
     orderNo: index + 1,
@@ -212,9 +213,10 @@ export const getQuotation = async (quotationId) => {
   const backendQuotation = await response.json();
   const frontendQuotation = transformQuotationFromBackend(backendQuotation);
   
-  // Transform lines
+  // Transform lines - use quotation's defaultMargin for items without margin
+  const defaultMargin = frontendQuotation.defaultMargin || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return {
@@ -313,8 +315,10 @@ export const addLineItem = async (quotationId, lineData) => {
   }
 
   const backendQuotation = await response.json();
+  // Extract defaultMargin from backend (global_margin_pct is 0-1, convert to percentage)
+  const defaultMargin = (backendQuotation.global_margin_pct || 0) * 100 || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return lines;
@@ -341,8 +345,10 @@ export const batchAddLineItems = async (quotationId, linesData) => {
   }
 
   const backendQuotation = await response.json();
+  // Extract defaultMargin from backend (global_margin_pct is 0-1, convert to percentage)
+  const defaultMargin = (backendQuotation.global_margin_pct || 0) * 100 || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return lines;
@@ -372,8 +378,10 @@ export const updateLineItem = async (quotationId, lineId, lineData) => {
   }
 
   const backendQuotation = await response.json();
+  // Extract defaultMargin from backend (global_margin_pct is 0-1, convert to percentage)
+  const defaultMargin = (backendQuotation.global_margin_pct || 0) * 100 || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return lines;
@@ -398,8 +406,10 @@ export const deleteLineItem = async (quotationId, lineId) => {
   }
 
   const backendQuotation = await response.json();
+  // Extract defaultMargin from backend (global_margin_pct is 0-1, convert to percentage)
+  const defaultMargin = (backendQuotation.global_margin_pct || 0) * 100 || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return lines;
@@ -426,8 +436,10 @@ export const applyGlobalMargin = async (quotationId, marginPercent) => {
   }
 
   const backendQuotation = await response.json();
+  // Extract defaultMargin from backend (global_margin_pct is 0-1, convert to percentage)
+  const defaultMargin = (backendQuotation.global_margin_pct || 0) * 100 || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return lines;
@@ -449,8 +461,10 @@ export const refreshPrices = async (quotationId) => {
   }
 
   const backendQuotation = await response.json();
+  // Extract defaultMargin from backend (global_margin_pct is 0-1, convert to percentage)
+  const defaultMargin = (backendQuotation.global_margin_pct || 0) * 100 || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return lines;
@@ -621,9 +635,10 @@ export const saveQuotationFullState = async (quotationId, quotationState) => {
   // Transform backend response to frontend format
   const frontendQuotation = transformQuotationFromBackend(backendQuotation);
   
-  // Transform lines
+  // Transform lines - use quotation's defaultMargin for items without margin
+  const defaultMargin = frontendQuotation.defaultMargin || 20;
   const lines = (backendQuotation.lines || []).map((line, index) => 
-    transformLineFromBackend(line, index)
+    transformLineFromBackend(line, index, defaultMargin)
   );
 
   return {
