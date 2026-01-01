@@ -16,7 +16,6 @@ from utils.helpers import convert_floats_to_decimal
 # Configure DynamoDB for local development
 # When running serverless offline, we need to use AWS profile or credentials
 dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT')
-aws_profile = os.getenv('AWS_PROFILE', os.getenv('AWS_DEFAULT_PROFILE'))
 region = os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
 
 # Check if we're in real AWS Lambda (not serverless-offline)
@@ -24,10 +23,22 @@ region = os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
 # if we're in /var/task (real Lambda) vs local filesystem
 is_real_lambda = os.path.exists('/var/task') and os.getenv('LAMBDA_TASK_ROOT')
 
+# In real Lambda, we must use IAM roles, not AWS profiles
+# Unset AWS_PROFILE if it's set, as boto3 will try to use it automatically
+if is_real_lambda:
+    if 'AWS_PROFILE' in os.environ:
+        del os.environ['AWS_PROFILE']
+    if 'AWS_DEFAULT_PROFILE' in os.environ:
+        del os.environ['AWS_DEFAULT_PROFILE']
+    aws_profile = None
+else:
+    aws_profile = os.getenv('AWS_PROFILE', os.getenv('AWS_DEFAULT_PROFILE'))
+
 if dynamodb_endpoint:
     # Use DynamoDB Local
     print(f"[process_upload_file] Using DynamoDB Local endpoint: {dynamodb_endpoint}")
     dynamodb = boto3.resource('dynamodb', endpoint_url=dynamodb_endpoint)
+    session = None  # No session needed for local DynamoDB
 elif aws_profile and not is_real_lambda:
     # Use AWS profile (for local development, including serverless-offline)
     print(f"[process_upload_file] Using AWS profile: {aws_profile} in region: {region}")
@@ -36,14 +47,22 @@ elif aws_profile and not is_real_lambda:
         dynamodb = session.resource('dynamodb')
     except Exception as e:
         print(f"[process_upload_file] WARNING: Failed to use profile {aws_profile}: {e}, falling back to default credentials")
-        dynamodb = boto3.resource('dynamodb', region_name=region)
+        session = boto3.Session(region_name=region)
+        dynamodb = session.resource('dynamodb')
 else:
     # Use default AWS credentials (IAM role in Lambda, or env vars/credentials file locally)
     print(f"[process_upload_file] Using default AWS credentials in region: {region} (Real Lambda: {is_real_lambda}, Profile: {aws_profile or 'None'})")
-    dynamodb = boto3.resource('dynamodb', region_name=region)
+    # Explicitly create session without profile to ensure boto3 doesn't try to use AWS_PROFILE
+    session = boto3.Session(region_name=region)
+    dynamodb = session.resource('dynamodb')
 
-s3 = boto3.client("s3")
-s3_client = boto3.client("s3")
+# Create S3 clients - use session if available to avoid profile issues
+if session:
+    s3 = session.client("s3")
+    s3_client = session.client("s3")
+else:
+    s3 = boto3.client("s3")
+    s3_client = boto3.client("s3")
 
 BUCKET = "hb-files-raw"
 AWS_REGION = region

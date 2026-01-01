@@ -20,14 +20,24 @@ from utils.file_details import normalize_file_name, normalize_catalog_serial_num
 # Configure AWS clients for local development
 # When running serverless offline, we need to use AWS profile or credentials
 dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT')
-# Check both environment variable and os.environ (serverless-offline may use os.environ)
-aws_profile = os.getenv('AWS_PROFILE') or os.environ.get('AWS_PROFILE') or os.getenv('AWS_DEFAULT_PROFILE') or os.environ.get('AWS_DEFAULT_PROFILE')
 region = os.getenv('AWS_REGION') or os.environ.get('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION') or os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
 
 # Check if we're in real AWS Lambda (not serverless-offline)
 # Serverless-offline may set LAMBDA_TASK_ROOT, but we can detect real Lambda by checking
 # if we're in /var/task (real Lambda) vs local filesystem
 is_real_lambda = os.path.exists('/var/task') and os.getenv('LAMBDA_TASK_ROOT')
+
+# In real Lambda, we must use IAM roles, not AWS profiles
+# Unset AWS_PROFILE if it's set, as boto3 will try to use it automatically
+if is_real_lambda:
+    if 'AWS_PROFILE' in os.environ:
+        del os.environ['AWS_PROFILE']
+    if 'AWS_DEFAULT_PROFILE' in os.environ:
+        del os.environ['AWS_DEFAULT_PROFILE']
+    aws_profile = None
+else:
+    # Check both environment variable and os.environ (serverless-offline may use os.environ)
+    aws_profile = os.getenv('AWS_PROFILE') or os.environ.get('AWS_PROFILE') or os.getenv('AWS_DEFAULT_PROFILE') or os.environ.get('AWS_DEFAULT_PROFILE')
 
 # Debug logging
 print(f"[get_presigned_url] AWS Config - endpoint: {dynamodb_endpoint or 'None'}, profile: {aws_profile or 'None'}, region: {region}, is_real_lambda: {is_real_lambda}, LAMBDA_TASK_ROOT: {os.getenv('LAMBDA_TASK_ROOT') or 'None'}")
@@ -52,8 +62,10 @@ elif aws_profile and not is_real_lambda:
 else:
     # Use default AWS credentials (IAM role in Lambda, or env vars/credentials file locally)
     print(f"[get_presigned_url] Using default AWS credentials in region: {region} (Real Lambda: {is_real_lambda}, Profile: {aws_profile or 'None'})")
-    dynamodb = boto3.resource('dynamodb', region_name=region)
-    s3 = boto3.client("s3", region_name=region)
+    # Explicitly create session without profile to ensure boto3 doesn't try to use AWS_PROFILE
+    session = boto3.Session(region_name=region)
+    dynamodb = session.resource('dynamodb')
+    s3 = session.client('s3')
 BUCKET = "hb-files-raw"
 # BUCKET = os.environ["UPLOAD_BUCKET"]
 FILES_TABLE = os.environ.get("FILES_TABLE", "hb-files")

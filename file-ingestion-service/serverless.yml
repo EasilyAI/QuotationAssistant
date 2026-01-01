@@ -80,7 +80,9 @@ provider:
     # PYTHONPATH: layer path for local dev (serverless-offline) and Lambda (/opt/python is auto-added in Lambda)
     PYTHONPATH: "layer-shared/python:/opt/python"
     # AWS Configuration for local development
-    AWS_PROFILE: ${env:AWS_PROFILE, 'hb-client'}
+    # Note: AWS_PROFILE is only set if explicitly provided via env var (for local dev)
+    # In real Lambda, we use IAM roles, so AWS_PROFILE should not be set
+    AWS_PROFILE: ${env:AWS_PROFILE, ''}
     
     # Cognito Configuration (optional - for JWT authorizer)
     COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, ''}
