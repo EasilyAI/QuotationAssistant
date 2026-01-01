@@ -61,6 +61,8 @@ class PriceListProductItem(TypedDict, total=False):
     status: Optional[str]  # "valid" or "invalid"
     errors: Optional[List[str]]
     warnings: Optional[List[str]]
+    inferredCategory: Optional[str]  # Inferred product category from description
+    categoryMatchConfidence: Optional[str]  # "exact", "suggested", or "none"
 
 
 class PriceListProductsChunk(TypedDict, total=False):
@@ -231,7 +233,9 @@ def create_product_item(
         Product item ready for DynamoDB
     """
     # DynamoDB doesn't allow empty strings in GSI key attributes
-    # Use "UNCATEGORIZED" placeholder if category is empty
+    # Use "UNCATEGORIZED" placeholder if category is empty (required for GSI)
+    # Note: This is only used internally for DynamoDB compatibility
+    # UI should not show UNCATEGORIZED as an option to users
     if not product_category or product_category.strip() == "":
         product_category = "UNCATEGORIZED"
     

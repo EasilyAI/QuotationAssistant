@@ -23,7 +23,7 @@ export const API_CONFIG = {
 
   // Base URL for the quotation management service
   QUOTATION_API_BASE_URL:
-    // process.env.REACT_APP_QUOTATION_API_BASE_URL ||
+    process.env.REACT_APP_QUOTATION_API_BASE_URL ||
     'http://localhost:3004',
 
   // Extract Catalog Info service endpoints (see extractCatalogInfo/serverless.yml)

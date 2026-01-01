@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useSearchParams, useParams } from 'react-router-dom';
 import { getFileInfo, getPriceListProducts, updatePriceListProducts, completeFileReview } from '../../services/fileInfoService';
 import { saveProductsFromPriceList } from '../../services/productsService';
+import { ProductCategory } from '../../types/products';
 import './PriceListReview.css';
 
 const PriceListReview = () => {
@@ -27,6 +28,12 @@ const PriceListReview = () => {
   const [products, setProducts] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [showErrorsOnly, setShowErrorsOnly] = useState(false);
+  const [showMissingPrice, setShowMissingPrice] = useState(false);
+  const [showMissingLink, setShowMissingLink] = useState(false);
+  const [showModified, setShowModified] = useState(false);
+  const [showCategoryReview, setShowCategoryReview] = useState(false);
+  const [selectedRows, setSelectedRows] = useState(new Set());
+  const [showBulkCategoryModal, setShowBulkCategoryModal] = useState(false);
 
   // Stats
   const [stats, setStats] = useState({
@@ -126,6 +133,19 @@ const PriceListReview = () => {
     return missingPrice || missingLink;
   };
 
+  const hasMissingPrice = (product) => {
+    return product.price === null || product.price === undefined || product.price === '';
+  };
+
+  const hasMissingLink = (product) => {
+    const linkValue = product.SwagelokLink ?? product.swagelokLink ?? product.swaglokLink;
+    return !linkValue || linkValue.trim() === '';
+  };
+
+  const isModified = (product) => {
+    return product._modified === true;
+  };
+
   const handleRemoveProduct = (index) => {
     if (window.confirm('Are you sure you want to remove this product?')) {
       setProducts(prev => {
@@ -150,6 +170,108 @@ const PriceListReview = () => {
     };
     setProducts(prev => [...prev, newProduct]);
     setSaveSuccess(false);
+  };
+
+  const handleRowSelect = (index) => {
+    setSelectedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    // Calculate current page values using the same filtering logic
+    let filtered = products;
+    if (showMissingPrice) filtered = filtered.filter(hasMissingPrice);
+    if (showMissingLink) filtered = filtered.filter(hasMissingLink);
+    if (showModified) filtered = filtered.filter(isModified);
+    if (showCategoryReview) filtered = filtered.filter(needsCategoryReview);
+    
+    const totalPagesCalc = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const safeCurrentPageCalc = Math.min(currentPage, totalPagesCalc);
+    const currentStartIndex = (safeCurrentPageCalc - 1) * PAGE_SIZE;
+    const currentPaginated = filtered.slice(currentStartIndex, currentStartIndex + PAGE_SIZE);
+    
+    if (selectedRows.size === currentPaginated.length && currentPaginated.length > 0) {
+      setSelectedRows(new Set());
+    } else {
+      const indices = currentPaginated.map((_, idx) => currentStartIndex + idx);
+      setSelectedRows(new Set(indices));
+    }
+  };
+
+  const handleBulkCategoryUpdate = (category) => {
+    setProducts(prev => {
+      const updated = [...prev];
+      selectedRows.forEach(index => {
+        if (updated[index]) {
+          updated[index] = {
+            ...updated[index],
+            productCategory: category,
+            _modified: true
+          };
+        }
+      });
+      const modifiedCount = updated.filter(p => p._modified).length;
+      setStats(prevStats => ({ ...prevStats, modified: modifiedCount }));
+      return updated;
+    });
+    setSelectedRows(new Set());
+    setShowBulkCategoryModal(false);
+    setSaveSuccess(false);
+  };
+
+  const getCategoryConfidenceIcon = (confidence) => {
+    if (confidence === 'exact') {
+      return <span className="confidence-icon exact" title="Exact match">✓</span>;
+    } else if (confidence === 'suggested') {
+      return <span className="confidence-icon suggested" title="Suggested match - review needed">?</span>;
+    }
+    return null;
+  };
+
+  const needsCategoryReview = (product) => {
+    const confidence = product.categoryMatchConfidence;
+    return confidence === 'suggested' || confidence === 'none' || !product.productCategory;
+  };
+
+  const categoryReviewCount = products.filter(needsCategoryReview).length;
+  const missingPriceProducts = products.filter(p => p.price === null || p.price === undefined || p.price === '');
+  const missingLinkProducts = products.filter(p => {
+    const linkValue = p.SwagelokLink ?? p.swagelokLink ?? p.swaglokLink;
+    return !linkValue || linkValue.trim() === '';
+  });
+
+  const handleToggleReviewed = (index) => {
+    setProducts(prev => {
+      const updated = [...prev];
+      updated[index] = {
+        ...updated[index],
+        _reviewed: !updated[index]._reviewed,
+        _modified: true
+      };
+      const modifiedCount = updated.filter(p => p._modified).length;
+      setStats(prevStats => ({ ...prevStats, modified: modifiedCount }));
+      return updated;
+    });
+    setSaveSuccess(false);
+  };
+
+  const handleToggleEdit = (index, field) => {
+    setProducts(prev => {
+      const updated = [...prev];
+      const editKey = `_editing_${field}`;
+      updated[index] = {
+        ...updated[index],
+        [editKey]: !updated[index][editKey]
+      };
+      return updated;
+    });
   };
 
   const handleSave = async () => {
@@ -254,6 +376,7 @@ const PriceListReview = () => {
           
           return {
             orderingNumber: priceListProduct.orderingNumber.trim(),
+            productCategory: priceListProduct.productCategory || '', // Include category if set
             priceListPointerData: {
               fileId: fileId,
               year: year,
@@ -305,19 +428,29 @@ const PriceListReview = () => {
     return <span className="status-badge status-valid">Valid</span>;
   };
 
-  const filteredProducts = showErrorsOnly ? products.filter(isErrorRow) : products;
+  const filteredProducts = (() => {
+    let filtered = products;
+    
+    if (showMissingPrice) {
+      filtered = filtered.filter(hasMissingPrice);
+    }
+    if (showMissingLink) {
+      filtered = filtered.filter(hasMissingLink);
+    }
+    if (showModified) {
+      filtered = filtered.filter(isModified);
+    }
+    if (showCategoryReview) {
+      filtered = filtered.filter(needsCategoryReview);
+    }
+    
+    return filtered;
+  })();
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
   const endIndex = startIndex + PAGE_SIZE;
   const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
-  const missingPriceCount = products.filter(
-    (p) => p.price === null || p.price === undefined || p.price === ''
-  ).length;
-  const missingLinkCount = products.filter((p) => {
-    const linkValue = p.SwagelokLink ?? p.swagelokLink ?? p.swaglokLink;
-    return !linkValue || linkValue.trim() === '';
-  }).length;
 
   if (isLoading) {
     return (
@@ -410,35 +543,73 @@ const PriceListReview = () => {
               <span className="stat-label">Invalid</span>
             </div>
           )}
+          <div 
+            className={`stat-item stat-warning ${showMissingPrice ? 'stat-active' : ''}`}
+            onClick={() => {
+              setShowMissingPrice(!showMissingPrice);
+              setShowMissingLink(false);
+              setShowModified(false);
+              setShowCategoryReview(false);
+              setCurrentPage(1);
+            }}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="stat-value">{missingPriceProducts.length}</span>
+            <span className="stat-label">Products without price</span>
+          </div>
+          <div 
+            className={`stat-item stat-warning ${showMissingLink ? 'stat-active' : ''}`}
+            onClick={() => {
+              setShowMissingLink(!showMissingLink);
+              setShowMissingPrice(false);
+              setShowModified(false);
+              setShowCategoryReview(false);
+              setCurrentPage(1);
+            }}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="stat-value">{missingLinkProducts.length}</span>
+            <span className="stat-label">Products without SwagelokLink</span>
+          </div>
           {stats.modified > 0 && (
-            <div className="stat-item stat-modified">
+            <div 
+              className={`stat-item stat-modified ${showModified ? 'stat-active' : ''}`}
+              onClick={() => {
+                setShowModified(!showModified);
+                setShowMissingPrice(false);
+                setShowMissingLink(false);
+                setShowCategoryReview(false);
+                setCurrentPage(1);
+              }}
+              style={{ cursor: 'pointer' }}
+            >
               <span className="stat-value">{stats.modified}</span>
               <span className="stat-label">Modified</span>
             </div>
           )}
-          <div className="stat-item stat-warning">
-            <span className="stat-value">{missingPriceCount}</span>
-            <span className="stat-label">Products without price</span>
+          <div 
+            className={`stat-item stat-warning ${showCategoryReview ? 'stat-active' : ''}`}
+            onClick={() => {
+              setShowCategoryReview(!showCategoryReview);
+              setShowMissingPrice(false);
+              setShowMissingLink(false);
+              setShowModified(false);
+              setCurrentPage(1);
+            }}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="stat-value">{categoryReviewCount}</span>
+            <span className="stat-label">Need category review</span>
           </div>
-          <div className="stat-item stat-warning">
-            <span className="stat-value">{missingLinkCount}</span>
-            <span className="stat-label">Products without SwagelokLink</span>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="price-list-filters">
-          <label className="filter-checkbox">
-            <input
-              type="checkbox"
-              checked={showErrorsOnly}
-              onChange={(e) => {
-                setShowErrorsOnly(e.target.checked);
-                setCurrentPage(1);
-              }}
-            />
-            <span>Show only rows with missing price or SwagelokLink</span>
-          </label>
+          {selectedRows.size > 0 && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowBulkCategoryModal(true)}
+              style={{ marginLeft: 'auto', alignSelf: 'center' }}
+            >
+              Bulk Update Category ({selectedRows.size} selected)
+            </button>
+          )}
         </div>
 
         {/* Pagination */}
@@ -469,86 +640,214 @@ const PriceListReview = () => {
           <div className="price-table">
             {/* Table Header */}
             <div className="price-table-header price-list-header">
+              <div className="price-header-cell checkbox">
+                <input
+                  type="checkbox"
+                  checked={selectedRows.size === paginatedProducts.length && paginatedProducts.length > 0}
+                  onChange={handleSelectAll}
+                />
+              </div>
               <div className="price-header-cell row-num">#</div>
               <div className="price-header-cell ordering-number">Ordering Number</div>
               <div className="price-header-cell description">Description</div>
+              <div className="price-header-cell category">Category</div>
               <div className="price-header-cell price">Price</div>
               <div className="price-header-cell swaglok-link">SwagelokLink</div>
+              <div className="price-header-cell reviewed">Reviewed</div>
               <div className="price-header-cell status">Status</div>
-              <div className="price-header-cell actions">Actions</div>
+              <div className="price-header-cell actions"></div>
             </div>
 
             {/* Table Body */}
             <div className="price-table-body">
-              {paginatedProducts.map((product, index) => (
+              {paginatedProducts.map((product, index) => {
+                const globalIndex = startIndex + index;
+                const inferredCategory = product.inferredCategory || '';
+                const confidence = product.categoryMatchConfidence;
+                const currentCategory = product.productCategory || inferredCategory || '';
+                const needsReview = needsCategoryReview(product);
+                
+                return (
                 <div 
                   key={index} 
-                  className={`price-table-row price-list-row ${product.status === 'invalid' ? 'row-invalid' : ''} ${product._modified ? 'row-modified' : ''}`}
+                    className={`price-table-row price-list-row ${product.status === 'invalid' ? 'row-invalid' : ''}`}
                 >
+                    <div className="price-cell checkbox">
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.has(globalIndex)}
+                        onChange={() => handleRowSelect(globalIndex)}
+                      />
+                    </div>
                   <div className="price-cell row-num">
-                    <span className="row-number">{product.rowNumber || index + 1}</span>
+                    <span className="row-number">{startIndex + index + 1}</span>
                   </div>
-                  <div className="price-cell ordering-number">
-                    <input
-                      type="text"
-                      className="cell-input"
-                      value={product.orderingNumber || ''}
-                      onChange={(e) => handleProductChange(startIndex + index, 'orderingNumber', e.target.value)}
-                      placeholder="Enter ordering number"
-                    />
-                  </div>
-                  <div className="price-cell description">
-                    <input
-                      type="text"
-                      className="cell-input"
-                      value={product.description || ''}
-                      onChange={(e) => handleProductChange(startIndex + index, 'description', e.target.value)}
-                      placeholder="Enter description"
-                    />
-                  </div>
-                  <div className="price-cell price">
-                    <input
-                      type="number"
-                      className="cell-input"
-                      value={product.price ?? ''}
-                      onChange={(e) => handleProductChange(startIndex + index, 'price', e.target.value ? parseFloat(e.target.value) : null)}
-                      placeholder="0.00"
-                      step="0.01"
-                    />
-                  </div>
-                  <div className="price-cell swaglok-link">
-                    <input
-                      type="url"
-                      className="cell-input"
-                      value={
-                        (product.SwagelokLink ??
-                          product.swagelokLink ??
-                          product.swaglokLink) || ''
-                      }
-                      onChange={(e) => handleProductChange(startIndex + index, 'SwagelokLink', e.target.value)}
-                      placeholder="https://..."
-                    />
-                  </div>
-                  <div className="price-cell status">
-                    {getStatusBadge(product)}
-                    {product.errors && product.errors.length > 0 && (
-                      <div className="error-tooltip">
-                        {product.errors.map((err, i) => (
-                          <div key={i} className="error-text">{err}</div>
-                        ))}
+                    <div className="price-cell ordering-number">
+                      {product._editing_orderingNumber ? (
+                        <input
+                          type="text"
+                          className="cell-input"
+                          value={product.orderingNumber || ''}
+                          onChange={(e) => handleProductChange(globalIndex, 'orderingNumber', e.target.value)}
+                          onBlur={() => handleToggleEdit(globalIndex, 'orderingNumber')}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleToggleEdit(globalIndex, 'orderingNumber');
+                            }
+                          }}
+                          autoFocus
+                          placeholder="Enter ordering number"
+                        />
+                      ) : (
+                        <div 
+                          className="cell-readonly"
+                          onClick={() => handleToggleEdit(globalIndex, 'orderingNumber')}
+                          title="Click to edit"
+                        >
+                          {product.orderingNumber || <span className="placeholder-text">Click to edit</span>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="price-cell description">
+                      {product._editing_description ? (
+                        <input
+                          type="text"
+                          className="cell-input"
+                          value={product.description || ''}
+                          onChange={(e) => handleProductChange(globalIndex, 'description', e.target.value)}
+                          onBlur={() => handleToggleEdit(globalIndex, 'description')}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleToggleEdit(globalIndex, 'description');
+                            }
+                          }}
+                          autoFocus
+                          placeholder="Enter description"
+                        />
+                      ) : (
+                        <div 
+                          className="cell-readonly"
+                          onClick={() => handleToggleEdit(globalIndex, 'description')}
+                          title="Click to edit"
+                        >
+                          {product.description || <span className="placeholder-text">Click to edit</span>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="price-cell category">
+                      <div className="category-select-wrapper">
+                        <select
+                          className="cell-input category-select"
+                          value={currentCategory}
+                          onChange={(e) => handleProductChange(globalIndex, 'productCategory', e.target.value)}
+                        >
+                          <option value="">Select category...</option>
+                          {Object.values(ProductCategory)
+                            .filter(cat => cat !== ProductCategory.UNCATEGORIZED)
+                            .map(cat => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                        </select>
+                        {confidence && getCategoryConfidenceIcon(confidence)}
+                        {inferredCategory && !product.productCategory && (
+                          <span className="inferred-label" title={`Inferred: ${inferredCategory}`}>
+                            ({inferredCategory})
+                          </span>
+                        )}
                       </div>
-                    )}
+                    </div>
+                    <div className="price-cell price">
+                      <input
+                        type="number"
+                        className="cell-input"
+                        value={product.price ?? ''}
+                        onChange={(e) => handleProductChange(globalIndex, 'price', e.target.value ? parseFloat(e.target.value) : null)}
+                        placeholder="0.00"
+                        step="0.01"
+                      />
+                    </div>
+                    <div className="price-cell swaglok-link">
+                      {product._editing_swagelokLink ? (
+                        <input
+                          type="url"
+                          className="cell-input"
+                          value={
+                            (product.SwagelokLink ??
+                              product.swagelokLink ??
+                              product.swaglokLink) || ''
+                          }
+                          onChange={(e) => handleProductChange(globalIndex, 'SwagelokLink', e.target.value)}
+                          onBlur={() => handleToggleEdit(globalIndex, 'swagelokLink')}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleToggleEdit(globalIndex, 'swagelokLink');
+                            }
+                          }}
+                          autoFocus
+                          placeholder="https://..."
+                        />
+                      ) : (
+                        <div 
+                          className="cell-readonly cell-readonly-link"
+                          onClick={() => handleToggleEdit(globalIndex, 'swagelokLink')}
+                          title="Click to edit"
+                        >
+                          <span className="link-text">
+                            {(product.SwagelokLink ?? product.swagelokLink ?? product.swaglokLink) || 
+                              <span className="placeholder-text">Click to edit</span>}
+                          </span>
+                          {(product.SwagelokLink ?? product.swagelokLink ?? product.swaglokLink) && (
+                            <button
+                              className="link-icon-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const link = product.SwagelokLink ?? product.swagelokLink ?? product.swaglokLink;
+                                if (link) {
+                                  window.open(link, '_blank', 'noopener,noreferrer');
+                                }
+                              }}
+                              title="Open link in new tab"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M6 3H3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9M10 1h4m0 0v4m0-4L6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="price-cell reviewed">
+                      <input
+                        type="checkbox"
+                        checked={product._reviewed || false}
+                        onChange={() => handleToggleReviewed(globalIndex)}
+                        title="Mark as reviewed"
+                      />
+                    </div>
+                    <div className="price-cell status">
+                      {getStatusBadge(product)}
+                      {product.errors && product.errors.length > 0 && (
+                        <div className="error-tooltip">
+                          {product.errors.map((err, i) => (
+                            <div key={i} className="error-text">{err}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="price-cell actions">
+                      <button
+                        className="action-btn remove-btn-icon"
+                        onClick={() => handleRemoveProduct(globalIndex)}
+                        title="Remove product"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M2 4h12M5.333 4V2.667a1.333 1.333 0 0 1 1.334-1.334h2.666a1.333 1.333 0 0 1 1.334 1.334V4m2 0v9.333a1.333 1.333 0 0 1-1.334 1.334H4.667a1.333 1.333 0 0 1-1.334-1.334V4h9.334zM6.667 7.333v4M9.333 7.333v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
-                  <div className="price-cell actions">
-                    <button
-                      className="action-btn remove-btn"
-                      onClick={() => handleRemoveProduct(startIndex + index)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -590,6 +889,37 @@ const PriceListReview = () => {
               <h2>Processing Review...</h2>
               <p>Saving products to the database. This may take a few minutes.</p>
               <p className="loading-detail">Please do not close this window.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Category Update Modal */}
+        {showBulkCategoryModal && (
+          <div className="modal-overlay">
+            <div className="modal-content">
+              <h2>Bulk Update Category</h2>
+              <p>Update category for {selectedRows.size} selected product(s)</p>
+              <select
+                className="category-select-modal"
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleBulkCategoryUpdate(e.target.value);
+                  }
+                }}
+                defaultValue=""
+              >
+                <option value="">Select category...</option>
+                {Object.values(ProductCategory)
+                  .filter(cat => cat !== ProductCategory.UNCATEGORIZED)
+                  .map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+              </select>
+              <div className="modal-actions">
+                <button className="btn-secondary" onClick={() => setShowBulkCategoryModal(false)}>
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         )}

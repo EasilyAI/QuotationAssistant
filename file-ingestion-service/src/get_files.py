@@ -1732,6 +1732,7 @@ def save_products_from_price_list(event, context):
                             "price": prod.get("price"),
                             "description": prod.get("description"),
                             "link": prod.get("SwagelokLink"),
+                            "inferredCategory": prod.get("inferredCategory"),
                         }
         except Exception as e:
             print(f"[save_products_from_price_list] ERROR querying chunks for file {file_id}: {e}")
@@ -1808,6 +1809,10 @@ def save_products_from_price_list(event, context):
             price = chunk_data["price"]
             description = chunk_data["description"]
             link = chunk_data["link"]
+            inferred_category = chunk_data.get("inferredCategory")
+            
+            # Get category from request (user explicitly set in review page)
+            provided_category = product.get("productCategory", "").strip() if product.get("productCategory") else ""
             
             # Create pointer (not full data)
             new_pointer: PriceListPointer = {
@@ -1823,6 +1828,24 @@ def save_products_from_price_list(event, context):
             
             if existing_item:
                 # Product exists - merge with existing
+                
+                # Category consolidation logic:
+                # - If user explicitly provided category → use it
+                # - If no provided category but inferred exists and existing is empty/UNCATEGORIZED → use inferred
+                # - Otherwise → keep existing category
+                existing_category = existing_item.get("productCategory", "")
+                # Check if existing category is effectively empty (empty string or UNCATEGORIZED placeholder)
+                existing_is_empty = not existing_category or existing_category.strip() == "" or existing_category == "UNCATEGORIZED"
+                
+                if provided_category:
+                    # User explicitly set category - use it
+                    final_category = provided_category
+                elif inferred_category and existing_is_empty:
+                    # Use inferred category if existing is empty/UNCATEGORIZED
+                    final_category = inferred_category
+                else:
+                    # Keep existing category (don't overwrite with inferred if existing has a real category)
+                    final_category = existing_category
                 
                 # Get existing pointer arrays (supporting old metadata structure for migration)
                 if "metadata" in existing_item:
@@ -1866,7 +1889,7 @@ def save_products_from_price_list(event, context):
                 # Prepare updated product item - ONLY pointers, no denormalized data
                 product_item: Product = create_product_item(
                     ordering_number=ordering_number,
-                    product_category=existing_item.get("productCategory", ""),
+                    product_category=final_category,
                     catalog_products=existing_catalog_products,
                     price_list_pointers=convert_floats_to_decimal(merged_pointers),
                     sales_drawings=existing_sales_drawings,
@@ -1877,12 +1900,15 @@ def save_products_from_price_list(event, context):
                 )
                     
             else:
-                # New product - create with price list pointer only
-                # We don't have product category from price list, so leave empty
+                # New product - create with price list pointer
+                # Use provided category, or inferred category, or empty string
+                # Empty string will default to UNCATEGORIZED in create_product_item (for GSI compatibility)
+                # But we prefer inferred category over empty to minimize UNCATEGORIZED usage
+                final_category = provided_category or inferred_category or ""
                 
                 product_item: Product = create_product_item(
                     ordering_number=ordering_number,
-                    product_category="",  # Will need to be filled in from catalog later
+                    product_category=final_category,
                     price_list_pointers=convert_floats_to_decimal([new_pointer]),
                     created_at=timestamp,
                     created_at_iso=iso_timestamp,

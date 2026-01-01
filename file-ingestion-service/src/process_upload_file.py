@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 from utils.incomingEventParser import parse_s3_key
 from utils.corsHeaders import get_cors_headers
 from utils.helpers import convert_floats_to_decimal
+from utils.category_inference import infer_product_category
 
 # Configure DynamoDB for local development
 # When running serverless offline, we need to use AWS profile or credentials
@@ -721,6 +722,12 @@ def process_price_list(file_id, s3_key):
             except (ValueError, TypeError):
                 product["price"] = None
             
+            # Infer product category from description
+            description = product.get("description", "")
+            inferred_category, confidence = infer_product_category(description)
+            product["inferredCategory"] = inferred_category
+            product["categoryMatchConfidence"] = confidence
+            
             products.append(product)
 
             if row_idx <= data_start_row + 5:
@@ -730,7 +737,9 @@ def process_price_list(file_id, s3_key):
                     f"orderingNumber={product.get('orderingNumber')}, "
                     f"price={product.get('price')}, "
                     f"swagelokLink={product.get('swagelokLink')}, "
-                    f"status={product.get('status')}"
+                    f"status={product.get('status')}, "
+                    f"inferredCategory={product.get('inferredCategory')}, "
+                    f"categoryMatchConfidence={product.get('categoryMatchConfidence')}"
                 )
         
         print(f"[process_price_list] Processed {len(products)} rows, {len(all_errors)} errors, {len(all_warnings)} warnings")

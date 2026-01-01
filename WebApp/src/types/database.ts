@@ -41,6 +41,8 @@ export interface PriceListProductItem {
   status?: 'valid' | 'invalid';
   errors?: string[];
   warnings?: string[];
+  inferredCategory?: string; // Inferred product category from description
+  categoryMatchConfidence?: 'exact' | 'suggested' | 'none'; // Match confidence level
 }
 
 /**

@@ -125,17 +125,18 @@
 .price-table {
   display: flex;
   flex-direction: column;
-  min-width: 1200px;
+  min-width: 1400px;
 }
 
 /* Table Header */
 .price-table-header {
   display: grid;
-  grid-template-columns: 140px 250px 150px 110px 130px 90px 80px 120px;
+  grid-template-columns: 50px 50px 160px 1fr 180px 120px 150px 80px 100px 50px;
   gap: 12px;
   padding: 12px 16px;
   background: var(--color-background-gray);
   border-bottom: 1px solid var(--color-border);
+  align-items: center;
 }
 
 .price-header-cell {
@@ -144,6 +145,15 @@
   line-height: 21px;
   color: var(--color-text-primary);
   padding: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.price-header-cell.checkbox {
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 /* Table Body */
@@ -154,11 +164,12 @@
 
 .price-table-row {
   display: grid;
-  grid-template-columns: 140px 250px 150px 110px 130px 90px 80px 120px;
+  grid-template-columns: 50px 50px 160px 1fr 180px 120px 150px 80px 100px 50px;
   gap: 12px;
-  padding: 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--color-border-light);
   align-items: center;
+  background: var(--color-background);
 }
 
 .price-table-row:last-child {
@@ -169,10 +180,37 @@
   background: var(--color-background-gray);
 }
 
+.price-table-row.row-invalid {
+  background: var(--color-background);
+}
+
+.price-table-row.row-invalid:hover {
+  background: var(--color-background-gray);
+}
+
 .price-cell {
   display: flex;
   flex-direction: column;
   padding: 4px;
+  min-width: 0; /* Allow text truncation */
+}
+
+.price-cell.checkbox {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.price-cell.reviewed {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.price-cell.actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 /* Cell Inputs */
@@ -217,13 +255,107 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
-/* Action Buttons */
-.price-cell.actions {
+/* Read-only cell styling */
+.cell-readonly {
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 37px;
   display: flex;
-  justify-content: center;
   align-items: center;
 }
 
+.cell-readonly:hover {
+  background: var(--color-background-gray);
+  border-color: var(--color-border);
+}
+
+.placeholder-text {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Category select wrapper */
+.category-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.confidence-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.confidence-icon.exact {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
+.confidence-icon.suggested {
+  background: rgba(234, 179, 8, 0.1);
+  color: #f59e0b;
+}
+
+.inferred-label {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+/* Link cell styling */
+.cell-readonly-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.link-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-icon-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.link-icon-btn:hover {
+  background: var(--color-background-gray);
+  color: var(--color-primary);
+}
+
+/* Action Buttons */
 .action-btn {
   padding: 6px 12px;
   border-radius: var(--radius-md);
@@ -243,6 +375,24 @@ input[type="number"] {
 .remove-btn:hover {
   background: var(--color-error);
   color: var(--color-background);
+}
+
+.remove-btn-icon {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  border-radius: var(--radius-sm);
+}
+
+.remove-btn-icon:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
 }
 
 /* Add Item Section */
@@ -276,11 +426,7 @@ input[type="number"] {
   margin: 0;
 }
 
-/* Price List specific grid layout */
-.price-list-header,
-.price-list-row {
-  grid-template-columns: 50px 160px 1fr 120px 200px 100px 100px !important;
-}
+/* Price List specific grid layout - now handled above */
 
 /* Row Number */
 .row-num {
@@ -318,22 +464,7 @@ input[type="number"] {
   color: #3b82f6;
 }
 
-/* Row states */
-.row-invalid {
-  background: rgba(239, 68, 68, 0.05);
-}
-
-.row-invalid:hover {
-  background: rgba(239, 68, 68, 0.1) !important;
-}
-
-.row-modified {
-  background: rgba(59, 130, 246, 0.05);
-}
-
-.row-modified:hover {
-  background: rgba(59, 130, 246, 0.1) !important;
-}
+/* Row states - removed background colors, only status badge shows color */
 
 /* Error Tooltip */
 .error-tooltip {
@@ -364,6 +495,22 @@ input[type="number"] {
   background: var(--color-background-gray);
   border-radius: var(--radius-md);
   min-width: 100px;
+  transition: all 0.2s ease;
+}
+
+.stat-item.stat-active {
+  background: var(--color-primary);
+  color: var(--color-background);
+}
+
+.stat-item.stat-active .stat-value,
+.stat-item.stat-active .stat-label {
+  color: var(--color-background);
+}
+
+.stat-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .stat-value {

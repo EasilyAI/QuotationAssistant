@@ -13,10 +13,10 @@ export enum ProductCategory {
   PLUG_VALVE = 'Plug Valve',
   CHECK_VALVE = 'Check Valve',
   NEEDLE_VALVE = 'Needle Valve',
+  BELLOWS_SEALED_VALVE = 'Bellows Sealed Valve',
   DIAPHRAGM_SEALED_VALVE = 'Diaphragm Sealed Valve',
   QUICK_CONNECT_ALT = 'Quick Connect',
   WELDING_SYSTEM = 'Welding System',
-  BELLOWS_SEALED_VALVE = 'Bellows Sealed Valve',
   UNCATEGORIZED = 'UNCATEGORIZED',
 }
 
