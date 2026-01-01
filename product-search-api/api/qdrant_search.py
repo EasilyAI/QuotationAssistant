@@ -136,6 +136,99 @@ class SearchService:
             logger.error(f"Search error: {str(e)}", exc_info=True)
             raise
     
+    def boost_exact_matches(
+        self,
+        results: List[Dict[str, Any]],
+        search_query: str,
+        is_ordering_number_search: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Boost exact and prefix matches for orderingNumber searches.
+        
+        When searching by orderingNumber, exact matches should have the highest priority.
+        This method re-ranks results to ensure:
+        1. Exact matches (orderingNumber == search_query) get score 1.0
+        2. Case-insensitive exact matches get score 0.99
+        3. Prefix matches (orderingNumber starts with search_query) get score 0.95
+        4. Other matches keep their original score
+        
+        Args:
+            results: List of search results from vector_search
+            search_query: The original search query (orderingNumber)
+            is_ordering_number_search: Whether this is an orderingNumber search
+            
+        Returns:
+            Re-ranked list of results sorted by boosted score (highest first)
+        """
+        if not is_ordering_number_search or not search_query or not results:
+            return results
+        
+        search_query_lower = search_query.lower().strip()
+        search_query_original = search_query.strip()
+        
+        boosted_results = []
+        
+        for result in results:
+            ordering_number = result.get('orderingNumber', '')
+            original_score = result.get('score', 0.0)
+            
+            # Calculate boosted score based on match type
+            boosted_score = original_score
+            match_type = 'none'
+            
+            if ordering_number:
+                ordering_number_lower = ordering_number.lower()
+                
+                # Priority 1: Exact match (case-sensitive)
+                if ordering_number == search_query_original:
+                    boosted_score = 1.0
+                    match_type = 'exact'
+                # Priority 2: Case-insensitive exact match
+                elif ordering_number_lower == search_query_lower:
+                    boosted_score = 0.99
+                    match_type = 'exact_ci'
+                # Priority 3: Prefix match (starts with query)
+                elif ordering_number_lower.startswith(search_query_lower):
+                    # Boost based on how much of the orderingNumber matches
+                    # Longer prefix matches get higher boost
+                    prefix_ratio = len(search_query_lower) / max(len(ordering_number_lower), 1)
+                    # Base boost of 0.95, adjusted by prefix ratio
+                    boosted_score = max(0.95, min(0.98, 0.95 + (prefix_ratio * 0.03)))
+                    match_type = 'prefix'
+                # Priority 4: Contains match (query appears in orderingNumber)
+                elif search_query_lower in ordering_number_lower:
+                    # Moderate boost for contains matches
+                    boosted_score = max(original_score, min(0.90, original_score + 0.2))
+                    match_type = 'contains'
+            
+            # Create result with boosted score
+            boosted_result = result.copy()
+            boosted_result['score'] = round(boosted_score, 4)
+            boosted_result['originalScore'] = round(original_score, 4)  # Keep original for debugging
+            boosted_result['matchType'] = match_type  # For debugging/logging
+            
+            # Update relevance based on boosted score
+            boosted_result['relevance'] = self._calculate_relevance(boosted_score).value
+            
+            boosted_results.append(boosted_result)
+        
+        # Sort by boosted score (descending), then by original score as tiebreaker
+        boosted_results.sort(
+            key=lambda x: (x.get('score', 0.0), x.get('originalScore', 0.0)),
+            reverse=True
+        )
+        
+        logger.info(
+            "Boosted %d results for orderingNumber search '%s'. "
+            "Exact matches: %d, Prefix matches: %d",
+            len(boosted_results),
+            search_query,
+            sum(1 for r in boosted_results if r.get('matchType') == 'exact' or r.get('matchType') == 'exact_ci'),
+            sum(1 for r in boosted_results if r.get('matchType') == 'prefix')
+        )
+        
+        return boosted_results
+    
     def autocomplete(
         self,
         prefix: str,
@@ -305,20 +398,25 @@ class SearchService:
             # including edge cases where Qdrant's tokenization might miss exact matches
             scored_suggestions: List[Tuple[float, Dict[str, str]]] = []
             prefix_lower = prefix.lower()
+            prefix_original = prefix.strip()  # Keep original for case-sensitive exact match
             
             for result in results:
                 metadata: ProductMetadata = result.get('metadata', {})  # type: ignore[assignment]
                 ordering_num = metadata.get('orderingNumber', '') or result.get('id', '')
                 ordering_num_lower = ordering_num.lower()
+                ordering_num_original = ordering_num  # Keep original for case-sensitive exact match
                 search_text = metadata.get('searchText') or metadata.get('description', '') or ''
                 search_text_lower = search_text.lower() if search_text else ''
                 category_val = metadata.get('productCategory') or metadata.get('category', '')
                 
                 # Calculate match score based on where prefix appears
+                # Pass both original and lowercased versions for exact match detection
                 score = self._calculate_prefix_match_score(
                     prefix_lower,
                     ordering_num_lower,
-                    search_text_lower
+                    search_text_lower,
+                    prefix_original=prefix_original,
+                    ordering_num_original=ordering_num_original
                 )
                 
                 # Only include results that actually contain the prefix
@@ -348,23 +446,29 @@ class SearchService:
         self,
         prefix: str,
         ordering_num: str,
-        search_text: str
+        search_text: str,
+        prefix_original: Optional[str] = None,
+        ordering_num_original: Optional[str] = None
     ) -> float:
         """
         Calculate relevance score for prefix matching.
         
         Scoring priority (higher score = better match):
-        1. Prefix starts at beginning of orderingNumber (score: 100.0)
-        2. Prefix starts at beginning of searchText (score: 80.0)
-        3. Prefix starts at word boundary in orderingNumber (score: 60.0)
-        4. Prefix starts at word boundary in searchText (score: 40.0)
-        5. Prefix appears anywhere in orderingNumber (score: 20.0)
-        6. Prefix appears anywhere in search_text (score: 10.0)
+        1. Exact match on orderingNumber (case-sensitive) (score: 200.0)
+        2. Exact match on orderingNumber (case-insensitive) (score: 190.0)
+        3. Prefix starts at beginning of orderingNumber (score: 100.0)
+        4. Prefix starts at beginning of searchText (score: 80.0)
+        5. Prefix starts at word boundary in orderingNumber (score: 60.0)
+        6. Prefix starts at word boundary in searchText (score: 40.0)
+        7. Prefix appears anywhere in orderingNumber (score: 20.0)
+        8. Prefix appears anywhere in search_text (score: 10.0)
         
         Args:
             prefix: Lowercase prefix to match
             ordering_num: Lowercase ordering number
             search_text: Lowercase search text
+            prefix_original: Original prefix (for case-sensitive exact match)
+            ordering_num_original: Original ordering number (for case-sensitive exact match)
             
         Returns:
             Score (0.0 if no match, higher is better)
@@ -372,15 +476,26 @@ class SearchService:
         if not prefix:
             return 0.0
         
-        # Priority 1: Prefix starts at beginning of orderingNumber
+        # Priority 1: Exact match on orderingNumber (case-sensitive)
+        if ordering_num_original and prefix_original:
+            if ordering_num_original == prefix_original:
+                return 200.0
+        
+        # Priority 2: Exact match on orderingNumber (case-insensitive)
+        # Check if prefix length equals orderingNumber length and they match
+        if ordering_num and len(ordering_num) == len(prefix):
+            if ordering_num == prefix:
+                return 190.0
+        
+        # Priority 3: Prefix starts at beginning of orderingNumber
         if ordering_num and ordering_num.startswith(prefix):
             return 100.0
         
-        # Priority 2: Prefix starts at beginning of searchText
+        # Priority 4: Prefix starts at beginning of searchText
         if search_text and search_text.startswith(prefix):
             return 80.0
         
-        # Priority 3: Prefix starts at word boundary in orderingNumber
+        # Priority 5: Prefix starts at word boundary in orderingNumber
         # Word boundary: start of string or after non-alphanumeric character
         if ordering_num:
             # Check if prefix appears at word boundary
@@ -388,17 +503,17 @@ class SearchService:
             if re.search(word_boundary_pattern, ordering_num, re.IGNORECASE):
                 return 60.0
         
-        # Priority 4: Prefix starts at word boundary in searchText
+        # Priority 6: Prefix starts at word boundary in searchText
         if search_text:
             word_boundary_pattern = r'(^|[^a-z0-9])' + re.escape(prefix)
             if re.search(word_boundary_pattern, search_text, re.IGNORECASE):
                 return 40.0
         
-        # Priority 5: Prefix appears anywhere in orderingNumber
+        # Priority 7: Prefix appears anywhere in orderingNumber
         if ordering_num and prefix in ordering_num:
             return 20.0
         
-        # Priority 6: Prefix appears anywhere in searchText
+        # Priority 8: Prefix appears anywhere in searchText
         if search_text and prefix in search_text:
             return 10.0
         

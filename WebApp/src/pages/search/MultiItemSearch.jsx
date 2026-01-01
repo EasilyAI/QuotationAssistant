@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { parseExcelFile } from '../../utils/excelParser';
 import { batchSearchProducts } from '../../services/batchSearchService';
 import { fetchAutocompleteSuggestions } from '../../services/searchService';
@@ -15,6 +15,11 @@ import './MultiItemSearch.css';
 
 const MultiItemSearch = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Check if we came from a quotation
+  const cameFromQuotation = location.state?.fromQuotation || false;
+  const quotationId = location.state?.quotationId || null;
   const [activeTab, setActiveTab] = useState('all');
   const [uploadedFile, setUploadedFile] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -158,26 +163,41 @@ const MultiItemSearch = () => {
         };
         }
 
+        // Map matches and find exact ordering number match
+        const matches = (result.matches || []).map((match, matchIdx) => ({
+          id: `M${validIndex}-${matchIdx + 1}`,
+          productName: match.productName || match.searchText || '',
+          orderingNo: match.orderingNo || match.orderingNumber || '',
+          orderingNumber: match.orderingNo || match.orderingNumber || '',
+          confidence: match.confidence || 0,
+          type: match.type || originalItem.productType,
+          category: match.type || originalItem.productType,
+          specifications: match.specifications || match.searchText || '',
+          searchText: match.specifications || match.searchText || '',
+          score: match.score || 0,
+          relevance: match.relevance || 'low',
+        }));
+
+        // Auto-select exact match if orderingNumber matches exactly
+        const requestedOrderingNo = (originalItem.orderingNumber || '').trim();
+        let autoSelectedMatchId = null;
+        if (requestedOrderingNo && matches.length > 0) {
+          const exactMatch = matches.find(m => 
+            (m.orderingNo || '').trim().toLowerCase() === requestedOrderingNo.toLowerCase()
+          );
+          if (exactMatch) {
+            autoSelectedMatchId = exactMatch.id;
+          }
+        }
+
         return {
           id: Date.now() + validIndex,
           ...originalItem, // Preserve all original Excel data
           isValid: true, // Ensure valid items are marked
-          status: result.matches && result.matches.length > 0 ? 'Match Found' : 'No Matches',
+          status: matches.length > 0 ? 'Match Found' : 'No Matches',
           isExpanded: false,
-          selectedMatch: null,
-          matches: (result.matches || []).map((match, matchIdx) => ({
-            id: `M${validIndex}-${matchIdx + 1}`,
-            productName: match.productName || match.searchText || '',
-            orderingNo: match.orderingNo || match.orderingNumber || '',
-            orderingNumber: match.orderingNo || match.orderingNumber || '',
-            confidence: match.confidence || 0,
-            type: match.type || originalItem.productType,
-            category: match.type || originalItem.productType,
-            specifications: match.specifications || match.searchText || '',
-            searchText: match.specifications || match.searchText || '',
-            score: match.score || 0,
-            relevance: match.relevance || 'low',
-          })),
+          selectedMatch: autoSelectedMatchId,
+          matches: matches,
         };
       });
 
@@ -695,7 +715,7 @@ const MultiItemSearch = () => {
 
             <div className="table-section">
               <div className="table-container">
-                <table className="data-table">
+                <table className="data-table results-table">
                   <thead>
                     <tr>
                       <th className="expand-column"></th>
@@ -765,7 +785,7 @@ const MultiItemSearch = () => {
                                     <path d="M13.5 4.5L6 12L2.5 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                                   </svg>
                                   <button 
-                                    className="ordering-number-link"
+                                    className="ordering-link"
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
@@ -781,7 +801,7 @@ const MultiItemSearch = () => {
                                     <path d="M13.5 4.5L6 12L2.5 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                                   </svg>
                                   <button 
-                                    className="ordering-number-link manual-entry-link"
+                                    className="ordering-link manual-entry-link"
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
@@ -793,7 +813,114 @@ const MultiItemSearch = () => {
                                   <span className="manual-badge">Manual</span>
                                 </div>
                               ) : item.matches.length > 0 ? (
-                                <span className="ordering-number-pending">{orderingNumberDisplay}</span>
+                                <div className="ordering-number-pending-wrapper">
+                                  <span className="ordering-number-pending">{item.matches.length} option{item.matches.length !== 1 ? 's' : ''} available</span>
+                                  <div className="manual-entry-wrapper" style={{ position: 'relative', marginTop: '8px' }}>
+                                    <input
+                                      ref={(el) => {
+                                        if (el) autocompleteInputRefs.current[`${item.id}-manual`] = el;
+                                      }}
+                                      type="text"
+                                      className="manual-ordering-input"
+                                      placeholder="Or search another product..."
+                                      defaultValue=""
+                                      onClick={(e) => e.stopPropagation()}
+                                      onChange={async (e) => {
+                                        const value = e.target.value.trim();
+                                        if (value.length >= 2) {
+                                          try {
+                                            setAutocompleteData(prev => ({
+                                              ...prev,
+                                              [`${item.id}-manual`]: { ...prev[`${item.id}-manual`], loading: true, show: false }
+                                            }));
+                                            const suggestions = await fetchAutocompleteSuggestions({
+                                              query: value,
+                                              size: 5,
+                                            });
+                                            setAutocompleteData(prev => ({
+                                              ...prev,
+                                              [`${item.id}-manual`]: {
+                                                suggestions: suggestions.suggestions || [],
+                                                loading: false,
+                                                show: true
+                                              }
+                                            }));
+                                          } catch (error) {
+                                            console.error('Autocomplete error:', error);
+                                            setAutocompleteData(prev => ({
+                                              ...prev,
+                                              [`${item.id}-manual`]: { ...prev[`${item.id}-manual`], loading: false, show: false }
+                                            }));
+                                          }
+                                        } else {
+                                          setAutocompleteData(prev => ({
+                                            ...prev,
+                                            [`${item.id}-manual`]: { suggestions: [], loading: false, show: false }
+                                          }));
+                                        }
+                                      }}
+                                      onBlur={(e) => {
+                                        // Delay to allow click on suggestion
+                                        setTimeout(() => {
+                                          const value = e.target.value.trim();
+                                          if (value) {
+                                            setItems(items.map(itm => 
+                                              itm.id === item.id 
+                                                ? { ...itm, manualOrderingNo: value, status: 'Match Found' }
+                                                : itm
+                                            ));
+                                          }
+                                          setAutocompleteData(prev => ({
+                                            ...prev,
+                                            [`${item.id}-manual`]: { ...prev[`${item.id}-manual`], show: false }
+                                          }));
+                                        }, 200);
+                                      }}
+                                      onFocus={(e) => {
+                                        const value = e.target.value.trim();
+                                        if (value.length >= 2) {
+                                          // Trigger autocomplete if there's already text
+                                          e.target.dispatchEvent(new Event('change', { bubbles: true }));
+                                        }
+                                      }}
+                                    />
+                                    {autocompleteData[`${item.id}-manual`]?.show && autocompleteData[`${item.id}-manual`]?.suggestions?.length > 0 && (
+                                      <div 
+                                        className="autocomplete-dropdown"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {autocompleteData[`${item.id}-manual`].suggestions.map((suggestion, idx) => {
+                                          const orderingNo = suggestion.orderingNumber || suggestion.orderingNo || '';
+                                          const displayText = suggestion.searchText || suggestion.text || orderingNo;
+                                          return (
+                                            <div
+                                              key={idx}
+                                              className="autocomplete-item"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setItems(items.map(itm => 
+                                                  itm.id === item.id 
+                                                    ? { ...itm, manualOrderingNo: orderingNo, status: 'Match Found' }
+                                                    : itm
+                                                ));
+                                                setAutocompleteData(prev => ({
+                                                  ...prev,
+                                                  [`${item.id}-manual`]: { suggestions: [], loading: false, show: false }
+                                                }));
+                                                if (autocompleteInputRefs.current[`${item.id}-manual`]) {
+                                                  autocompleteInputRefs.current[`${item.id}-manual`].value = orderingNo;
+                                                }
+                                              }}
+                                            >
+                                              <div className="autocomplete-ordering">{orderingNo}</div>
+                                              <div className="autocomplete-text">{displayText}</div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               ) : (
                                 <div className="manual-entry-wrapper" style={{ position: 'relative' }}>
                                   <input
@@ -1086,8 +1213,22 @@ const MultiItemSearch = () => {
             <p className="autosave-text">Autosaving...</p>
 
             <div className="action-buttons">
-              <button className="discard-button" onClick={handleDiscard}>Discard</button>
-              <button className="save-button" onClick={handleSaveToQuotation}>Save to Quotation</button>
+              {cameFromQuotation && quotationId ? (
+                <>
+                  <button className="discard-button" onClick={handleDiscard}>Discard</button>
+                  <button 
+                    className="back-button" 
+                    onClick={() => navigate(`/quotations/edit/${quotationId}`)}
+                  >
+                    Back to Quotation
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="discard-button" onClick={handleDiscard}>Discard</button>
+                  <button className="save-button" onClick={handleSaveToQuotation}>Save to Quotation</button>
+                </>
+              )}
             </div>
           </>
         )}

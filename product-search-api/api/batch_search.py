@@ -236,7 +236,21 @@ def _execute_batch_searches(
                             'searchText': item.get('searchText', '')
                         } for item in autocomplete_results]
                 
-                # No re-ranking for ordering number searches (exact/prefix match)
+                # Boost exact matches for orderingNumber searches
+                # This ensures exact matches appear first, even if they have lower vector similarity scores
+                if search_results:
+                    logger.info(
+                        "Boosting exact matches for orderingNumber search '%s' (found %d results)",
+                        ordering_number,
+                        len(search_results)
+                    )
+                    search_results = service.boost_exact_matches(
+                        results=search_results,
+                        search_query=ordering_number,
+                        is_ordering_number_search=True
+                    )
+                
+                # Return top results after boosting
                 search_results = search_results[:num_results_to_return]
             else:
                 # Search by description (vector search)

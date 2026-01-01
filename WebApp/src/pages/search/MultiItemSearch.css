@@ -188,6 +188,28 @@
   border-collapse: collapse;
 }
 
+.data-table.results-table thead {
+  background: linear-gradient(180deg, #F4F7FB 0%, #E8EDF2 100%);
+}
+
+.data-table.results-table thead tr {
+  background: transparent;
+  border: none;
+}
+
+.data-table.results-table th {
+  padding: 12px 14px;
+  font-family: var(--font-family);
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 18px;
+  color: #0D171C;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .data-table thead tr {
   background-color: #E6E8EB;
   border: none;
@@ -315,10 +337,55 @@
   text-decoration-style: solid;
 }
 
-.ordering-number-pending {
-  color: #D97706;
-  font-style: italic;
+.ordering-link {
+  font-weight: 700;
+  text-decoration: underline;
+  color: #4F7A94;
+  transition: color 0.2s ease;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-family);
   font-size: 14px;
+  line-height: 21px;
+  padding: 0;
+}
+
+.ordering-link:hover {
+  color: var(--color-primary);
+}
+
+.ordering-number-pending-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ordering-number-pending {
+  color: #4F7A94;
+  font-size: 14px;
+  font-family: var(--font-family);
+  font-weight: 400;
+}
+
+.search-another-btn {
+  padding: 6px 12px;
+  background: #E8EDF2;
+  border: 1px solid #D1DEE6;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #0D171C;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: var(--font-family);
+}
+
+.search-another-btn:hover {
+  background: #D1DEE6;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .manual-entry-wrapper {
@@ -777,6 +844,32 @@
 }
 
 .save-button:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.back-button {
+  display: flex;
+  min-width: 84px;
+  max-width: 480px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  height: 40px;
+  padding: 0 16px;
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: normal;
+  letter-spacing: 0.015em;
+  border: none;
+  transition: background-color 0.2s ease;
+  font-family: var(--font-family);
+}
+
+.back-button:hover {
   background-color: var(--color-primary-hover);
 }
 

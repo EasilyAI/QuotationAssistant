@@ -248,7 +248,7 @@
 }
 
 .quotation-name {
-  font-size: 15px;
+  font-size: 15px !important;
   color: var(--color-text-primary);
   font-weight: 600;
 }

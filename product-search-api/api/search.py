@@ -90,9 +90,32 @@ def handle_search(
             category=category,
             min_score=min_score
         )
+        
+        # Detect if query looks like an orderingNumber (code-like query)
+        # Same heuristic as in qdrant_search.py
+        q = query.strip()
+        has_space = " " in q
+        has_letter = any(c.isalpha() for c in q)
+        has_digit = any(c.isdigit() for c in q)
+        allowed_chars = all(c.isalnum() or c in "-_./" for c in q)
+        is_ordering_number_like = (not has_space) and has_letter and has_digit and allowed_chars
+        
+        # Boost exact matches for orderingNumber-like queries
+        # This ensures exact matches appear first, even if they have lower vector similarity scores
+        if is_ordering_number_like and results:
+            logger.info(
+                "Query '%s' appears to be an orderingNumber, boosting exact matches",
+                query
+            )
+            results = service.boost_exact_matches(
+                results=results,
+                search_query=query,
+                is_ordering_number_search=True
+            )
 
         # Optional LLM-based re-ranking (only if enough results to matter)
-        if should_use_ai and len(results) > 5:
+        # Skip AI re-ranking for orderingNumber-like queries since we already boosted exact matches
+        if should_use_ai and len(results) > 5 and not is_ordering_number_like:
             logger.info(
                 "Invoking OpenAI re-ranking for query '%s' with %d candidates (top %d)",
                 query,

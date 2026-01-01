@@ -909,7 +909,12 @@ const EditQuotation = () => {
       : 'Return to batch search to complete remaining items?';
     
     if (window.confirm(message)) {
-      navigate('/multi-search');
+      navigate('/multi-search', {
+        state: {
+          fromQuotation: true,
+          quotationId: quotation?.id
+        }
+      });
     }
   };
 

@@ -156,7 +156,7 @@
 .quotation-name {
   color: #0d171c;
   font-weight: 500;
-  font-size: 14px;
+  font-size: 7px !important;
 }
 
 .quotation-status {

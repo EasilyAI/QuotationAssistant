@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import AddToQuotationDialog from '../../components/AddToQuotationDialog';
 import AutocompleteResults from '../../components/AutocompleteResults';
 import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
+import TypeDropdown from '../../components/TypeDropdown';
 import { ProductCategory } from '../../types/index';
 import { fetchProductByOrderingNumber } from '../../services/productsService';
 import { getFileDownloadUrl, getFileInfo } from '../../services/fileInfoService';
@@ -12,7 +13,6 @@ import './SingleSearch.css';
 const SingleSearch = () => {
   const navigate = useNavigate();
   const autocompleteRef = useRef(null);
-  const productDropdownRef = useRef(null);
   const countDropdownRef = useRef(null);
   const lastSelectedSuggestion = useRef(null); // Track last selected suggestion to prevent re-trigger
   const [searchQuery, setSearchQuery] = useState('');
@@ -22,7 +22,6 @@ const SingleSearch = () => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [lastSearchQuery, setLastSearchQuery] = useState('');
-  const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [showCountDropdown, setShowCountDropdown] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -39,8 +38,6 @@ const SingleSearch = () => {
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewOrderingNo, setPreviewOrderingNo] = useState(null);
   const selectedCategory = productType === 'All Types' ? undefined : productType;
-
-  const productTypes = ['All Types', ...Object.values(ProductCategory)];
 
   // Fetch autocomplete suggestions whenever the query changes
   useEffect(() => {
@@ -109,7 +106,6 @@ const SingleSearch = () => {
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
         if (isAutocompleteOpen) setIsAutocompleteOpen(false);
-        if (showProductDropdown) setShowProductDropdown(false);
         if (showCountDropdown) setShowCountDropdown(false);
       }
     };
@@ -122,15 +118,6 @@ const SingleSearch = () => {
         !autocompleteRef.current.contains(e.target)
       ) {
         setIsAutocompleteOpen(false);
-      }
-
-      // Close product dropdown
-      if (
-        showProductDropdown &&
-        productDropdownRef.current &&
-        !productDropdownRef.current.contains(e.target)
-      ) {
-        setShowProductDropdown(false);
       }
 
       // Close count dropdown
@@ -150,7 +137,7 @@ const SingleSearch = () => {
       document.removeEventListener('keydown', handleEscape);
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isAutocompleteOpen, showProductDropdown, showCountDropdown]);
+  }, [isAutocompleteOpen, showCountDropdown]);
 
   const handleSearch = async () => {
     const trimmedQuery = searchQuery.trim();
@@ -505,34 +492,11 @@ const SingleSearch = () => {
 
             {/* Filter Pills */}
             <div className="search-filters-pills">
-              <div className="filter-pill-wrapper" ref={productDropdownRef}>
-                <button 
-                  className="filter-pill"
-                  onClick={() => setShowProductDropdown(!showProductDropdown)}
-                >
-                  <span className="filter-pill-label">Category:</span>
-                  <span className="filter-pill-value">{productType}</span>
-                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
-                {showProductDropdown && (
-                  <div className="dropdown-menu">
-                    {productTypes.map(type => (
-                      <div 
-                        key={type}
-                        className="dropdown-item"
-                        onClick={() => {
-                          setProductType(type);
-                          setShowProductDropdown(false);
-                        }}
-                      >
-                        {type}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <TypeDropdown
+                value={productType}
+                onChange={setProductType}
+                variant="pill"
+              />
 
               <div className="filter-pill-wrapper" ref={countDropdownRef}>
                 <button 
