@@ -109,7 +109,7 @@
 }
 
 .btn-actions-menu {
-  background: #f0f3f4;
+  background: white;
   border: 1px solid #dce2e5;
   border-radius: 6px;
   padding: 0.5rem;
@@ -119,12 +119,15 @@
   align-items: center;
   justify-content: center;
   color: #647a87;
+  height: 36px;
+  width: 36px;
+  box-sizing: border-box;
 }
 
 .btn-actions-menu:hover {
-  background: #e1e4e6;
-  border-color: #c4ccd1;
-  color: #111517;
+  background: #f8fafc;
+  border-color: #2188C9;
+  color: #1e293b;
 }
 
 .actions-menu-dropdown {
@@ -283,20 +286,24 @@
 }
 
 .back-button-icon {
-  background: #f0f3f4;
-  border: none;
+  background: white;
+  border: 1px solid #dce2e5;
   border-radius: 6px;
-  padding: 0.375rem;
+  padding: 0.5rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s;
+  transition: all 0.2s;
   flex-shrink: 0;
+  height: 36px;
+  width: 36px;
+  box-sizing: border-box;
 }
 
 .back-button-icon:hover {
-  background: #e1e4e6;
+  background: #f8fafc;
+  border-color: #2188C9;
 }
 
 .title-section {
@@ -351,18 +358,23 @@
 }
 
 .status-dropdown-compact {
-  padding: 0.375rem 0.625rem;
-  border-radius: 5px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
   border: 1px solid #dce2e5;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
   background: white;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
 }
 
 .status-dropdown-compact:hover {
   border-color: #2188C9;
+  background: #f8fafc;
 }
 
 .unsaved-dot {
@@ -375,20 +387,23 @@
 .btn-save-compact {
   background: #2188C9;
   color: white;
-  border: none;
-  padding: 0.375rem 0.75rem;
-  border-radius: 5px;
-  font-size: 0.75rem;
+  border: 1px solid #1a6ea0;
+  padding: 0.5rem 0.875rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
   display: flex;
   align-items: center;
   gap: 0.375rem;
+  height: 36px;
+  box-sizing: border-box;
 }
 
 .btn-save-compact:hover {
   background: #1a6ea0;
+  border-color: #155d87;
 }
 
 /* Controls Bar - REMOVED (functionality moved to actions menu and inline editing) */
