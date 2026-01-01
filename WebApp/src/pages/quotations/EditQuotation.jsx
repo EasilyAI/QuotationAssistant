@@ -15,7 +15,8 @@ import {
   refreshPrices,
   exportStockCheck,
   exportPriorityImport,
-  generateEmailDraft
+  generateEmailDraft,
+  saveQuotationFullState
 } from '../../services/quotationService';
 import './EditQuotation.css';
 
@@ -536,6 +537,7 @@ const EditQuotation = () => {
 
   const [globalMargin, setGlobalMargin] = useState(metadata?.defaultMargin || quotation?.defaultMargin || 20);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [showOnlyIncomplete] = useState(false);
   const [filterType, setFilterType] = useState('all'); // 'all', 'incomplete', 'no-price', 'no-drawing'
   
@@ -707,8 +709,8 @@ const EditQuotation = () => {
       catalogLink: '',
       notes: '',
       isIncomplete: true,
-      originalRequest: '',
-      _isNew: true // Mark as new for save logic
+      originalRequest: ''
+      // No line_id means it's a new item - backend will generate it
     };
     
     setQuotation(prev => ({
@@ -724,15 +726,9 @@ const EditQuotation = () => {
       return;
     }
     
-    const item = quotation.items[index];
-    
     setQuotation(prev => ({
       ...prev,
-      items: prev.items.filter((_, i) => i !== index),
-      // Track deleted items for save logic (only if they have a line_id)
-      _deletedLineIds: item.line_id 
-        ? [...(prev._deletedLineIds || []), item.line_id]
-        : (prev._deletedLineIds || [])
+      items: prev.items.filter((_, i) => i !== index)
     }));
     setHasUnsavedChanges(true);
   };
@@ -839,24 +835,10 @@ const EditQuotation = () => {
   };
 
   const handleSave = async () => {
+    setIsSaving(true);
     try {
-      // Transform items for backend
-      const transformItems = (items) => items.map(item => ({
-        orderingNumber: item.orderingNumber || '',
-        productName: item.productName || item.requestedItem || 'Item',
-        description: item.specs || item.description || '',
-        quantity: item.quantity || 1,
-        base_price: item.price,
-        margin_pct: item.margin != null ? item.margin / 100 : undefined,
-        drawing_link: item.sketchFile,
-        catalog_link: item.catalogLink,
-        notes: item.notes || '',
-        source: item.source || 'manual',
-        original_request: item.originalRequest || ''
-      }));
-      
       if (!quotation.id) {
-        // Create new quotation
+        // Create new quotation first
         const newQuotation = await createQuotation({
           quotationName: quotation.quotationName || quotation.name,
           customer: quotation.customer,
@@ -866,51 +848,23 @@ const EditQuotation = () => {
           status: quotation.status
         });
         
-        // Add all items as a batch
-        if (quotation.items && quotation.items.length > 0) {
-          await batchAddLineItems(newQuotation.id, transformItems(quotation.items));
-        }
-        
-        // Reload to get latest data
-        const updated = await getQuotation(newQuotation.id);
-        setQuotation({ ...updated, _deletedLineIds: [] });
-        
         // Update URL to use new ID
         navigate(`/quotations/edit/${newQuotation.id}`, { replace: true });
+        
+        // Now save full state if there are items
+        if (quotation.items && quotation.items.length > 0) {
+          const updated = await saveQuotationFullState(newQuotation.id, {
+            ...quotation,
+            id: newQuotation.id
+          });
+          setQuotation(updated);
+        } else {
+          setQuotation(newQuotation);
+        }
       } else {
-        // Update existing quotation header
-        await updateQuotation(quotation.id, {
-          quotationName: quotation.quotationName || quotation.name,
-          customer: quotation.customer,
-          currency: quotation.currency,
-          defaultMargin: quotation.defaultMargin,
-          notes: quotation.notes,
-          status: quotation.status
-        });
-        
-        // Delete removed items
-        const deletedIds = quotation._deletedLineIds || [];
-        for (const lineId of deletedIds) {
-          await deleteLineItem(quotation.id, lineId);
-        }
-        
-        // Separate new items from existing items
-        const newItems = (quotation.items || []).filter(item => item._isNew || !item.line_id);
-        const existingItems = (quotation.items || []).filter(item => item.line_id && !item._isNew);
-        
-        // Update existing items
-        for (const item of existingItems) {
-          await updateLineItem(quotation.id, item.line_id, transformItems([item])[0]);
-        }
-        
-        // Add new items
-        if (newItems.length > 0) {
-          await batchAddLineItems(quotation.id, transformItems(newItems));
-        }
-        
-        // Reload to get latest data
-        const updated = await getQuotation(quotation.id);
-        setQuotation({ ...updated, _deletedLineIds: [] });
+        // Update existing quotation - single API call replaces entire state
+        const updated = await saveQuotationFullState(quotation.id, quotation);
+        setQuotation(updated);
       }
       
       setHasUnsavedChanges(false);
@@ -918,6 +872,8 @@ const EditQuotation = () => {
     } catch (err) {
       console.error('Error saving quotation:', err);
       alert(err.message || 'Failed to save quotation');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -1045,13 +1001,18 @@ const EditQuotation = () => {
           ))}
           </select>
           {hasUnsavedChanges && <span className="unsaved-dot" title="Unsaved changes">•</span>}
-          <button onClick={handleSave} className="btn-save-compact" title="Save quotation">
+          <button 
+            onClick={handleSave} 
+            className="btn-save-compact" 
+            title="Save quotation"
+            disabled={isSaving}
+          >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H16L21 8V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M17 21V13H7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M7 3V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Save
+            {isSaving ? 'Saving...' : 'Save'}
           </button>
           <ActionsMenu 
             onEditMetadata={handleEditMetadata}

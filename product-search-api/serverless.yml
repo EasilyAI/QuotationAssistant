@@ -19,7 +19,7 @@ provider:
       allowedOrigins:
         - "http://localhost:3000"
         - "http://localhost:3001"
-        - "https://catalog-searcher-omers-projects-e3a112ba.vercel.app"
+        - "${self:custom.productionFrontendUrl}"
       allowedHeaders:
         - Content-Type
         - Authorization
@@ -131,6 +131,8 @@ custom:
   catalogProductsTable: hb-catalog-products
   productsTable: hb-products
   priceListProductsTable: hb-pricelist-products
+  # Production frontend URL (change this when deploying to production)
+  productionFrontendUrl: ${env:PRODUCTION_FRONTEND_URL, 'https://catalog-searcher-omers-projects-e3a112ba.vercel.app'}
   serverless-offline:
     httpPort: 3000
     lambdaPort: 3002
@@ -183,7 +185,8 @@ functions:
     events:
       - stream:
           type: dynamodb
-          arn: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.productsTable}/stream/2025-12-10T09:51:27.037
+          arn:
+            Fn::ImportValue: hb-file-processing-${self:provider.stage}-products-table-stream-arn
           batchSize: 10
           startingPosition: LATEST
           maximumRetryAttempts: 3

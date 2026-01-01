@@ -1,5 +1,9 @@
 service: hb-file-processing
 
+# IMPORTANT: After deploying, run ./scripts/configure-s3-cors.sh
+# Or use: npm run deploy:full  or  make deploy-full
+# See DEPLOYMENT.md for details
+
 frameworkVersion: "3"
 
 # Load variables from local .env / .env.* files so ${env:...} works in all commands
@@ -26,6 +30,8 @@ custom:
   catalogProductsTable: hb-catalog-products
   productsTable: hb-products
   priceListProductsTable: hb-pricelist-products
+  # Production frontend URL (change this when deploying to production)
+  productionFrontendUrl: ${env:PRODUCTION_FRONTEND_URL, 'https://catalog-searcher-omers-projects-e3a112ba.vercel.app'}
 
 provider:
   name: aws
@@ -42,7 +48,7 @@ provider:
       allowedOrigins:
         - "http://localhost:3000"
         - "http://localhost:3001"
-        - "https://catalog-searcher-omers-projects-e3a112ba.vercel.app"
+        - "${self:custom.productionFrontendUrl}"
       allowedHeaders:
         - Content-Type
         - Authorization
@@ -88,6 +94,9 @@ provider:
     COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, ''}
     COGNITO_APP_CLIENT_ID: ${env:COGNITO_APP_CLIENT_ID, ''}
     COGNITO_REGION: ${env:COGNITO_REGION, 'us-east-1'}
+    
+    # Frontend URL for CORS
+    PRODUCTION_FRONTEND_URL: ${self:custom.productionFrontendUrl}
 
   iamRoleStatements:
     # S3 access for generating presigned URLs and accessing uploaded files
@@ -319,39 +328,23 @@ functions:
           method: get
 
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
-  # Note: S3 event is configured manually on the existing bucket to avoid CloudFormation import issues
   processUploadedFile:
     handler: src/process_upload_file.process_uploaded_file
     timeout: 45  # 5 minutes for Textract processing
     layers:
       - { Ref: SharedLambdaLayer }
-    # S3 event configured manually - see setup instructions
-    # events:
-    #   - s3:
-    #       bucket: ${self:custom.uploadBucket}
-    #       event: s3:ObjectCreated:*
+    events:
+      - s3:
+          bucket: ${self:custom.uploadBucket}
+          event: s3:ObjectCreated:*
+          existing: false
 
 resources:
   Resources:
-    # UploadBucket: # bucket already exists, so we reference it by name only
-    # CORS is configured manually via AWS CLI (see setup instructions)
-    # UploadBucket:
-    #   Type: AWS::S3::Bucket
-    #   Properties:
-    #     BucketName: ${self:custom.uploadBucket}
-    #     CorsConfiguration:
-    #       CorsRules:
-    #         - AllowedOrigins:
-    #             - "*"  # TODO: Replace with specific origins in production
-    #           AllowedHeaders:
-    #             - "*"
-    #           AllowedMethods:
-    #             - GET
-    #             - PUT
-    #             - POST
-    #             - HEAD
-    #           MaxAge: 3000
-
+    # SOLUTION 1: Don't override - let Serverless Framework manage the bucket
+    # Configure CORS via AWS CLI script after deployment (see scripts/configure-s3-cors.sh)
+    # This is the simplest approach that avoids CloudFormation conflicts
+    
     FilesTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -396,6 +389,8 @@ resources:
                 KeyType: HASH
             Projection:
               ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
               
     PriceListProductsTable:
       Type: AWS::DynamoDB::Table
@@ -412,3 +407,13 @@ resources:
             KeyType: HASH
           - AttributeName: chunkIndex
             KeyType: RANGE
+
+  Outputs:
+    ProductsTableStreamArn:
+      Description: DynamoDB Stream ARN for Products Table
+      Value:
+        Fn::GetAtt:
+          - ProductsTable
+          - StreamArn
+      Export:
+        Name: ${self:service}-${self:provider.stage}-products-table-stream-arn

@@ -387,12 +387,89 @@ class QdrantManager:
             logger.error(f"Error retrieving product {product_id}: {str(e)}")
             return None
     
+    def delete_all_products(self) -> bool:
+        """
+        Delete all points from the Qdrant collection.
+        This is useful for resetting the collection while keeping it intact.
+        
+        Uses pagination to handle large collections efficiently.
+        
+        Returns:
+            bool: True if successful
+        """
+        try:
+            # Use scroll with pagination to get all point IDs
+            all_point_ids = []
+            offset = None
+            limit = 1000  # Process in batches of 1000
+            
+            while True:
+                scroll_result = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=limit,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False
+                )
+                
+                points, next_offset = scroll_result
+                
+                if points:
+                    all_point_ids.extend([point.id for point in points])
+                
+                # If no next_offset, we've retrieved all points
+                if next_offset is None:
+                    break
+                
+                offset = next_offset
+            
+            if not all_point_ids:
+                logger.info("No points to delete in collection")
+                return True
+            
+            logger.info(f"Deleting {len(all_point_ids)} points from collection")
+            
+            # Delete in batches to avoid overwhelming the API
+            batch_size = 1000
+            for i in range(0, len(all_point_ids), batch_size):
+                batch = all_point_ids[i:i + batch_size]
+                self.client.delete(
+                    collection_name=self.collection_name,
+                    points_selector=batch
+                )
+                logger.info(f"Deleted batch {i // batch_size + 1} ({len(batch)} points)")
+            
+            logger.info(f"Successfully deleted {len(all_point_ids)} points from Qdrant")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting all products: {str(e)}")
+            raise
+    
+    def delete_collection(self) -> bool:
+        """
+        Delete the entire Qdrant collection.
+        WARNING: This permanently deletes the collection and all its data.
+        The collection will be recreated automatically on next initialization.
+        
+        Returns:
+            bool: True if successful
+        """
+        try:
+            self.client.delete_collection(collection_name=self.collection_name)
+            logger.info(f"Successfully deleted collection {self.collection_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting collection: {str(e)}")
+            raise
+    
     def get_collection_info(self) -> Dict[str, Any]:
         """Get collection information and stats."""
         try:
             info = self.client.get_collection(self.collection_name)
             return {
-                'name': info.config.params.vectors.size,
+                'name': self.collection_name,
                 'vector_size': info.config.params.vectors.size,
                 'distance': info.config.params.vectors.distance,
                 'points_count': info.points_count,

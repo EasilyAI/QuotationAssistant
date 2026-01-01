@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getQuotations, deleteQuotation } from '../services/quotationService';
 import { getFiles, deleteFile } from '../services/fileInfoService';
+import { getCurrentUserInfo } from '../services/authService';
 import { FileStatus, BusinessFileType } from '../types/files';
 import './Dashboard.css';
 
@@ -16,6 +17,22 @@ const Dashboard = () => {
   const [filesLoading, setFilesLoading] = useState(true);
   const [fileToDelete, setFileToDelete] = useState(null);
   const [isDeletingFile, setIsDeletingFile] = useState(false);
+  const [userName, setUserName] = useState('User');
+
+  // Fetch user info on mount
+  useEffect(() => {
+    const fetchUserInfo = async () => {
+      try {
+        const userInfo = await getCurrentUserInfo();
+        if (userInfo && userInfo.name) {
+          setUserName(userInfo.name);
+        }
+      } catch (err) {
+        console.error('Error fetching user info:', err);
+      }
+    };
+    fetchUserInfo();
+  }, []);
 
   // Fetch quotations on mount
   useEffect(() => {
@@ -222,7 +239,7 @@ const Dashboard = () => {
       <div className="dashboard-content">
         {/* Welcome Section */}
         <div className="dashboard-section welcome-section">
-          <h1 className="dashboard-title">Welcome back, Yehuda</h1>
+          <h1 className="dashboard-title">Welcome back, {userName}</h1>
         </div>
 
         {/* Quick Actions Section */}

@@ -7,16 +7,17 @@ import logging
 from typing import Dict, Any
 
 from api.utils import get_query_params, get_path_parameter, get_request_body, create_response
-from schemas.validation import validate_create_quotation, validate_update_quotation
+from schemas.validation import validate_create_quotation, validate_update_quotation, validate_replace_quotation_state
 from services.quotation_service import (
     create_quotation_item,
     get_quotation,
     list_quotations,
     update_quotation,
-    delete_quotation
+    delete_quotation,
+    replace_quotation_state
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('[QUOTATIONS]')
 logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 
@@ -192,4 +193,55 @@ def handle_delete_quotation(event: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error deleting quotation: {str(e)}", exc_info=True)
         return create_response(500, {'error': 'Internal server error', 'message': 'Failed to delete quotation'})
+
+
+def handle_replace_quotation_state(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Handle PUT /quotations/{quotationId}/full-state - Replace entire quotation state.
+    
+    This endpoint replaces the entire quotation state atomically. Frontend sends the
+    complete state, backend replaces everything. This eliminates the need for tracking
+    individual changes and simplifies the update process.
+    """
+    logger.info(f"[REPLACE-STATE] Handling replace quotation state request")
+    try:
+        quotation_id = get_path_parameter(event, 'quotationId')
+        logger.info(f"[REPLACE-STATE] Quotation ID: {quotation_id}")
+        
+        if not quotation_id:
+            return create_response(400, {'error': 'Missing quotationId'})
+        
+        body = get_request_body(event)
+        logger.info(f"[REPLACE-STATE] Payload keys: {list(body.keys())}")
+        
+        # Validate payload structure
+        is_valid, error = validate_replace_quotation_state(body)
+        if not is_valid:
+            return create_response(400, {
+                'error': 'Validation error', 
+                'message': error
+            })
+        
+        logger.info(f"[REPLACE-STATE] Metadata fields: {list(body['metadata'].keys())}")
+        logger.info(f"[REPLACE-STATE] Lines count: {len(body['lines'])}")
+        
+        # Replace state
+        quotation = replace_quotation_state(
+            quotation_id,
+            body['metadata'],
+            body['lines']
+        )
+        
+        if not quotation:
+            return create_response(404, {'error': 'Quotation not found'})
+        
+        logger.info(f"[REPLACE-STATE] Successfully replaced state for quotation {quotation_id[:8]}...")
+        return create_response(200, quotation)
+        
+    except Exception as e:
+        logger.error(f"[REPLACE-STATE] Error replacing quotation state: {str(e)}", exc_info=True)
+        return create_response(500, {
+            'error': 'Internal server error', 
+            'message': 'Failed to update quotation'
+        })
 

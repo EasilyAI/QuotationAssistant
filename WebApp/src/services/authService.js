@@ -273,3 +273,61 @@ export const getAuthToken = async () => {
   const token = await getCurrentSession();
   return token ? `Bearer ${token}` : null;
 };
+
+/**
+ * Get current user information from ID token
+ * @returns {Promise<{name: string, email: string, username: string}|null>} User info or null if not authenticated
+ */
+export const getCurrentUserInfo = async () => {
+  return new Promise((resolve, reject) => {
+    const cognitoUser = getCurrentUser();
+    
+    if (!cognitoUser) {
+      resolve(null);
+      return;
+    }
+    
+    cognitoUser.getSession((err, session) => {
+      if (err || !session || !session.isValid()) {
+        resolve(null);
+        return;
+      }
+      
+      try {
+        const idToken = session.getIdToken();
+        const payload = idToken.payload;
+        
+        // Extract user information from token payload
+        // Priority: name > given_name > email (first part) > username
+        let displayName = payload.name || 
+                         payload.given_name || 
+                         (payload.email ? payload.email.split('@')[0] : null) ||
+                         payload['cognito:username'] ||
+                         'User';
+        
+        // Convert to title case (first letter of each word capitalized)
+        const toTitleCase = (str) => {
+          if (!str) return str;
+          return str.toLowerCase().split(' ').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1)
+          ).join(' ');
+        };
+        
+        displayName = toTitleCase(displayName);
+        
+        const userInfo = {
+          name: displayName,
+          email: payload.email || '',
+          username: payload['cognito:username'] || '',
+          givenName: payload.given_name || '',
+          familyName: payload.family_name || '',
+        };
+        
+        resolve(userInfo);
+      } catch (error) {
+        console.error('Error extracting user info:', error);
+        resolve(null);
+      }
+    });
+  });
+};

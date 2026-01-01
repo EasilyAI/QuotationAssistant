@@ -291,6 +291,9 @@ export const deleteQuotation = async (quotationId) => {
 
 /**
  * Add line item to quotation
+ * 
+ * NOTE: For bulk operations, consider using saveQuotationFullState() instead.
+ * This single-item endpoint is kept for backward compatibility and incremental updates.
  */
 export const addLineItem = async (quotationId, lineData) => {
   const backendLine = transformLineToBackend(lineData);
@@ -347,6 +350,9 @@ export const batchAddLineItems = async (quotationId, linesData) => {
 
 /**
  * Update line item
+ * 
+ * NOTE: For bulk operations, consider using saveQuotationFullState() instead.
+ * This single-item endpoint is kept for backward compatibility and incremental updates.
  */
 export const updateLineItem = async (quotationId, lineId, lineData) => {
   const backendLine = transformLineToBackend(lineData);
@@ -375,6 +381,9 @@ export const updateLineItem = async (quotationId, lineId, lineData) => {
 
 /**
  * Delete line item
+ * 
+ * NOTE: For bulk operations, consider using saveQuotationFullState() instead.
+ * This single-item endpoint is kept for backward compatibility and incremental updates.
  */
 export const deleteLineItem = async (quotationId, lineId) => {
   const response = await authenticatedFetch(
@@ -545,5 +554,81 @@ export const generateEmailDraft = async (quotationId, customerEmail) => {
 
   const data = await response.json();
   return data;
+};
+
+/**
+ * Save complete quotation state (replaces everything atomically)
+ * 
+ * This is the new simplified approach that replaces the entire quotation state
+ * instead of tracking individual changes. Much simpler and more reliable.
+ */
+export const saveQuotationFullState = async (quotationId, quotationState) => {
+  const payload = {
+    metadata: {
+      name: quotationState.quotationName || quotationState.name,
+      customer: typeof quotationState.customer === 'string' 
+        ? { name: quotationState.customer }
+        : quotationState.customer,
+      currency: quotationState.currency || 'ILS',
+      status: quotationState.status || 'Draft',
+      global_margin_pct: quotationState.defaultMargin 
+        ? quotationState.defaultMargin / 100 
+        : 0.0,
+      notes: quotationState.notes || ''
+    },
+    lines: (quotationState.items || []).map(item => {
+      const lineData = {
+        ordering_number: item.orderingNumber || '',
+        product_name: item.productName || item.requestedItem || 'Item',
+        description: item.specs || item.description || '',
+        quantity: item.quantity || 1,
+        base_price: item.price != null ? parseFloat(item.price) : null,
+        margin_pct: item.margin != null ? parseFloat(item.margin) / 100 : null,
+        drawing_link: item.sketchFile || null,
+        catalog_link: item.catalogLink || '',
+        notes: item.notes || '',
+        source: item.source || 'manual',
+        original_request: item.originalRequest || ''
+      };
+      
+      // Only include line_id if it exists (for existing items)
+      if (item.line_id) {
+        lineData.line_id = item.line_id;
+      }
+      
+      return lineData;
+    })
+  };
+  
+  const response = await authenticatedFetch(
+    buildQuotationsUrl(`/${quotationId}/full-state`),
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    },
+    'quotation'
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ 
+      message: 'Failed to save quotation' 
+    }));
+    throw new Error(error.message || `Failed to save: ${response.statusText}`);
+  }
+
+  const backendQuotation = await response.json();
+  
+  // Transform backend response to frontend format
+  const frontendQuotation = transformQuotationFromBackend(backendQuotation);
+  
+  // Transform lines
+  const lines = (backendQuotation.lines || []).map((line, index) => 
+    transformLineFromBackend(line, index)
+  );
+
+  return {
+    ...frontendQuotation,
+    items: lines
+  };
 };
 

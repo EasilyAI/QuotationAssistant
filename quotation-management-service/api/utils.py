@@ -19,7 +19,7 @@ for path in {SERVICE_ROOT, REPO_ROOT, SHARED_DIR}:
         sys.path.append(path)
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('[UTILS]')
 logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 
@@ -44,6 +44,7 @@ def get_query_params(event: Dict[str, Any]) -> Dict[str, str]:
         parsed = parse_qs(event['rawQueryString'])
         params = {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
     
+    logger.info(f"[GET-QUERY-PARAMS] Query parameters: {params}")
     return params
 
 

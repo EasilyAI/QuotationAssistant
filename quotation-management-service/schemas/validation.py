@@ -172,3 +172,47 @@ def validate_batch_lines(data: Dict[str, Any]) -> tuple[bool, Optional[str]]:
     
     return True, None
 
+
+def validate_replace_quotation_state(data: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+    """
+    Validate replace quotation state request (full-state endpoint).
+    
+    This validates the payload for the PUT /quotations/{quotationId}/full-state endpoint,
+    which replaces the entire quotation state atomically.
+    
+    Returns:
+        (is_valid, error_message)
+    """
+    if not isinstance(data, dict):
+        return False, "Request body must be a JSON object"
+    
+    # Required top-level fields
+    if "metadata" not in data:
+        return False, "metadata is required"
+    
+    if "lines" not in data:
+        return False, "lines is required"
+    
+    # Validate metadata
+    metadata = data["metadata"]
+    if not isinstance(metadata, dict):
+        return False, "metadata must be a JSON object"
+    
+    # Validate metadata fields (using existing validation logic)
+    is_valid, error = validate_update_quotation(metadata)
+    if not is_valid:
+        return False, f"Metadata validation error: {error}"
+    
+    # Validate lines
+    lines = data["lines"]
+    if not isinstance(lines, list):
+        return False, "lines must be an array"
+    
+    # Lines can be empty (allows clearing all items)
+    for idx, line in enumerate(lines):
+        is_valid, error = validate_line_item(line)
+        if not is_valid:
+            return False, f"Line {idx} validation error: {error}"
+    
+    return True, None
+

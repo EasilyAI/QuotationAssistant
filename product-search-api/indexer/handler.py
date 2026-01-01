@@ -181,6 +181,79 @@ def handle_initialize() -> Dict[str, Any]:
         }
 
 
+def handle_delete_all_products() -> Dict[str, Any]:
+    """
+    Handle request to delete all products from Qdrant collection.
+    This clears all points but keeps the collection intact.
+    
+    Returns:
+        Response with deletion results
+    """
+    try:
+        logger.info("Delete all products requested")
+        qdrant = get_qdrant_manager()
+        
+        # Get count before deletion for reporting
+        info = qdrant.get_collection_info()
+        points_before = info.get('points_count', 0)
+        
+        qdrant.delete_all_products()
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': f'Deleted {points_before} products from collection',
+                'collection': qdrant.collection_name,
+                'points_deleted': points_before
+            })
+        }
+    except Exception as e:
+        logger.error(f"Error deleting all products: {str(e)}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+
+
+def handle_delete_collection() -> Dict[str, Any]:
+    """
+    Handle request to delete the entire Qdrant collection.
+    WARNING: This permanently deletes the collection and all its data.
+    The collection will be recreated automatically on next initialization.
+    
+    Returns:
+        Response with deletion results
+    """
+    try:
+        logger.warning("Delete collection requested - this will permanently delete all data")
+        qdrant = get_qdrant_manager()
+        collection_name = qdrant.collection_name
+        
+        # Get count before deletion for reporting
+        try:
+            info = qdrant.get_collection_info()
+            points_before = info.get('points_count', 0)
+        except:
+            points_before = 0
+        
+        qdrant.delete_collection()
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': f'Deleted collection {collection_name}',
+                'collection': collection_name,
+                'points_deleted': points_before
+            })
+        }
+    except Exception as e:
+        logger.error(f"Error deleting collection: {str(e)}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda handler for DynamoDB Stream events.
@@ -195,9 +268,14 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     logger.info(f"Received event with {len(event.get('Records', []))} records")
     # logger.info(f"Event: {json.dumps(event, indent=2)}")
 
-    # Handle manual initialization
-    if event.get('action') == 'initialize':
+    # Handle manual actions
+    action = event.get('action')
+    if action == 'initialize':
         return handle_initialize()
+    elif action == 'delete_all_products':
+        return handle_delete_all_products()
+    elif action == 'delete_collection':
+        return handle_delete_collection()
     
     # Process stream records
     processed = 0

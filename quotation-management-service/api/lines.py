@@ -1,5 +1,17 @@
 """
 Line item endpoint handlers.
+
+NOTE: For bulk operations (adding/updating/deleting multiple items at once),
+consider using the new full-state replacement endpoint instead:
+PUT /quotations/{quotationId}/full-state
+
+This endpoint replaces the entire quotation state atomically, which is more
+efficient and simpler for operations that affect multiple line items.
+
+These individual line item endpoints remain available for:
+- Single item operations
+- Incremental updates from other parts of the system
+- Backward compatibility
 """
 
 import os

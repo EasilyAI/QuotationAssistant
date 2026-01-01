@@ -13,7 +13,8 @@ from api.quotations import (
     handle_get_quotation,
     handle_update_quotation,
     handle_update_status,
-    handle_delete_quotation
+    handle_delete_quotation,
+    handle_replace_quotation_state
 )
 from api.lines import (
     handle_add_line,
@@ -113,7 +114,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     elif path.startswith('/quotations/') and path.endswith('/status') and method == 'PATCH':
         return handle_update_status(event)
 
-    elif path.startswith('/quotations/') and not any(x in path for x in ['/lines', '/exports', '/email-draft']) and method == 'PUT':
+    elif path.startswith('/quotations/') and path.endswith('/full-state') and method == 'PUT':
+        return handle_replace_quotation_state(event)
+
+    elif path.startswith('/quotations/') and not any(x in path for x in ['/lines', '/exports', '/email-draft', '/full-state']) and method == 'PUT':
         return handle_update_quotation(event)
     
     elif path.startswith('/quotations/') and not any(x in path for x in ['/lines', '/exports', '/email-draft']) and method == 'DELETE':

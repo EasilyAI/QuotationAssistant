@@ -20,7 +20,7 @@ provider:
       allowedOrigins:
         - "http://localhost:3000"
         - "http://localhost:3001"
-        - "https://catalog-searcher-omers-projects-e3a112ba.vercel.app"
+        - "${self:custom.productionFrontendUrl}"
       allowedHeaders:
         - Content-Type
         - Authorization
@@ -125,6 +125,8 @@ custom:
   productsTable: hb-products
   priceListProductsTable: hb-pricelist-products
   filesBucket: hb-files-raw
+  # Production frontend URL (change this when deploying to production)
+  productionFrontendUrl: ${env:PRODUCTION_FRONTEND_URL, 'https://catalog-searcher-omers-projects-e3a112ba.vercel.app'}
   serverless-offline:
     httpPort: 3004
     lambdaPort: 3003
@@ -159,6 +161,9 @@ functions:
       - httpApi:
           path: /quotations/{quotationId}/status
           method: patch
+      - httpApi:
+          path: /quotations/{quotationId}/full-state
+          method: put
       - httpApi:
           path: /quotations/{quotationId}
           method: delete
