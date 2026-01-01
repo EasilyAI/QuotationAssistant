@@ -32,6 +32,9 @@ const PriceListReview = () => {
   const [showMissingLink, setShowMissingLink] = useState(false);
   const [showModified, setShowModified] = useState(false);
   const [showCategoryReview, setShowCategoryReview] = useState(false);
+  const [showExactMatch, setShowExactMatch] = useState(false);
+  const [showSuggestedMatch, setShowSuggestedMatch] = useState(false);
+  const [showNoMatch, setShowNoMatch] = useState(false);
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [showBulkCategoryModal, setShowBulkCategoryModal] = useState(false);
 
@@ -191,6 +194,9 @@ const PriceListReview = () => {
     if (showMissingLink) filtered = filtered.filter(hasMissingLink);
     if (showModified) filtered = filtered.filter(isModified);
     if (showCategoryReview) filtered = filtered.filter(needsCategoryReview);
+    if (showExactMatch) filtered = filtered.filter(hasExactMatch);
+    if (showSuggestedMatch) filtered = filtered.filter(hasSuggestedMatch);
+    if (showNoMatch) filtered = filtered.filter(hasNoMatch);
     
     const totalPagesCalc = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const safeCurrentPageCalc = Math.min(currentPage, totalPagesCalc);
@@ -236,11 +242,26 @@ const PriceListReview = () => {
   };
 
   const needsCategoryReview = (product) => {
-    const confidence = product.categoryMatchConfidence;
-    return confidence === 'suggested' || confidence === 'none' || !product.productCategory;
+    // Only products without a category set need review
+    return !product.productCategory || product.productCategory.trim() === '';
+  };
+
+  const hasExactMatch = (product) => {
+    return product.categoryMatchConfidence === 'exact';
+  };
+
+  const hasSuggestedMatch = (product) => {
+    return product.categoryMatchConfidence === 'suggested';
+  };
+
+  const hasNoMatch = (product) => {
+    return product.categoryMatchConfidence === 'none' || !product.categoryMatchConfidence;
   };
 
   const categoryReviewCount = products.filter(needsCategoryReview).length;
+  const exactMatchCount = products.filter(hasExactMatch).length;
+  const suggestedMatchCount = products.filter(hasSuggestedMatch).length;
+  const noMatchCount = products.filter(hasNoMatch).length;
   const missingPriceProducts = products.filter(p => p.price === null || p.price === undefined || p.price === '');
   const missingLinkProducts = products.filter(p => {
     const linkValue = p.SwagelokLink ?? p.swagelokLink ?? p.swaglokLink;
@@ -443,6 +464,15 @@ const PriceListReview = () => {
     if (showCategoryReview) {
       filtered = filtered.filter(needsCategoryReview);
     }
+    if (showExactMatch) {
+      filtered = filtered.filter(hasExactMatch);
+    }
+    if (showSuggestedMatch) {
+      filtered = filtered.filter(hasSuggestedMatch);
+    }
+    if (showNoMatch) {
+      filtered = filtered.filter(hasNoMatch);
+    }
     
     return filtered;
   })();
@@ -550,6 +580,9 @@ const PriceListReview = () => {
               setShowMissingLink(false);
               setShowModified(false);
               setShowCategoryReview(false);
+              setShowExactMatch(false);
+              setShowSuggestedMatch(false);
+              setShowNoMatch(false);
               setCurrentPage(1);
             }}
             style={{ cursor: 'pointer' }}
@@ -564,6 +597,9 @@ const PriceListReview = () => {
               setShowMissingPrice(false);
               setShowModified(false);
               setShowCategoryReview(false);
+              setShowExactMatch(false);
+              setShowSuggestedMatch(false);
+              setShowNoMatch(false);
               setCurrentPage(1);
             }}
             style={{ cursor: 'pointer' }}
@@ -579,6 +615,9 @@ const PriceListReview = () => {
                 setShowMissingPrice(false);
                 setShowMissingLink(false);
                 setShowCategoryReview(false);
+                setShowExactMatch(false);
+                setShowSuggestedMatch(false);
+                setShowNoMatch(false);
                 setCurrentPage(1);
               }}
               style={{ cursor: 'pointer' }}
@@ -588,12 +627,66 @@ const PriceListReview = () => {
             </div>
           )}
           <div 
+            className={`stat-item stat-valid ${showExactMatch ? 'stat-active' : ''}`}
+            onClick={() => {
+              setShowExactMatch(!showExactMatch);
+              setShowMissingPrice(false);
+              setShowMissingLink(false);
+              setShowModified(false);
+              setShowCategoryReview(false);
+              setShowSuggestedMatch(false);
+              setShowNoMatch(false);
+              setCurrentPage(1);
+            }}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="stat-value">{exactMatchCount}</span>
+            <span className="stat-label">Exact match</span>
+          </div>
+          <div 
+            className={`stat-item stat-warning ${showSuggestedMatch ? 'stat-active' : ''}`}
+            onClick={() => {
+              setShowSuggestedMatch(!showSuggestedMatch);
+              setShowMissingPrice(false);
+              setShowMissingLink(false);
+              setShowModified(false);
+              setShowCategoryReview(false);
+              setShowExactMatch(false);
+              setShowNoMatch(false);
+              setCurrentPage(1);
+            }}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="stat-value">{suggestedMatchCount}</span>
+            <span className="stat-label">Suggested match</span>
+          </div>
+          <div 
+            className={`stat-item stat-warning ${showNoMatch ? 'stat-active' : ''}`}
+            onClick={() => {
+              setShowNoMatch(!showNoMatch);
+              setShowMissingPrice(false);
+              setShowMissingLink(false);
+              setShowModified(false);
+              setShowCategoryReview(false);
+              setShowExactMatch(false);
+              setShowSuggestedMatch(false);
+              setCurrentPage(1);
+            }}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="stat-value">{noMatchCount}</span>
+            <span className="stat-label">No match</span>
+          </div>
+          <div 
             className={`stat-item stat-warning ${showCategoryReview ? 'stat-active' : ''}`}
             onClick={() => {
               setShowCategoryReview(!showCategoryReview);
               setShowMissingPrice(false);
               setShowMissingLink(false);
               setShowModified(false);
+              setShowExactMatch(false);
+              setShowSuggestedMatch(false);
+              setShowNoMatch(false);
               setCurrentPage(1);
             }}
             style={{ cursor: 'pointer' }}
@@ -749,11 +842,6 @@ const PriceListReview = () => {
                             ))}
                         </select>
                         {confidence && getCategoryConfidenceIcon(confidence)}
-                        {inferredCategory && !product.productCategory && (
-                          <span className="inferred-label" title={`Inferred: ${inferredCategory}`}>
-                            ({inferredCategory})
-                          </span>
-                        )}
                       </div>
                     </div>
                     <div className="price-cell price">

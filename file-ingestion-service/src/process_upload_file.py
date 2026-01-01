@@ -723,10 +723,33 @@ def process_price_list(file_id, s3_key):
                 product["price"] = None
             
             # Infer product category from description
-            description = product.get("description", "")
-            inferred_category, confidence = infer_product_category(description)
-            product["inferredCategory"] = inferred_category
-            product["categoryMatchConfidence"] = confidence
+            description = product.get("description")
+            if description and isinstance(description, str) and description.strip():
+                try:
+                    inferred_category, confidence = infer_product_category(description)
+                    product["inferredCategory"] = inferred_category
+                    product["categoryMatchConfidence"] = confidence
+                except Exception as e:
+                    print(f"[process_price_list] ERROR in category inference for row {row_idx}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    product["inferredCategory"] = None
+                    product["categoryMatchConfidence"] = "none"
+            else:
+                product["inferredCategory"] = None
+                product["categoryMatchConfidence"] = "none"
+            
+            # Log inference results for first few products for debugging
+            if row_idx <= data_start_row + 5:
+                inferred_cat = product.get("inferredCategory")
+                inferred_conf = product.get("categoryMatchConfidence")
+                desc_preview = (description[:50] + "...") if description and len(description) > 50 else (description or "None")
+                print(
+                    f"[process_price_list] Category inference for row {row_idx}: "
+                    f"description='{desc_preview}', "
+                    f"inferredCategory={inferred_cat}, "
+                    f"confidence={inferred_conf}"
+                )
             
             products.append(product)
 
