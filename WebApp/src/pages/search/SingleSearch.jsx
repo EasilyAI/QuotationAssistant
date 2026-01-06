@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import AddToQuotationDialog from '../../components/AddToQuotationDialog';
 import AutocompleteResults from '../../components/AutocompleteResults';
 import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
@@ -12,25 +12,43 @@ import './SingleSearch.css';
 
 const SingleSearch = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const autocompleteRef = useRef(null);
   const countDropdownRef = useRef(null);
   const lastSelectedSuggestion = useRef(null); // Track last selected suggestion to prevent re-trigger
-  const [searchQuery, setSearchQuery] = useState('');
-  const [productType, setProductType] = useState('All Types');
-  const [resultsCount, setResultsCount] = useState(5);
+  
+  // Restore search state from sessionStorage if available
+  const restoreSearchState = () => {
+    const savedState = sessionStorage.getItem('singleSearchState');
+    if (savedState) {
+      try {
+        const parsed = JSON.parse(savedState);
+        return parsed;
+      } catch (e) {
+        console.error('Failed to restore single search state:', e);
+        sessionStorage.removeItem('singleSearchState');
+      }
+    }
+    return null;
+  };
+
+  const restoredState = restoreSearchState();
+  const [searchQuery, setSearchQuery] = useState(restoredState?.searchQuery || '');
+  const [productType, setProductType] = useState(restoredState?.productType || 'All Types');
+  const [resultsCount, setResultsCount] = useState(restoredState?.resultsCount || 5);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [lastSearchQuery, setLastSearchQuery] = useState('');
+  const [hasSearched, setHasSearched] = useState(restoredState?.hasSearched || false);
+  const [lastSearchQuery, setLastSearchQuery] = useState(restoredState?.lastSearchQuery || '');
   const [showCountDropdown, setShowCountDropdown] = useState(false);
-  const [searchResults, setSearchResults] = useState([]);
+  const [searchResults, setSearchResults] = useState(restoredState?.searchResults || []);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState('');
+  const [searchError, setSearchError] = useState(restoredState?.searchError || '');
   const [autocompleteSuggestions, setAutocompleteSuggestions] = useState([]);
   const [autocompleteLoading, setAutocompleteLoading] = useState(false);
   const [autocompleteError, setAutocompleteError] = useState('');
   const [isAutocompleteOpen, setIsAutocompleteOpen] = useState(false);
-  const [useAI, setUseAI] = useState(true);
+  const [useAI, setUseAI] = useState(restoredState?.useAI !== undefined ? restoredState.useAI : true);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewProduct, setPreviewProduct] = useState(null);
   const [previewFileKey, setPreviewFileKey] = useState('');
@@ -38,6 +56,24 @@ const SingleSearch = () => {
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewOrderingNo, setPreviewOrderingNo] = useState(null);
   const selectedCategory = productType === 'All Types' ? undefined : productType;
+
+  // Save search state to sessionStorage whenever it changes
+  useEffect(() => {
+    if (hasSearched && searchResults.length > 0) {
+      const stateToSave = {
+        searchQuery,
+        productType,
+        resultsCount,
+        hasSearched,
+        lastSearchQuery,
+        searchResults,
+        searchError,
+        useAI,
+        timestamp: new Date().toISOString()
+      };
+      sessionStorage.setItem('singleSearchState', JSON.stringify(stateToSave));
+    }
+  }, [hasSearched, searchResults, searchQuery, productType, resultsCount, lastSearchQuery, searchError, useAI]);
 
   // Fetch autocomplete suggestions whenever the query changes
   useEffect(() => {
@@ -238,8 +274,10 @@ const SingleSearch = () => {
     setLastSearchQuery('');
     setProductType('All Types');
     setResultsCount(5);
-     setSearchResults([]);
+    setSearchResults([]);
     setSearchError('');
+    // Clear saved state from sessionStorage
+    sessionStorage.removeItem('singleSearchState');
   };
 
   const handleAddToQuotation = (product) => {
@@ -303,7 +341,23 @@ const SingleSearch = () => {
   };
 
   const handleProductClick = (orderingNo) => {
-    navigate(`/product/${orderingNo}`);
+    // Save current search state before navigating
+    const stateToSave = {
+      searchQuery,
+      productType,
+      resultsCount,
+      hasSearched,
+      lastSearchQuery,
+      searchResults,
+      searchError,
+      useAI,
+      timestamp: new Date().toISOString()
+    };
+    sessionStorage.setItem('singleSearchState', JSON.stringify(stateToSave));
+    
+    navigate(`/product/${orderingNo}`, {
+      state: { fromSearch: true }
+    });
   };
 
   const handleAutocompleteOrderingClick = async (orderingNo) => {

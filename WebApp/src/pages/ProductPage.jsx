@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getProductByOrderingNo } from '../data/mockProducts';
 import { fetchProductByOrderingNumber } from '../services/productsService';
-import { getFileDownloadUrl } from '../services/fileInfoService';
+import { getFileDownloadUrl, getFileInfo } from '../services/fileInfoService';
 import CatalogPreviewDialog from '../components/CatalogPreviewDialog';
+import AddToQuotationDialog from '../components/AddToQuotationDialog';
 import './ProductPage.css';
 
 const formatLabel = (key = '') => {
@@ -158,7 +159,11 @@ const buildDefaultProductDetails = (orderingNo, specs) => ({
 const ProductPage = () => {
   const { orderingNo } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const fallbackProduct = getProductByOrderingNo(orderingNo);
+  
+  // Check if we came from search page
+  const fromSearch = location.state?.fromSearch || false;
 
   const [productRecord, setProductRecord] = useState(null);
   const [specifications, setSpecifications] = useState(fallbackProduct?.specifications || {});
@@ -176,6 +181,7 @@ const ProductPage = () => {
   const [cachedPreviewUrlTimestamp, setCachedPreviewUrlTimestamp] = useState(null);
   const [salesDrawingPreviewUrl, setSalesDrawingPreviewUrl] = useState(null);
   const [salesDrawingPreviewKey, setSalesDrawingPreviewKey] = useState(null);
+  const [showAddToQuotationDialog, setShowAddToQuotationDialog] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -331,15 +337,30 @@ const ProductPage = () => {
       return;
     }
 
-    const fileKey = firstCatalogProduct.fileKey || firstCatalogProduct._fileKey;
-    if (!fileKey) {
+    // Get fileId from the catalog product
+    const fileId = firstCatalogProduct._fileId || firstCatalogProduct.fileId;
+    if (!fileId) {
       alert('No catalog file reference available for this product.');
       return;
     }
 
-    const url = await ensurePreviewUrl(fileKey);
-    if (url) {
-      setIsPreviewOpen(true);
+    try {
+      // Resolve fileId to fileKey using getFileInfo
+      const fileInfo = await getFileInfo(fileId);
+      const fileKey = fileInfo.s3Key || fileInfo.key;
+      
+      if (!fileKey) {
+        alert('No catalog file reference available for this product.');
+        return;
+      }
+
+      const url = await ensurePreviewUrl(fileKey);
+      if (url) {
+        setIsPreviewOpen(true);
+      }
+    } catch (error) {
+      console.error('[ProductPage] Failed to get file info', error);
+      alert('Unable to load catalog preview. Please try again.');
     }
   }, [productRecord, ensurePreviewUrl]);
 
@@ -347,6 +368,62 @@ const ProductPage = () => {
     setIsPreviewOpen(false);
     setSalesDrawingPreviewUrl(null);
     setSalesDrawingPreviewKey(null);
+  };
+
+  const handleAddToQuotation = () => {
+    setShowAddToQuotationDialog(true);
+  };
+
+  const handleSelectQuotation = (quotationId) => {
+    // Create quotation item from product details
+    const quotationItem = {
+      orderNo: 1, // Will be adjusted in the quotation page
+      orderingNumber: productDetails.orderingNo || '',
+      requestedItem: productDetails.productName || productDetails.orderingNo || '',
+      productName: productDetails.productName || productDetails.orderingNo || '',
+      productType: productDetails.type || 'Valve',
+      quantity: 1,
+      price: productDetails.price || 0,
+      margin: 20,
+      sketchFile: null,
+      catalogLink: '',
+      notes: 'Added from product page',
+      isIncomplete: false
+    };
+
+    // Navigate to edit quotation with the new item
+    navigate(`/quotations/edit/${quotationId}`, { 
+      state: { 
+        newItem: quotationItem,
+        source: 'product-page'
+      } 
+    });
+  };
+
+  const handleCreateNew = () => {
+    // Create quotation item from product details
+    const quotationItem = {
+      orderNo: 1,
+      orderingNumber: productDetails.orderingNo || '',
+      requestedItem: productDetails.productName || productDetails.orderingNo || '',
+      productName: productDetails.productName || productDetails.orderingNo || '',
+      productType: productDetails.type || 'Valve',
+      quantity: 1,
+      price: productDetails.price || 0,
+      margin: 20,
+      sketchFile: null,
+      catalogLink: '',
+      notes: 'Added from product page',
+      isIncomplete: false
+    };
+
+    // Navigate to metadata form first, then to items page
+    navigate('/quotations/new', { 
+      state: { 
+        items: [quotationItem],
+        source: 'product-page'
+      } 
+    });
   };
 
   const priceSource = productDetails.sources.find((source) => source.hasPrice);
@@ -363,7 +440,18 @@ const ProductPage = () => {
     <div className="product-page">
       <div className="product-content">
         {/* Back Button */}
-        <button className="back-button" onClick={() => navigate(-1)}>
+        <button 
+          className="back-button" 
+          onClick={() => {
+            // If we came from search, navigate back to search page
+            // The search state will be restored from sessionStorage
+            if (fromSearch) {
+              navigate('/search');
+            } else {
+              navigate(-1);
+            }
+          }}
+        >
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
@@ -607,7 +695,10 @@ const ProductPage = () => {
 
         {/* Action Buttons */}
         <div className="product-actions">
-          <button className="btn-primary-large">
+          <button 
+            className="btn-primary-large"
+            onClick={handleAddToQuotation}
+          >
             Add to Quotation
           </button>
           <button 
@@ -634,6 +725,15 @@ const ProductPage = () => {
         product={productRecord?.catalogProducts?.[0]}
         highlightTerm={productDetails.orderingNo}
         title={salesDrawingPreviewKey ? "Sales Drawing Preview" : "Catalog Preview"}
+      />
+
+      <AddToQuotationDialog
+        open={showAddToQuotationDialog}
+        onOpenChange={setShowAddToQuotationDialog}
+        productName={productDetails.productName}
+        orderingNo={productDetails.orderingNo}
+        onSelectQuotation={handleSelectQuotation}
+        onCreateNew={handleCreateNew}
       />
     </div>
   );
