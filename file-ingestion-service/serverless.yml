@@ -31,7 +31,7 @@ custom:
   productsTable: hb-products
   priceListProductsTable: hb-pricelist-products
   # Production frontend URL (change this when deploying to production)
-  productionFrontendUrl: ${env:PRODUCTION_FRONTEND_URL, 'https://catalog-searcher-omers-projects-e3a112ba.vercel.app'}
+  productionFrontendUrl: ${env:PRODUCTION_FRONTEND_URL, 'https://main.d1xymtccqgi62h.amplifyapp.com'}
 
 provider:
   name: aws
