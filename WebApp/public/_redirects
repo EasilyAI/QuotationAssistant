@@ -1,5 +1,5 @@
 # AWS Amplify redirects file
-# Route all requests to index.html for SPA routing, except actual files
-# Static files (like .mjs, .js, .css, etc.) are served directly by Amplify
+# Route all non-file requests to index.html for SPA routing
+# Static files (with extensions) are automatically served by Amplify
 /* /index.html 200
 
