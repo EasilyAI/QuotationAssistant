@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { getFileInfo, getFileDownloadUrl, completeFileReview, deleteFile } from '../../services/fileInfoService';
 import { saveSalesDrawingToProduct, fetchProductByOrderingNumber, unlinkSalesDrawingFromProduct } from '../../services/productsService';
-import { fetchAutocompleteSuggestions } from '../../services/searchService';
+import { fetchAutocompleteSuggestions, searchProducts } from '../../services/searchService';
 import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
 import './SalesDrawingReview.css';
 
@@ -30,6 +30,7 @@ const SalesDrawingReview = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [useRegularSearch, setUseRegularSearch] = useState(false);
 
   // Load file info on mount
   useEffect(() => {
@@ -96,12 +97,33 @@ const SalesDrawingReview = () => {
     setIsSearching(true);
     setLinkError(null);
     try {
-      const response = await fetchAutocompleteSuggestions({
-        query: query.trim(),
-        size: 10 // Get more results for selection
-      });
-      
-      setSearchResults(response.suggestions || []);
+      if (useRegularSearch) {
+        // Use regular search (vector search with re-ranking)
+        const response = await searchProducts({
+          query: query.trim(),
+          size: 20, // Get more results
+          resultSize: 20, // Return more results after re-ranking
+          useAI: true
+        });
+        
+        // Convert search results to same format as autocomplete
+        const formattedResults = (response.results || []).map(result => ({
+          orderingNumber: result.orderingNumber || result.ordering_number || '',
+          searchText: result.searchText || result.search_text || result.description || '',
+          category: result.category || result.productCategory || '',
+          score: result.score || 0
+        }));
+        
+        setSearchResults(formattedResults);
+      } else {
+        // Use autocomplete (prefix matching)
+        const response = await fetchAutocompleteSuggestions({
+          query: query.trim(),
+          size: 10 // Get more results for selection
+        });
+        
+        setSearchResults(response.suggestions || []);
+      }
     } catch (err) {
       console.error('[SalesDrawingReview] Error searching products:', err);
       setSearchResults([]);
@@ -447,6 +469,40 @@ const SalesDrawingReview = () => {
             <p style={{ marginBottom: '20px', color: '#637887', fontSize: '14px' }}>
               Search for a product to link this sales drawing to. Type at least 3 characters to search.
             </p>
+            
+            {/* Search Type Toggle */}
+            <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                <input
+                  type="radio"
+                  checked={!useRegularSearch}
+                  onChange={() => {
+                    setUseRegularSearch(false);
+                    setSearchResults([]);
+                    if (searchQuery.trim().length >= 3) {
+                      handleSearchProduct(searchQuery);
+                    }
+                  }}
+                  style={{ marginRight: '6px' }}
+                />
+                Autocomplete (prefix match)
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                <input
+                  type="radio"
+                  checked={useRegularSearch}
+                  onChange={() => {
+                    setUseRegularSearch(true);
+                    setSearchResults([]);
+                    if (searchQuery.trim().length >= 3) {
+                      handleSearchProduct(searchQuery);
+                    }
+                  }}
+                  style={{ marginRight: '6px' }}
+                />
+                Regular Search (semantic)
+              </label>
+            </div>
             
             <div style={{ marginBottom: '20px' }}>
               <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>

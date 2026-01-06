@@ -339,16 +339,20 @@ class SearchService:
                 results_raw = None
             
             # If we got no results or very few, try a more lenient approach:
-            # Use scroll_points to get more candidates, then filter client-side
+            # Use vector search as fallback to find semantically similar products, then filter client-side
             # This helps with edge cases where MatchText doesn't match due to tokenization
             if not results_raw or len(results_raw.points) < limit:
-                logger.info(f"Got {len(results_raw.points) if results_raw else 0} results, trying scroll for more candidates")
+                logger.info(f"Got {len(results_raw.points) if results_raw else 0} results, trying vector search for more candidates")
                 try:
-                    # Use scroll with only category filter (no text filter) to get more candidates
-                    # We'll filter by prefix client-side
-                    scroll_filter = None
+                    # Use vector search with the prefix as query to find semantically similar products
+                    # This will find products that are similar to the prefix, which we then filter client-side
+                    prefix_clean_for_vector = prefix.strip()
+                    prefix_vector = self.embedder.generate(prefix_clean_for_vector)
+                    
+                    # Build filter for vector search (category only, no text filter)
+                    vector_filter = None
                     if category:
-                        scroll_filter = HttpFilter(
+                        vector_filter = HttpFilter(
                             must=[
                                 HttpFieldCondition(
                                     key="productCategory",
@@ -357,30 +361,47 @@ class SearchService:
                             ]
                         )
                     
-                    scroll_results = self.qdrant.client.scroll(
+                    # Use vector search to find candidates
+                    vector_results = self.qdrant.client.query_points(
                         collection_name=self.qdrant.collection_name,
-                        scroll_filter=scroll_filter,
-                        limit=candidate_limit * 2,  # Get even more candidates
-                        with_payload=True,
-                        with_vectors=False
+                        query=prefix_vector,
+                        query_filter=vector_filter,
+                        limit=candidate_limit * 2,  # Get more candidates for filtering
+                        score_threshold=0.3  # Lower threshold to get more candidates
                     )
                     
-                    # Convert scroll results to same format as query_points
-                    class MockPoint:
-                        def __init__(self, point_id, payload):
-                            self.id = point_id
-                            self.payload = payload
-                            self.score = None
-                    
-                    scroll_points = [MockPoint(p.id, p.payload) for p in scroll_results[0]]
-                    
-                    # If we got results from scroll, use them (they'll be filtered client-side)
-                    if scroll_points:
-                        results_raw = type('Results', (), {'points': scroll_points})()
-                        logger.info(f"Scroll returned {len(scroll_points)} candidates for client-side filtering")
+                    # Convert vector search results to same format as query_points
+                    if vector_results and vector_results.points:
+                        # Merge with existing results if any, avoiding duplicates
+                        existing_ids = {str(p.id) for p in results_raw.points} if results_raw and results_raw.points else set()
+                        new_points = [p for p in vector_results.points if str(p.id) not in existing_ids]
+                        
+                        if results_raw and results_raw.points:
+                            # Combine existing and new points
+                            all_points = list(results_raw.points) + new_points
+                        else:
+                            all_points = new_points
+                        
+                        # Create results object with combined points
+                        class MockPoint:
+                            def __init__(self, point_id, payload, score=None):
+                                self.id = point_id
+                                self.payload = payload
+                                self.score = score
+                        
+                        combined_points = [
+                            MockPoint(p.id, p.payload, getattr(p, 'score', None)) 
+                            for p in all_points
+                        ]
+                        
+                        results_raw = type('Results', (), {'points': combined_points})()
+                        logger.info(f"Vector search returned {len(new_points)} additional candidates (total: {len(combined_points)}) for client-side filtering")
+                    elif not results_raw:
+                        # If we had no results and vector search also returned nothing, create empty results
+                        results_raw = type('Results', (), {'points': []})()
                 except Exception as e:
-                    logger.warning(f"Scroll also failed: {str(e)}")
-                    # If both fail, use empty results
+                    logger.warning(f"Vector search fallback also failed: {str(e)}", exc_info=True)
+                    # If both fail, use empty results or keep existing results
                     if not results_raw:
                         results_raw = type('Results', (), {'points': []})()
             
@@ -397,17 +418,41 @@ class SearchService:
             # We do client-side filtering to ensure we catch all prefix matches,
             # including edge cases where Qdrant's tokenization might miss exact matches
             scored_suggestions: List[Tuple[float, Dict[str, str]]] = []
-            prefix_lower = prefix.lower()
-            prefix_original = prefix.strip()  # Keep original for case-sensitive exact match
+            # Strip and normalize the prefix for matching
+            prefix_clean = prefix.strip()
+            prefix_lower = prefix_clean.lower()
+            prefix_original = prefix_clean  # Keep original for case-sensitive exact match
+            
+            # Also create a version without trailing non-alphanumeric characters for more lenient matching
+            # This helps when user types "6LVV-DPFR4" but we want to match "6LVV-DPFR4-P"
+            prefix_lower_no_trailing = prefix_lower.rstrip('-_./')
+            
+            logger.debug(f"Filtering {len(results)} candidates with prefix: '{prefix_clean}' (lower: '{prefix_lower}', no-trailing: '{prefix_lower_no_trailing}')")
+            
+            matched_count = 0
+            skipped_no_ordering_num = 0
             
             for result in results:
                 metadata: ProductMetadata = result.get('metadata', {})  # type: ignore[assignment]
-                ordering_num = metadata.get('orderingNumber', '') or result.get('id', '')
+                # Try multiple ways to get the ordering number
+                ordering_num = (
+                    metadata.get('orderingNumber') or 
+                    metadata.get('ordering_number') or 
+                    result.get('id', '') or 
+                    ''
+                )
+                
+                if not ordering_num or not str(ordering_num).strip():
+                    skipped_no_ordering_num += 1
+                    continue
+                
+                # Ensure ordering_num is a string
+                ordering_num = str(ordering_num).strip()
                 ordering_num_lower = ordering_num.lower()
                 ordering_num_original = ordering_num  # Keep original for case-sensitive exact match
-                search_text = metadata.get('searchText') or metadata.get('description', '') or ''
-                search_text_lower = search_text.lower() if search_text else ''
-                category_val = metadata.get('productCategory') or metadata.get('category', '')
+                search_text = metadata.get('searchText') or metadata.get('description') or metadata.get('search_text') or ''
+                search_text_lower = search_text.lower().strip() if search_text else ''
+                category_val = metadata.get('productCategory') or metadata.get('category') or ''
                 
                 # Calculate match score based on where prefix appears
                 # Pass both original and lowercased versions for exact match detection
@@ -419,9 +464,30 @@ class SearchService:
                     ordering_num_original=ordering_num_original
                 )
                 
+                # If no match with exact prefix, try with prefix without trailing non-alphanumeric chars
+                # This handles cases where user types "6LVV-DPFR4" and we want to match "6LVV-DPFR4-P"
+                # Also handles cases where prefix has trailing dash but ordering number doesn't need it
+                if score == 0.0 and prefix_lower_no_trailing and prefix_lower_no_trailing != prefix_lower:
+                    score = self._calculate_prefix_match_score(
+                        prefix_lower_no_trailing,
+                        ordering_num_lower,
+                        search_text_lower,
+                        prefix_original=prefix_original.rstrip('-_./'),
+                        ordering_num_original=ordering_num_original
+                    )
+                
+                # Also try matching if prefix has trailing dash but ordering number starts with prefix without dash
+                # This handles: prefix='6LVV-DPFR4-', ordering_num='6LVV-DPFR4-P'
+                # The startswith check should work, but let's also try without the trailing dash
+                if score == 0.0 and prefix_lower.endswith('-') and not prefix_lower_no_trailing.endswith('-'):
+                    # Try matching the prefix without trailing dash against ordering number
+                    if ordering_num_lower.startswith(prefix_lower_no_trailing):
+                        score = 100.0  # Prefix match score
+                
                 # Only include results that actually contain the prefix
                 # This ensures we catch matches even if Qdrant's tokenization missed them
                 if score > 0:
+                    matched_count += 1
                     scored_suggestions.append((
                         score,
                         {
@@ -434,6 +500,28 @@ class SearchService:
             # Sort by score (descending) and take top results
             scored_suggestions.sort(key=lambda x: x[0], reverse=True)
             suggestions = [item[1] for item in scored_suggestions[:limit]]
+            
+            # Log some debug info if we filtered out all results
+            if len(results) > 0 and len(suggestions) == 0:
+                # Sample a few results to see what we got
+                sample_results = results[:min(5, len(results))]
+                sample_info = []
+                for r in sample_results:
+                    metadata = r.get('metadata', {})
+                    ordering_num = (
+                        metadata.get('orderingNumber') or 
+                        metadata.get('ordering_number') or 
+                        r.get('id', '') or 
+                        'MISSING'
+                    )
+                    sample_info.append(f"orderingNumber='{ordering_num}'")
+                logger.warning(
+                    f"Filtered out all {len(results)} candidates. "
+                    f"Prefix: '{prefix_clean}', "
+                    f"Skipped (no ordering num): {skipped_no_ordering_num}, "
+                    f"Matched: {matched_count}, "
+                    f"Sample results: {', '.join(sample_info)}"
+                )
             
             logger.info(f"Returning {len(suggestions)} autocomplete suggestions (text-only)")
             return suggestions

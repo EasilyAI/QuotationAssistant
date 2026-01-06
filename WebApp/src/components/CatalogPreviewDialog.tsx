@@ -8,9 +8,11 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './CatalogPreviewDialog.css';
 
-// Use local worker file from public folder (works in both dev and production)
-// The file is copied from node_modules during build setup
-pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+// Use CDN for PDF worker to avoid MIME type and routing issues in production
+// The local file in public/ might not be served correctly by Amplify
+// CDN ensures correct MIME type and availability
+const PDFJS_VERSION = '5.4.296';
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.mjs`;
 
 type CatalogPreviewDialogProps = {
   isOpen: boolean;

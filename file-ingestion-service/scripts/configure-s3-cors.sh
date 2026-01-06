@@ -15,7 +15,7 @@
 set -e
 
 BUCKET_NAME="hb-files-raw"
-PRODUCTION_URL="${PRODUCTION_FRONTEND_URL:-https://catalog-searcher-omers-projects-e3a112ba.vercel.app}"
+PRODUCTION_URL="${PRODUCTION_FRONTEND_URL:-https://main.d1xymtccqgi62h.amplifyapp.com}"
 
 echo "Configuring CORS for S3 bucket: $BUCKET_NAME"
 
