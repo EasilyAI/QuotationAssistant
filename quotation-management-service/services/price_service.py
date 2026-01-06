@@ -172,13 +172,35 @@ def refresh_line_prices(
             product = fetch_product(ordering_number)
             current_price_data = product.get('currentPrice')
             
-            if current_price_data and 'price' in current_price_data:
-                # Update base_price (convert to Decimal safely)
-                price_value = current_price_data['price']
-                line['base_price'] = _to_decimal(price_value) or Decimal('0.0')
-                logger.info(f"Updated base_price for {ordering_number}: {line['base_price']}")
+            # Preserve existing base_price in case price fetch fails
+            existing_base_price = line.get('base_price')
+            
+            # Check if we have price data and a valid price value
+            # Note: price can be 0 (free item), so we check for None specifically
+            price_value = None
+            if current_price_data:
+                price_value = current_price_data.get('price')
+            
+            if price_value is not None:
+                # We have a price value (could be 0 for free items)
+                new_base_price = _to_decimal(price_value)
+                
+                # Only update if conversion succeeded
+                if new_base_price is not None:
+                    line['base_price'] = new_base_price
+                    logger.info(f"Updated base_price for {ordering_number}: {line['base_price']}")
+                else:
+                    # Conversion failed, preserve existing or log warning
+                    if existing_base_price is None:
+                        logger.warning(f"Failed to convert price value for {ordering_number}, no existing price to preserve")
+                    else:
+                        logger.warning(f"Failed to convert price value for {ordering_number}, preserving existing price: {existing_base_price}")
             else:
-                logger.warning(f"No current price found for {ordering_number}")
+                # No price value found (current_price_data is None or price key missing/None)
+                if existing_base_price is None:
+                    logger.warning(f"No current price found for {ordering_number} and no existing price to preserve")
+                else:
+                    logger.info(f"No current price found for {ordering_number}, preserving existing price: {existing_base_price}")
             
             # Recalculate final_price using safe conversion
             margin_pct = _to_decimal(line.get('margin_pct'))

@@ -4,6 +4,7 @@ import { QuotationStatus } from '../../types/index';
 import CatalogPreviewDialog from '../../components/CatalogPreviewDialog';
 import { fetchProductByOrderingNumber } from '../../services/productsService';
 import { getFileDownloadUrl, getFileInfo } from '../../services/fileInfoService';
+import { searchProducts, fetchAutocompleteSuggestions } from '../../services/searchService';
 import { 
   getQuotation, 
   createQuotation, 
@@ -525,6 +526,20 @@ const EditQuotation = () => {
       hasAddedNewItemRef.current = true;
       const addItem = async () => {
         try {
+          // Check for duplicate in local state first
+          const orderingNo = newItem.orderingNumber || newItem.orderingNo;
+          if (orderingNo) {
+            const normalizedOrderingNo = orderingNo.trim().toUpperCase();
+            const existingItem = quotation.items?.find(item => 
+              item.orderingNumber && item.orderingNumber.trim().toUpperCase() === normalizedOrderingNo
+            );
+            
+            if (existingItem) {
+              alert(`Product with ordering number "${orderingNo}" already exists in this quotation.`);
+              return;
+            }
+          }
+          
           // Use quotation's defaultMargin if newItem.margin is not set
           const defaultMarginPct = (quotation.defaultMargin || 20) / 100;
           const transformedItem = {
@@ -546,7 +561,12 @@ const EditQuotation = () => {
           setHasUnsavedChanges(true);
         } catch (err) {
           console.error('Error adding item:', err);
-          alert(err.message || 'Failed to add item');
+          // Check if error is about duplicate
+          if (err.message && err.message.includes('already exists')) {
+            alert(err.message);
+          } else {
+            alert(err.message || 'Failed to add item');
+          }
         }
       };
       
@@ -776,31 +796,6 @@ const EditQuotation = () => {
     setPreviewType(null);
   };
 
-  // Add item to LOCAL state only - will be saved when user clicks Save
-  const handleAddItem = () => {
-    const newItemData = {
-      orderNo: (quotation.items?.length || 0) + 1,
-      orderingNumber: '',
-      requestedItem: '',
-      productName: 'New Item',
-      specs: '',
-      quantity: 1,
-      price: null,
-      margin: globalMargin,
-      sketchFile: null,
-      catalogLink: '',
-      notes: '',
-      isIncomplete: true,
-      originalRequest: ''
-      // No line_id means it's a new item - backend will generate it
-    };
-    
-    setQuotation(prev => ({
-      ...prev,
-      items: [...(prev.items || []), newItemData]
-    }));
-    setHasUnsavedChanges(true);
-  };
 
   // Remove item from LOCAL state only - will be saved when user clicks Save
   const handleRemoveItem = (index) => {
@@ -815,33 +810,273 @@ const EditQuotation = () => {
     setHasUnsavedChanges(true);
   };
 
-  const [searchingIndex, setSearchingIndex] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
+  // Search dialog state
+  const [showSearchDialog, setShowSearchDialog] = useState(false);
+  const [searchDialogIndex, setSearchDialogIndex] = useState(null);
+  const [searchDialogQuery, setSearchDialogQuery] = useState('');
+  const [searchDialogResults, setSearchDialogResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [useRegularSearch, setUseRegularSearch] = useState(false);
+  const [addingProductOrderingNumber, setAddingProductOrderingNumber] = useState(null);
+  
+  // Manual item dialog state
+  const [showManualItemDialog, setShowManualItemDialog] = useState(false);
+  const [manualItemData, setManualItemData] = useState({
+    orderingNumber: '',
+    productName: '',
+    description: '',
+    quantity: 1,
+    price: null,
+    notes: ''
+  });
 
   const handleSearchProduct = (index) => {
-    setSearchingIndex(index);
-    setSearchQuery('');
+    setSearchDialogIndex(index);
+    setSearchDialogQuery('');
+    setSearchDialogResults([]);
+    setShowSearchDialog(true);
   };
 
-  const handleSearchSubmit = (index) => {
-    if (!searchQuery.trim()) return;
+  const handleSearchProductInDialog = async (query) => {
+    if (!query || !query.trim()) {
+      setSearchDialogResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      if (useRegularSearch) {
+        // Use regular search (vector search with re-ranking)
+        const response = await searchProducts({
+          query: query.trim(),
+          size: 20,
+          resultSize: 20,
+          useAI: true
+        });
+        
+        // Convert search results to same format as autocomplete
+        const formattedResults = (response.results || []).map(result => ({
+          orderingNumber: result.orderingNumber || result.ordering_number || '',
+          searchText: result.searchText || result.search_text || result.description || '',
+          category: result.category || result.productCategory || '',
+          score: result.score || 0
+        }));
+        
+        setSearchDialogResults(formattedResults);
+      } else {
+        // Use autocomplete (prefix matching)
+        const response = await fetchAutocompleteSuggestions({
+          query: query.trim(),
+          size: 10
+        });
+        
+        setSearchDialogResults(response.suggestions || []);
+      }
+    } catch (err) {
+      console.error('Error searching products:', err);
+      setSearchDialogResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleSelectProductFromSearch = async (selectedOrderingNumber) => {
+    if (!selectedOrderingNumber) {
+      return;
+    }
+
+    // Prevent multiple clicks
+    if (addingProductOrderingNumber) {
+      return;
+    }
+
+    // Check for duplicate in local state first
+    const normalizedOrderingNo = selectedOrderingNumber.trim().toUpperCase();
+    const existingItem = quotation.items?.find(item => 
+      item.orderingNumber && item.orderingNumber.trim().toUpperCase() === normalizedOrderingNo
+    );
     
-    // Navigate to search with pre-filled query
-    navigate('/search', { 
-      state: { 
-        returnTo: `/quotations/edit/${id}`,
-        quotationIndex: index,
-        initialQuery: searchQuery.trim()
-      } 
-    });
+    if (existingItem) {
+      alert(`Product with ordering number "${selectedOrderingNumber}" already exists in this quotation.`);
+      return;
+    }
+
+    // Set loading state
+    setAddingProductOrderingNumber(selectedOrderingNumber);
+
+    try {
+      // Fetch full product details
+      const productData = await fetchProductByOrderingNumber(selectedOrderingNumber);
+      const catalogProducts = productData.catalogProducts || [];
+      const primaryCatalogProduct = catalogProducts[0] || {};
+      
+      // Get file info if available
+      let catalogLink = '';
+      let sketchFile = null;
+      if (primaryCatalogProduct._fileId || primaryCatalogProduct.fileId) {
+        try {
+          const fileInfo = await getFileInfo(primaryCatalogProduct._fileId || primaryCatalogProduct.fileId);
+          catalogLink = fileInfo.s3Key || fileInfo.key || '';
+        } catch (err) {
+          console.error('Error fetching file info:', err);
+        }
+      }
+      
+      // Check for sales drawings
+      const salesDrawings = productData.salesDrawings || [];
+      if (salesDrawings.length > 0) {
+        sketchFile = salesDrawings[0].fileKey || null;
+      }
+
+      const defaultMarginPct = (quotation.defaultMargin || 20) / 100;
+      const newItem = {
+        orderingNumber: selectedOrderingNumber,
+        productName: primaryCatalogProduct.productName || selectedOrderingNumber,
+        description: primaryCatalogProduct.description || primaryCatalogProduct.specs || '',
+        quantity: 1,
+        base_price: primaryCatalogProduct.price || null,
+        margin_pct: defaultMarginPct,
+        drawing_link: sketchFile,
+        catalog_link: catalogLink,
+        notes: '',
+        source: 'search',
+        original_request: ''
+      };
+
+      if (quotation.id) {
+        // Quotation exists - add via API
+        const updatedItems = await addLineItem(quotation.id, newItem);
+        setQuotation(prev => ({ ...prev, items: updatedItems }));
+        setHasUnsavedChanges(true);
+      } else {
+        // Draft quotation - add to local state
+        const newItemData = {
+          orderNo: (quotation.items?.length || 0) + 1,
+          orderingNumber: newItem.orderingNumber,
+          requestedItem: newItem.productName,
+          productName: newItem.productName,
+          specs: newItem.description,
+          quantity: newItem.quantity,
+          price: newItem.base_price,
+          margin: quotation.defaultMargin || 20,
+          sketchFile: newItem.drawing_link,
+          catalogLink: newItem.catalog_link,
+          notes: newItem.notes,
+          isIncomplete: false,
+          originalRequest: newItem.original_request,
+          source: newItem.source
+        };
+        
+        setQuotation(prev => ({
+          ...prev,
+          items: [...(prev.items || []), newItemData]
+        }));
+        setHasUnsavedChanges(true);
+      }
+
+      // Show success briefly, then close dialog
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Close dialog
+      setShowSearchDialog(false);
+      setSearchDialogQuery('');
+      setSearchDialogResults([]);
+      setSearchDialogIndex(null);
+    } catch (err) {
+      console.error('Error adding product to quotation:', err);
+      alert(err.message || 'Failed to add product to quotation');
+    } finally {
+      // Clear loading state
+      setAddingProductOrderingNumber(null);
+    }
   };
 
-  const handleSearchKeyDown = (e, index) => {
-    if (e.key === 'Enter') {
-      handleSearchSubmit(index);
-    } else if (e.key === 'Escape') {
-      setSearchingIndex(null);
-      setSearchQuery('');
+  const handleAddManualItem = () => {
+    setManualItemData({
+      orderingNumber: '',
+      productName: '',
+      description: '',
+      quantity: 1,
+      price: null,
+      notes: ''
+    });
+    setShowManualItemDialog(true);
+  };
+
+  const handleSaveManualItem = () => {
+    if (!manualItemData.productName.trim()) {
+      alert('Product name is required');
+      return;
+    }
+
+    const defaultMarginPct = (quotation.defaultMargin || 20) / 100;
+    const newItem = {
+      orderingNumber: manualItemData.orderingNumber || '',
+      productName: manualItemData.productName,
+      description: manualItemData.description || '',
+      quantity: manualItemData.quantity || 1,
+      base_price: manualItemData.price != null ? parseFloat(manualItemData.price) : null,
+      margin_pct: defaultMarginPct,
+      drawing_link: null,
+      catalog_link: '',
+      notes: manualItemData.notes || '',
+      source: 'manual',
+      original_request: ''
+    };
+
+    if (quotation.id) {
+      // Quotation exists - add via API
+      addLineItem(quotation.id, newItem)
+        .then(updatedItems => {
+          setQuotation(prev => ({ ...prev, items: updatedItems }));
+          setHasUnsavedChanges(true);
+          setShowManualItemDialog(false);
+          setManualItemData({
+            orderingNumber: '',
+            productName: '',
+            description: '',
+            quantity: 1,
+            price: null,
+            notes: ''
+          });
+        })
+        .catch(err => {
+          console.error('Error adding manual item:', err);
+          alert(err.message || 'Failed to add item');
+        });
+    } else {
+      // Draft quotation - add to local state
+      const newItemData = {
+        orderNo: (quotation.items?.length || 0) + 1,
+        orderingNumber: newItem.orderingNumber,
+        requestedItem: newItem.productName,
+        productName: newItem.productName,
+        specs: newItem.description,
+        quantity: newItem.quantity,
+        price: newItem.base_price,
+        margin: quotation.defaultMargin || 20,
+        sketchFile: null,
+        catalogLink: '',
+        notes: newItem.notes,
+        isIncomplete: !newItem.orderingNumber,
+        originalRequest: '',
+        source: 'manual'
+      };
+      
+      setQuotation(prev => ({
+        ...prev,
+        items: [...(prev.items || []), newItemData]
+      }));
+      setHasUnsavedChanges(true);
+      setShowManualItemDialog(false);
+      setManualItemData({
+        orderingNumber: '',
+        productName: '',
+        description: '',
+        quantity: 1,
+        price: null,
+        notes: ''
+      });
     }
   };
 
@@ -1233,34 +1468,6 @@ const EditQuotation = () => {
                   <td className="col-num text-center">{item.orderNo}</td>
                   <td className="col-ordering">
                     {isIncomplete ? (
-                      searchingIndex === originalIndex ? (
-                        <div className="search-input-inline-wrapper">
-                          <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            onKeyDown={(e) => handleSearchKeyDown(e, originalIndex)}
-                            onBlur={() => {
-                              if (!searchQuery.trim()) {
-                                setSearchingIndex(null);
-                              }
-                            }}
-                            placeholder="Type to search..."
-                            className="search-input-inline"
-                            autoFocus
-                          />
-                          <button
-                            onClick={() => handleSearchSubmit(originalIndex)}
-                            className="search-submit-btn"
-                            disabled={!searchQuery.trim()}
-                            title="Search"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                              <path d="M21 21L15 15M17 10C17 13.866 13.866 17 10 17C6.13401 17 3 13.866 3 10C3 6.13401 6.13401 3 10 3C13.866 3 17 6.13401 17 10Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            </svg>
-                          </button>
-                        </div>
-                      ) : (
                         <button 
                           onClick={() => handleSearchProduct(originalIndex)}
                           className="search-product-btn"
@@ -1268,11 +1475,10 @@ const EditQuotation = () => {
                         >
                           Search Product
                         </button>
-                      )
                     ) : (
                       <button
                         className="ordering-link"
-                        onClick={() => navigate(`/product/${item.orderingNumber}`)}
+                        onClick={() => window.open(`/product/${item.orderingNumber}`, '_blank')}
                         title="View product details"
                       >
                         {item.orderingNumber}
@@ -1388,12 +1594,20 @@ const EditQuotation = () => {
           </table>
         </div>
         <div className="table-footer">
-          <button onClick={handleAddItem} className="btn-add-item">
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={handleAddManualItem} className="btn-add-item" style={{ backgroundColor: '#f7f9fa' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
               <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Add Item
+              Add Manual Item
+            </button>
+            <button onClick={() => handleSearchProduct(null)} className="btn-add-item">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M21 21L15 15M17 10C17 13.866 13.866 17 10 17C6.13401 17 3 13.866 3 10C3 6.13401 6.13401 3 10 3C13.866 3 17 6.13401 17 10Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Search & Add Product
           </button>
+          </div>
         </div>
       </div>
 
@@ -1421,6 +1635,329 @@ const EditQuotation = () => {
         highlightTerm={previewProduct?.orderingNumber}
         title={previewType === 'sketch' ? 'Sales Drawing Preview' : 'Catalog Preview'}
       />
+
+      {/* Search Product Dialog */}
+      {showSearchDialog && (
+        <div className="modal-overlay" onClick={() => {
+          if (!addingProductOrderingNumber) {
+            setShowSearchDialog(false);
+            setSearchDialogQuery('');
+            setSearchDialogResults([]);
+            setSearchDialogIndex(null);
+            setAddingProductOrderingNumber(null);
+          }
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+            <h2 style={{ marginBottom: '16px' }}>Search & Add Product</h2>
+            <p style={{ marginBottom: '20px', color: '#637887', fontSize: '14px' }}>
+              Search for a product to add to this quotation. Type at least 3 characters to search.
+            </p>
+            
+            {/* Search Type Toggle */}
+            <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                <input
+                  type="radio"
+                  checked={!useRegularSearch}
+                  onChange={() => {
+                    setUseRegularSearch(false);
+                    setSearchDialogResults([]);
+                    if (searchDialogQuery.trim().length >= 3) {
+                      handleSearchProductInDialog(searchDialogQuery);
+                    }
+                  }}
+                  style={{ marginRight: '6px' }}
+                />
+                Autocomplete (prefix match)
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                <input
+                  type="radio"
+                  checked={useRegularSearch}
+                  onChange={() => {
+                    setUseRegularSearch(true);
+                    setSearchDialogResults([]);
+                    if (searchDialogQuery.trim().length >= 3) {
+                      handleSearchProductInDialog(searchDialogQuery);
+                    }
+                  }}
+                  style={{ marginRight: '6px' }}
+                />
+                Regular Search (semantic)
+              </label>
+            </div>
+            
+            <div style={{ marginBottom: '20px' }}>
+              <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                Search for Product:
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                value={searchDialogQuery}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSearchDialogQuery(value);
+                  if (value.trim().length >= 3) {
+                    handleSearchProductInDialog(value);
+                  } else {
+                    setSearchDialogResults([]);
+                  }
+                }}
+                placeholder="e.g. 6L-LDE-2H1P-A or product name"
+                style={{ width: '100%', marginBottom: '12px' }}
+                autoFocus
+              />
+              
+              {isSearching && (
+                <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
+                  Searching...
+                </div>
+              )}
+              
+              {searchDialogResults.length > 0 && (
+                <div style={{ marginBottom: '12px', maxHeight: '300px', overflowY: 'auto', border: '1px solid #e1e8ed', borderRadius: '4px' }}>
+                  {searchDialogResults.map((result, idx) => {
+                    const isAdding = addingProductOrderingNumber === result.orderingNumber;
+                    const isDisabled = addingProductOrderingNumber !== null;
+                    
+                    return (
+                      <div
+                        key={idx}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (!isDisabled) {
+                            handleSelectProductFromSearch(result.orderingNumber);
+                          }
+                        }}
+                        style={{
+                          padding: '12px',
+                          cursor: isDisabled ? 'not-allowed' : 'pointer',
+                          borderBottom: idx < searchDialogResults.length - 1 ? '1px solid #e1e8ed' : 'none',
+                          backgroundColor: isAdding ? '#eff6ff' : isDisabled ? '#f7f9fa' : '#fff',
+                          opacity: isDisabled && !isAdding ? 0.6 : 1,
+                          transition: 'background-color 0.2s, opacity 0.2s',
+                          position: 'relative'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isDisabled) {
+                            e.currentTarget.style.backgroundColor = '#f7f9fa';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isDisabled) {
+                            e.currentTarget.style.backgroundColor = '#fff';
+                          }
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isAdding && (
+                            <svg 
+                              className="spinner" 
+                              width="16" 
+                              height="16" 
+                              viewBox="0 0 24 24" 
+                              fill="none" 
+                              style={{ 
+                                animation: 'spin 1s linear infinite',
+                                flexShrink: 0
+                              }}
+                            >
+                              <circle 
+                                cx="12" 
+                                cy="12" 
+                                r="10" 
+                                stroke="currentColor" 
+                                strokeWidth="2" 
+                                strokeLinecap="round" 
+                                strokeDasharray="32" 
+                                strokeDashoffset="32"
+                              >
+                                <animate 
+                                  attributeName="stroke-dasharray" 
+                                  dur="2s" 
+                                  values="0 32;16 16;0 32;0 32" 
+                                  repeatCount="indefinite"
+                                />
+                                <animate 
+                                  attributeName="stroke-dashoffset" 
+                                  dur="2s" 
+                                  values="0;-16;-32;-32" 
+                                  repeatCount="indefinite"
+                                />
+                              </circle>
+                            </svg>
+                          )}
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: '500', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span>{result.orderingNumber}</span>
+                              {isAdding && (
+                                <span style={{ fontSize: '12px', color: '#3b82f6', fontWeight: '400' }}>
+                                  Adding to quotation...
+                                </span>
+                              )}
+                            </div>
+                            {result.searchText && (
+                              <div style={{ fontSize: '13px', color: '#637887' }}>
+                                {result.searchText}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              
+              {searchDialogResults.length === 0 && searchDialogQuery.trim().length >= 3 && !isSearching && (
+                <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
+                  No products found. Try a different search term.
+                </div>
+              )}
+              
+              {searchDialogQuery.trim().length < 3 && (
+                <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
+                  Type at least 3 characters to search
+                </div>
+              )}
+            </div>
+            
+            <div className="modal-actions" style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button 
+                className="btn-secondary" 
+                onClick={() => {
+                  if (!addingProductOrderingNumber) {
+                    setShowSearchDialog(false);
+                    setSearchDialogQuery('');
+                    setSearchDialogResults([]);
+                    setSearchDialogIndex(null);
+                    setAddingProductOrderingNumber(null);
+                  }
+                }}
+                disabled={!!addingProductOrderingNumber}
+              >
+                {addingProductOrderingNumber ? 'Adding...' : 'Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Item Dialog */}
+      {showManualItemDialog && (
+        <div className="modal-overlay" onClick={() => setShowManualItemDialog(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+            <h2 style={{ marginBottom: '16px' }}>Add Manual Item</h2>
+            <p style={{ marginBottom: '20px', color: '#637887', fontSize: '14px' }}>
+              Add an item manually by filling in the details below.
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '20px' }}>
+              <div>
+                <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                  Product Name <span style={{ color: 'red' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={manualItemData.productName}
+                  onChange={(e) => setManualItemData(prev => ({ ...prev, productName: e.target.value }))}
+                  placeholder="Enter product name"
+                  style={{ width: '100%' }}
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                  Ordering Number
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={manualItemData.orderingNumber}
+                  onChange={(e) => setManualItemData(prev => ({ ...prev, orderingNumber: e.target.value }))}
+                  placeholder="Optional ordering number"
+                  style={{ width: '100%' }}
+                />
+              </div>
+              
+              <div>
+                <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                  Description
+                </label>
+                <textarea
+                  className="form-textarea"
+                  value={manualItemData.description}
+                  onChange={(e) => setManualItemData(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Product description or specifications"
+                  style={{ width: '100%', minHeight: '80px' }}
+                />
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                    Quantity
+                  </label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={manualItemData.quantity}
+                    onChange={(e) => setManualItemData(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
+                    min="1"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                
+                <div>
+                  <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                    Price
+                  </label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={manualItemData.price || ''}
+                    onChange={(e) => setManualItemData(prev => ({ ...prev, price: e.target.value ? parseFloat(e.target.value) : null }))}
+                    step="0.01"
+                    placeholder="Optional"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="form-label" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                  Notes
+                </label>
+                <textarea
+                  className="form-textarea"
+                  value={manualItemData.notes}
+                  onChange={(e) => setManualItemData(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Additional notes"
+                  style={{ width: '100%', minHeight: '60px' }}
+                />
+              </div>
+            </div>
+            
+            <div className="modal-actions" style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button 
+                className="btn-secondary" 
+                onClick={() => setShowManualItemDialog(false)}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn-primary" 
+                onClick={handleSaveManualItem}
+              >
+                Add Item
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

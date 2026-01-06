@@ -91,6 +91,20 @@ def add_line_item(quotation_id: str, line_data: Dict[str, Any]) -> Optional[Dict
     
     # Add to lines array
     lines = quotation.get('lines', [])
+    
+    # Check for duplicate ordering_number (if provided)
+    ordering_number = line_data.get('ordering_number')
+    if ordering_number:
+        ordering_number_clean = ordering_number.strip().upper()
+        duplicate_line = next(
+            (l for l in lines if l.get('ordering_number', '').strip().upper() == ordering_number_clean),
+            None
+        )
+        if duplicate_line:
+            logger.warning(f"[ADD_LINE] Duplicate ordering_number {ordering_number} found in quotation {quotation_id[:8]}...")
+            # Raise an error to prevent duplicate addition
+            raise ValueError(f"Product with ordering number '{ordering_number}' already exists in this quotation")
+    
     lines.append(line)
     
     logger.info(f"[ADD_LINE] Line added with ID {line['line_id']}")

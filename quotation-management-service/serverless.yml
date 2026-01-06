@@ -57,6 +57,7 @@ provider:
     # DynamoDB Configuration
     QUOTATIONS_TABLE: ${self:custom.quotationsTable}
     PRODUCT_TABLE: ${self:custom.productsTable}
+    CATALOG_PRODUCTS_TABLE: ${self:custom.catalogProductsTable}
     PRICE_LIST_PRODUCTS_TABLE: ${self:custom.priceListProductsTable}
     
     # S3 Configuration (for reading sketch drawings only)
@@ -87,10 +88,13 @@ provider:
             - dynamodb:DeleteItem
             - dynamodb:Query
             - dynamodb:Scan
+            - dynamodb:BatchGetItem
           Resource:
             - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.quotationsTable}
             - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.quotationsTable}/index/*
             - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.productsTable}
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.productsTable}/index/*
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.catalogProductsTable}
             - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:custom.priceListProductsTable}
         
         # S3 permissions for sketch drawings (read-only from hb-files-raw)
@@ -123,6 +127,7 @@ provider:
 custom:
   quotationsTable: quotations
   productsTable: hb-products
+  catalogProductsTable: hb-catalog-products
   priceListProductsTable: hb-pricelist-products
   filesBucket: hb-files-raw
   # Production frontend URL (change this when deploying to production)
