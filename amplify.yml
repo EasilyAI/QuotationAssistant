@@ -2,22 +2,17 @@ version: 1
 applications:
   - appRoot: webApp
     frontend:
-      buildPath: /  # Run install and build from the monorepo project root
       phases:
         preBuild:
           commands:
-            - cd webApp
             - npm ci
         build:
           commands:
-            - cd webApp
             - npm run build
       artifacts:
+        baseDirectory: build
         files:
           - '**/*'
-        baseDirectory: webApp/build
-        discard-paths: no
       cache:
         paths:
-          - webApp/node_modules/**/*
-
+          - node_modules/**/*
