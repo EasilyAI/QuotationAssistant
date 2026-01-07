@@ -13,9 +13,11 @@ import './CatalogPreviewDialog.css';
 // This avoids CDN issues and works reliably in both dev and production
 // pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 // Use CDN-hosted worker to avoid any hosting rewrite issues
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc =
+  `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
-type CatalogPreviewDialogProps = {
+  type CatalogPreviewDialogProps = {
   isOpen: boolean;
   onClose: () => void;
   catalogKey?: string;

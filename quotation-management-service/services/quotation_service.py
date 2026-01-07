@@ -112,7 +112,6 @@ def list_quotations(
     status: Optional[str] = None,
     search_query: Optional[str] = None,
     recent: bool = False,
-    incomplete: bool = False,
     limit: int = 50
 ) -> List[Dict[str, Any]]:
     """
@@ -122,7 +121,6 @@ def list_quotations(
         status: Filter by status
         search_query: Search in name, customer name, quotation number
         recent: Return recent quotations (sorted by created_at desc)
-        incomplete: Filter for quotations with incomplete items
         limit: Maximum number of results
     
     Returns:
@@ -167,17 +165,6 @@ def list_quotations(
                 if search_lower in q.get('name', '').lower()
                 or search_lower in str(q.get('quotation_id', '')).lower()
                 or search_lower in (q.get('customer', {}).get('name', '') or '').lower()
-            ]
-        
-        # Filter incomplete items if requested
-        if incomplete:
-            logger.info(f"[LIST-QUOTATIONS] Filtering incomplete items")
-            quotations = [
-                q for q in quotations
-                if any(
-                    not line.get('ordering_number') or not line.get('ordering_number').strip()
-                    for line in q.get('lines', [])
-                )
             ]
         
         logger.info(f"[LIST-QUOTATIONS] Listed {len(quotations)} quotations")

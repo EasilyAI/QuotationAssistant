@@ -88,8 +88,11 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
     attachments = []
     lines = quotation.get('lines', [])
     processed_s3_keys = set()  # Track processed keys to avoid duplicates
-    
-    for line in lines:
+    # Track which lines have drawings so we don't need to re-fetch products later
+    line_has_drawing_map = {}
+
+    for idx, line in enumerate(lines, start=1):
+        has_drawing = False
         # First, check for drawing_link from line item (legacy support)
         drawing_link = line.get('drawing_link')
         if drawing_link and drawing_link.strip():
@@ -104,6 +107,7 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
                         'presigned_url': presigned_url
                     })
                     processed_s3_keys.add(s3_key)
+                    has_drawing = True
         
         # Then, fetch sales drawings from product (if ordering_number exists)
         ordering_number = line.get('ordering_number', '').strip()
@@ -124,9 +128,13 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
                                 'presigned_url': presigned_url
                             })
                             processed_s3_keys.add(file_key)
+                            has_drawing = True
             except Exception as e:
                 logger.warning(f"Failed to fetch product {ordering_number} for sales drawings: {str(e)}")
                 # Continue processing other lines even if one fails
+
+        if has_drawing:
+            line_has_drawing_map[idx] = True
     
     # Generate email subject
     quotation_name = quotation.get('name', 'Quotation')
@@ -178,21 +186,9 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         
         if notes:
             body_lines.append(f"   - Notes: {notes}")
-        
-        # Check if this line has sales drawings attached
-        has_drawing = False
-        if line.get('drawing_link'):
-            has_drawing = True
-        elif ordering_number and fetch_product:
-            try:
-                product = fetch_product(ordering_number)
-                sales_drawings = product.get('salesDrawings', [])
-                if sales_drawings:
-                    has_drawing = True
-            except Exception:
-                pass  # Ignore errors when checking for drawings
-        
-        if has_drawing:
+
+        # Check if this line has sales drawings attached (based on earlier collection)
+        if line_has_drawing_map.get(idx):
             body_lines.append(f"   - Sales Drawing: Attached")
     
     body_lines.extend([
@@ -204,7 +200,20 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         "Best regards,",
         "Your Sales Team"
     ])
-    
+
+    # Add optional section listing drawing links so that they are visible
+    # in all email clients, even when attachments cannot be auto-attached
+    if attachments:
+        body_lines.extend([
+            "",
+            "Sales drawings (clickable links):"
+        ])
+        for attachment in attachments:
+            filename = attachment.get("filename", "Drawing")
+            url = attachment.get("presigned_url")
+            if url:
+                body_lines.append(f"- {filename}: {url}")
+
     body = "\n".join(body_lines)
     
     # Build email draft payload

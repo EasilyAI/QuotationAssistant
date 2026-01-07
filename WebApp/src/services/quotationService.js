@@ -160,7 +160,7 @@ export const createQuotation = async (quotationData) => {
 /**
  * Get list of quotations with optional filters
  */
-export const getQuotations = async ({ status, search, recent, incomplete, limit = 50 } = {}) => {
+export const getQuotations = async ({ status, search, recent, limit = 50 } = {}) => {
   const params = new URLSearchParams();
   
   if (status && status !== 'all') {
@@ -171,9 +171,6 @@ export const getQuotations = async ({ status, search, recent, incomplete, limit 
   }
   if (recent) {
     params.set('recent', 'true');
-  }
-  if (incomplete) {
-    params.set('incomplete', 'true');
   }
   if (limit) {
     params.set('limit', String(limit));

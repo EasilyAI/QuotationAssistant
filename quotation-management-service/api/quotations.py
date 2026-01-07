@@ -53,7 +53,6 @@ def handle_get_quotations(event: Dict[str, Any]) -> Dict[str, Any]:
     - status: Filter by status
     - search: Search query
     - recent: Get recent quotations (true/false)
-    - incomplete: Filter incomplete items (true/false)
     - limit: Maximum results (default 50)
     """
     try:
@@ -63,15 +62,13 @@ def handle_get_quotations(event: Dict[str, Any]) -> Dict[str, Any]:
         status = params.get('status')
         search_query = params.get('search') or params.get('q')
         recent = params.get('recent', '').lower() == 'true'
-        incomplete = params.get('incomplete', '').lower() == 'true'
         limit = int(params.get('limit', 50))
-        logger.info(f"[GET-QUOTATIONS] Status: {status}, Search query: {search_query}, Recent: {recent}, Incomplete: {incomplete}, Limit: {limit}")
+        logger.info(f"[GET-QUOTATIONS] Status: {status}, Search query: {search_query}, Recent: {recent}, Limit: {limit}")
         
         quotations = list_quotations(
             status=status,
             search_query=search_query,
             recent=recent,
-            incomplete=incomplete,
             limit=limit
         )
         

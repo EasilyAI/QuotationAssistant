@@ -295,7 +295,6 @@ With payload:
 - `status` - Filter by status (Draft, In Progress, etc.)
 - `search` or `q` - Search in name, customer, quotation number
 - `recent=true` - Get recent quotations (sorted by created_at desc)
-- `incomplete=true` - Filter for quotations with incomplete items (missing ordering_number)
 - `limit` - Maximum results (default: 50)
 
 ## Status Values

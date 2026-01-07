@@ -1111,9 +1111,12 @@ const EditQuotation = () => {
     
     try {
       const emailDraft = await generateEmailDraft(quotation.id, quotation.customer?.email);
-      
+
+      // Normalize line endings for better compatibility with Outlook / Gmail
+      const normalizedBody = (emailDraft.body || '').replace(/\n/g, '\r\n');
+
       // Open default email client with pre-filled content
-      const mailtoLink = `mailto:${emailDraft.to || 'customer@example.com'}?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
+      const mailtoLink = `mailto:${emailDraft.to || 'customer@example.com'}?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(normalizedBody)}`;
       window.location.href = mailtoLink;
       
       // Note: Attachments (sketch drawings) will need to be handled by the email client
