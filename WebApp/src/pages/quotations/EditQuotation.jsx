@@ -440,7 +440,7 @@ const EditQuotation = () => {
               vatRate: metadata.vatRate
             });
             
-            // Add initial items if provided
+            // Add initial items if provided (BEFORE navigating)
             if (initialItems.length > 0) {
               const defaultMarginPct = (metadata.defaultMargin || 20) / 100;
               const transformedItems = initialItems.map(item => ({
@@ -459,24 +459,17 @@ const EditQuotation = () => {
               
               try {
                 await batchAddLineItems(newQuotation.id, transformedItems);
-                // Reload to get updated quotation with items
-                const updated = await getQuotation(newQuotation.id);
-                setQuotation(updated);
               } catch (batchErr) {
                 console.error('Error adding batch items:', batchErr);
-                // Still set the quotation even if batch add fails
-                setQuotation({
-                  ...newQuotation,
-                  items: []
-                });
-                setError(`Quotation created but failed to add items: ${batchErr.message}`);
+                // Continue anyway - quotation was created, items can be added later
               }
-            } else {
-              setQuotation({
-                ...newQuotation,
-                items: []
-              });
             }
+            
+            // Navigate to the new quotation URL and return early.
+            // The useEffect will re-run with the new id and load the quotation properly.
+            // This prevents race conditions between the original and new useEffect runs.
+            navigate(`/quotations/edit/${newQuotation.id}`, { replace: true });
+            return; // Let the next useEffect run handle loading
           } else {
             // No metadata - just initialize empty state
             setQuotation({
@@ -1167,19 +1160,22 @@ const EditQuotation = () => {
           status: quotation.status
         });
         
-        // Update URL to use new ID
-        navigate(`/quotations/edit/${newQuotation.id}`, { replace: true });
-        
-        // Now save full state if there are items
+        // Save full state if there are items (BEFORE navigating)
         if (quotation.items && quotation.items.length > 0) {
-          const updated = await saveQuotationFullState(newQuotation.id, {
+          await saveQuotationFullState(newQuotation.id, {
             ...quotation,
             id: newQuotation.id
           });
-          setQuotation(updated);
-        } else {
-          setQuotation(newQuotation);
         }
+        
+        // Show success message BEFORE navigating
+        alert('Quotation saved successfully!');
+        setHasUnsavedChanges(false);
+        
+        // Navigate to the new quotation URL LAST
+        // This triggers a re-render which will load the quotation fresh
+        navigate(`/quotations/edit/${newQuotation.id}`, { replace: true });
+        return; // Let the navigation handle reloading the quotation
       } else {
         // Update existing quotation - single API call replaces entire state
         const updated = await saveQuotationFullState(quotation.id, quotation);

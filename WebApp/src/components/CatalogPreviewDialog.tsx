@@ -11,7 +11,9 @@ import './CatalogPreviewDialog.css';
 // Configure PDF worker source
 // Use local file from public folder - it's copied during build
 // This avoids CDN issues and works reliably in both dev and production
-pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+// pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+// Use CDN-hosted worker to avoid any hosting rewrite issues
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 type CatalogPreviewDialogProps = {
   isOpen: boolean;
