@@ -817,6 +817,7 @@ const EditQuotation = () => {
   const [searchDialogResults, setSearchDialogResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [useRegularSearch, setUseRegularSearch] = useState(false);
+  const [semanticSearchExecuted, setSemanticSearchExecuted] = useState(false);
   const [addingProductOrderingNumber, setAddingProductOrderingNumber] = useState(null);
   
   // Manual item dialog state
@@ -834,6 +835,7 @@ const EditQuotation = () => {
     setSearchDialogIndex(index);
     setSearchDialogQuery('');
     setSearchDialogResults([]);
+    setSemanticSearchExecuted(false);
     setShowSearchDialog(true);
   };
 
@@ -1662,7 +1664,9 @@ const EditQuotation = () => {
                   onChange={() => {
                     setUseRegularSearch(false);
                     setSearchDialogResults([]);
+                    setSemanticSearchExecuted(false);
                     if (searchDialogQuery.trim().length >= 3) {
+                      // For autocomplete (cheap) search we can run immediately
                       handleSearchProductInDialog(searchDialogQuery);
                     }
                   }}
@@ -1676,10 +1680,9 @@ const EditQuotation = () => {
                   checked={useRegularSearch}
                   onChange={() => {
                     setUseRegularSearch(true);
+                    // Clear results when switching to regular search; user will trigger search explicitly
                     setSearchDialogResults([]);
-                    if (searchDialogQuery.trim().length >= 3) {
-                      handleSearchProductInDialog(searchDialogQuery);
-                    }
+                    setSemanticSearchExecuted(false);
                   }}
                   style={{ marginRight: '6px' }}
                 />
@@ -1698,16 +1701,54 @@ const EditQuotation = () => {
                 onChange={(e) => {
                   const value = e.target.value;
                   setSearchDialogQuery(value);
+                  if (useRegularSearch) {
+                    // New query means we haven't executed a semantic search for this text yet
+                    setSemanticSearchExecuted(false);
+                  }
                   if (value.trim().length >= 3) {
-                    handleSearchProductInDialog(value);
+                    if (!useRegularSearch) {
+                      // Autocomplete mode: run search on each keystroke
+                      handleSearchProductInDialog(value);
+                    } else {
+                      // Regular search mode: wait for explicit user action
+                      setSearchDialogResults([]);
+                    }
                   } else {
                     setSearchDialogResults([]);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === 'Enter' &&
+                    useRegularSearch &&
+                    searchDialogQuery.trim().length >= 3
+                  ) {
+                    setSemanticSearchExecuted(true);
+                    handleSearchProductInDialog(searchDialogQuery);
                   }
                 }}
                 placeholder="e.g. 6L-LDE-2H1P-A or product name"
                 style={{ width: '100%', marginBottom: '12px' }}
                 autoFocus
               />
+              
+              {useRegularSearch && (
+                <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      if (searchDialogQuery.trim().length >= 3) {
+                        setSemanticSearchExecuted(true);
+                        handleSearchProductInDialog(searchDialogQuery);
+                      }
+                    }}
+                    disabled={searchDialogQuery.trim().length < 3 || isSearching}
+                  >
+                    {isSearching ? 'Searching...' : 'Search'}
+                  </button>
+                </div>
+              )}
               
               {isSearching && (
                 <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
@@ -1810,16 +1851,34 @@ const EditQuotation = () => {
                 </div>
               )}
               
-              {searchDialogResults.length === 0 && searchDialogQuery.trim().length >= 3 && !isSearching && (
-                <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
-                  No products found. Try a different search term.
-                </div>
-              )}
-              
+              {/* Helper / tooltip text under results */}
               {searchDialogQuery.trim().length < 3 && (
                 <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
                   Type at least 3 characters to search
                 </div>
+              )}
+
+              {searchDialogQuery.trim().length >= 3 && !isSearching && (
+                <>
+                  {/* Autocomplete mode: immediate feedback after each search */}
+                  {!useRegularSearch && searchDialogResults.length === 0 && (
+                    <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
+                      No products found. Try a different term or ordering number.
+                    </div>
+                  )}
+
+                  {/* Regular (semantic) mode: guidance before search, then "not found" after explicit search */}
+                  {useRegularSearch && !semanticSearchExecuted && (
+                    <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
+                      Press Enter or click Search to run a semantic search for this phrase.
+                    </div>
+                  )}
+                  {useRegularSearch && semanticSearchExecuted && searchDialogResults.length === 0 && (
+                    <div style={{ marginBottom: '12px', color: '#637887', fontSize: '14px' }}>
+                      No products found. Adjust your search phrase and click Search again.
+                    </div>
+                  )}
+                </>
               )}
             </div>
             

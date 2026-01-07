@@ -181,8 +181,18 @@ def fetch_product(ordering_number: str) -> ProductData:
     item = response.get("Item")
     
     if not item:
-        print(f"[Fetch_Product] Product {ordering_number} not found in {PRODUCT_TABLE}")
-        raise ValueError(f"Product {ordering_number} not found in {PRODUCT_TABLE}")
+        print(f"[Fetch_Product] Product {ordering_number} not found in {PRODUCT_TABLE}, trying upper case match")
+        
+        ordering_number = ordering_number.upper()
+        response = products_table.get_item(Key={"orderingNumber": ordering_number})
+        item = response.get("Item")
+        
+        if not item:
+            print(f"[Fetch_Product] Upper case Product {ordering_number} also not found in")
+            raise ValueError(f"Product {ordering_number} not found in {PRODUCT_TABLE}")
+        
+            return None
+    
     safe_item = convert_decimals_to_native(item)
     print(f"[Fetch_Product] Product found: {json.dumps(safe_item, indent=2)}")
 
