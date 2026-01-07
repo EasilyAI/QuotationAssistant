@@ -63,6 +63,10 @@ def add_line_item(quotation_id: str, line_data: Dict[str, Any]) -> Optional[Dict
     if final_price is not None and not isinstance(final_price, Decimal):
         final_price = Decimal(str(final_price))
     
+    # Extract S3 links
+    drawing_link = line_data.get('drawing_link')
+    catalog_link = line_data.get('catalog_link')
+    
     # Create line item
     line = create_line_item(
         ordering_number=line_data.get('ordering_number'),
@@ -72,8 +76,8 @@ def add_line_item(quotation_id: str, line_data: Dict[str, Any]) -> Optional[Dict
         base_price=float(base_price) if base_price is not None else None,
         margin_pct=float(margin_pct) if margin_pct is not None else None,
         final_price=float(final_price) if final_price is not None else None,
-        drawing_link=line_data.get('drawing_link'),
-        catalog_link=line_data.get('catalog_link'),
+        drawing_link=drawing_link,
+        catalog_link=catalog_link,
         notes=line_data.get('notes'),
         source=line_data.get('source', 'manual'),
         product_ref=line_data.get('product_ref'),
@@ -191,6 +195,10 @@ def add_batch_line_items(quotation_id: str, lines_data: List[Dict[str, Any]]) ->
                     logger.warning(f"[BATCH_ADD] Invalid margin_pct for line {idx}: {margin_pct}, setting to None")
                     margin_pct_float = None
             
+            # Extract S3 links - check both frontend and backend field names
+            drawing_link = line_data.get('drawing_link') or line_data.get('sketchFile')
+            catalog_link = line_data.get('catalog_link') or line_data.get('catalogLink')
+            
             # Create line item from product snapshot
             line = create_line_item(
                 ordering_number=line_data.get('ordering_number') or line_data.get('orderingNo', ''),
@@ -199,8 +207,8 @@ def add_batch_line_items(quotation_id: str, lines_data: List[Dict[str, Any]]) ->
                 quantity=quantity,
                 base_price=base_price_float,
                 margin_pct=margin_pct_float,
-                drawing_link=line_data.get('drawing_link') or line_data.get('sketchFile'),
-                catalog_link=line_data.get('catalog_link') or line_data.get('catalogLink'),
+                drawing_link=drawing_link,
+                catalog_link=catalog_link,
                 notes=line_data.get('notes'),
                 source='search',
                 product_ref=line_data.get('product_ref') or {'product_id': line_data.get('product_id')},

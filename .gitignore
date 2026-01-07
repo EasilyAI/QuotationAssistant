@@ -79,6 +79,7 @@ output.json
 # Build outputs
 **/build/
 webApp/build/
+webApp/build/*
 
 # Project-specific
 wip/
