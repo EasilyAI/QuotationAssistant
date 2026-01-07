@@ -19,6 +19,7 @@ import {
   generateEmailDraft,
   saveQuotationFullState
 } from '../../services/quotationService';
+import { getCurrentUserInfo } from '../../services/authService';
 import './EditQuotation.css';
 
 // Inline Editable Number Component with Fixed Size
@@ -441,24 +442,33 @@ const EditQuotation = () => {
             });
             
             // Add initial items if provided (BEFORE navigating)
+            // Pass frontend format to batchAddLineItems - it will transform to backend format
             if (initialItems.length > 0) {
-              const defaultMarginPct = (metadata.defaultMargin || 20) / 100;
-              const transformedItems = initialItems.map(item => ({
-                orderingNumber: item.orderingNumber || item.orderingNo,
-                productName: item.productName || item.requestedItem || '',
-                description: item.description || item.specs || item.requestedItem || '',
-                quantity: item.quantity || 1,
-                base_price: item.price,
-                margin_pct: item.margin ? item.margin / 100 : defaultMarginPct,
-                drawing_link: item.sketchFile,
-                catalog_link: item.catalogLink,
-                notes: item.notes,
-                source: 'search',
-                original_request: item.requestedItem || item.originalRequest || ''
-              }));
+              const frontendItems = initialItems.map((item) => {
+                // Fix: Don't use "Product Not Found" as originalRequest
+                const originalRequest = item.requestedItem || item.originalRequest || '';
+                const cleanOriginalRequest = (originalRequest === 'Product Not Found' || !originalRequest) 
+                  ? '' 
+                  : originalRequest;
+
+                return {
+                  orderingNumber: item.orderingNumber || item.orderingNo,
+                  productName: item.productName || item.requestedItem || '',
+                  specs: item.description || item.specs || item.requestedItem || '',
+                  description: item.description || item.specs || item.requestedItem || '',
+                  quantity: item.quantity || 1,
+                  price: item.price,
+                  margin: item.margin || metadata.defaultMargin || 20,
+                  sketchFile: item.sketchFile,
+                  catalogLink: item.catalogLink,
+                  notes: item.notes || '',
+                  source: item.source || 'search',
+                  originalRequest: cleanOriginalRequest
+                };
+              });
               
               try {
-                await batchAddLineItems(newQuotation.id, transformedItems);
+                await batchAddLineItems(newQuotation.id, frontendItems);
               } catch (batchErr) {
                 console.error('Error adding batch items:', batchErr);
                 // Continue anyway - quotation was created, items can be added later
@@ -533,23 +543,30 @@ const EditQuotation = () => {
             }
           }
           
+          // Pass frontend format to addLineItem - it will transform to backend format
           // Use quotation's defaultMargin if newItem.margin is not set
-          const defaultMarginPct = (quotation.defaultMargin || 20) / 100;
-          const transformedItem = {
+          // Fix: Don't use "Product Not Found" as originalRequest
+          const originalRequest = newItem.requestedItem || newItem.originalRequest || '';
+          const cleanOriginalRequest = (originalRequest === 'Product Not Found' || !originalRequest) 
+            ? '' 
+            : originalRequest;
+
+          const frontendItem = {
             orderingNumber: newItem.orderingNumber || newItem.orderingNo,
             productName: newItem.productName || newItem.requestedItem || '',
+            specs: newItem.description || newItem.specs || newItem.requestedItem || '',
             description: newItem.description || newItem.specs || newItem.requestedItem || '',
             quantity: newItem.quantity || 1,
-            base_price: newItem.price,
-            margin_pct: newItem.margin ? newItem.margin / 100 : defaultMarginPct,
-            drawing_link: newItem.sketchFile,
-            catalog_link: newItem.catalogLink,
-            notes: newItem.notes,
-            source: 'search',
-            original_request: newItem.requestedItem || newItem.originalRequest || ''
+            price: newItem.price,
+            margin: newItem.margin || quotation.defaultMargin || 20,
+            sketchFile: newItem.sketchFile,
+            catalogLink: newItem.catalogLink,
+            notes: newItem.notes || '',
+            source: newItem.source || 'search',
+            originalRequest: cleanOriginalRequest
           };
           
-          const updatedItems = await addLineItem(quotation.id, transformedItem);
+          const updatedItems = await addLineItem(quotation.id, frontendItem);
           setQuotation(prev => ({ ...prev, items: updatedItems }));
           setHasUnsavedChanges(true);
         } catch (err) {
@@ -900,42 +917,36 @@ const EditQuotation = () => {
     setAddingProductOrderingNumber(selectedOrderingNumber);
 
     try {
-      // Fetch full product details
+      // Fetch full product details (including catalogProducts and salesDrawings)
       const productData = await fetchProductByOrderingNumber(selectedOrderingNumber);
       const catalogProducts = productData.catalogProducts || [];
       const primaryCatalogProduct = catalogProducts[0] || {};
       
-      // Get file info if available
-      let catalogLink = '';
+      // Prefer resolved catalog file key when available
+      let catalogLink = null;
       let sketchFile = null;
-      if (primaryCatalogProduct._fileId || primaryCatalogProduct.fileId) {
-        try {
-          const fileInfo = await getFileInfo(primaryCatalogProduct._fileId || primaryCatalogProduct.fileId);
-          catalogLink = fileInfo.s3Key || fileInfo.key || '';
-        } catch (err) {
-          console.error('Error fetching file info:', err);
-        }
+      if (primaryCatalogProduct._fileKey || primaryCatalogProduct.fileKey) {
+        catalogLink = primaryCatalogProduct._fileKey || primaryCatalogProduct.fileKey || null;
       }
       
-      // Check for sales drawings
+      // Check for sales drawings – use first drawing's fileKey as sketch reference
       const salesDrawings = productData.salesDrawings || [];
       if (salesDrawings.length > 0) {
         sketchFile = salesDrawings[0].fileKey || null;
       }
 
-      const defaultMarginPct = (quotation.defaultMargin || 20) / 100;
       const newItem = {
         orderingNumber: selectedOrderingNumber,
         productName: primaryCatalogProduct.productName || selectedOrderingNumber,
         description: primaryCatalogProduct.description || primaryCatalogProduct.specs || '',
         quantity: 1,
-        base_price: primaryCatalogProduct.price || null,
-        margin_pct: defaultMarginPct,
-        drawing_link: sketchFile,
-        catalog_link: catalogLink,
+        price: primaryCatalogProduct.price || null,
+        margin: quotation.defaultMargin || 20,
+        sketchFile,
+        catalogLink,
         notes: '',
         source: 'search',
-        original_request: ''
+        originalRequest: ''
       };
 
       if (quotation.id) {
@@ -952,13 +963,13 @@ const EditQuotation = () => {
           productName: newItem.productName,
           specs: newItem.description,
           quantity: newItem.quantity,
-          price: newItem.base_price,
-          margin: quotation.defaultMargin || 20,
-          sketchFile: newItem.drawing_link,
-          catalogLink: newItem.catalog_link,
+          price: newItem.price,
+          margin: quotation.defaultMargin || newItem.margin || 20,
+          sketchFile: newItem.sketchFile,
+          catalogLink: newItem.catalogLink,
           notes: newItem.notes,
           isIncomplete: false,
-          originalRequest: newItem.original_request,
+          originalRequest: newItem.originalRequest,
           source: newItem.source
         };
         
@@ -1004,19 +1015,20 @@ const EditQuotation = () => {
       return;
     }
 
-    const defaultMarginPct = (quotation.defaultMargin || 20) / 100;
+    // Pass frontend format to addLineItem - it will transform to backend format
     const newItem = {
       orderingNumber: manualItemData.orderingNumber || '',
       productName: manualItemData.productName,
+      specs: manualItemData.description || '',
       description: manualItemData.description || '',
       quantity: manualItemData.quantity || 1,
-      base_price: manualItemData.price != null ? parseFloat(manualItemData.price) : null,
-      margin_pct: defaultMarginPct,
-      drawing_link: null,
-      catalog_link: '',
+      price: manualItemData.price != null ? parseFloat(manualItemData.price) : null,
+      margin: quotation.defaultMargin || 20,
+      sketchFile: null,
+      catalogLink: null,
       notes: manualItemData.notes || '',
       source: 'manual',
-      original_request: ''
+      originalRequest: ''
     };
 
     if (quotation.id) {
@@ -1048,14 +1060,14 @@ const EditQuotation = () => {
         productName: newItem.productName,
         specs: newItem.description,
         quantity: newItem.quantity,
-        price: newItem.base_price,
+        price: newItem.price,
         margin: quotation.defaultMargin || 20,
-        sketchFile: null,
-        catalogLink: '',
+        sketchFile: newItem.sketchFile,
+        catalogLink: newItem.catalogLink,
         notes: newItem.notes,
         isIncomplete: !newItem.orderingNumber,
-        originalRequest: '',
-        source: 'manual'
+        originalRequest: newItem.originalRequest,
+        source: newItem.source
       };
       
       setQuotation(prev => ({
@@ -1112,8 +1124,26 @@ const EditQuotation = () => {
     try {
       const emailDraft = await generateEmailDraft(quotation.id, quotation.customer?.email);
 
+      // Get current user name for email signature
+      let userName = 'Your Sales Team';
+      try {
+        const userInfo = await getCurrentUserInfo();
+        if (userInfo && userInfo.name) {
+          userName = userInfo.name;
+        }
+      } catch (e) {
+        console.error('Failed to fetch current user info for email signature:', e);
+      }
+
+      // Append personalized signature if not already present
+      const baseBody = emailDraft.body || '';
+      const signatureBlock = `\n${userName}`;
+      const bodyWithSignature = baseBody.endsWith(signatureBlock)
+        ? baseBody
+        : `${baseBody}\n${userName}`;
+
       // Normalize line endings for better compatibility with Outlook / Gmail
-      const normalizedBody = (emailDraft.body || '').replace(/\n/g, '\r\n');
+      const normalizedBody = bodyWithSignature.replace(/\n/g, '\r\n');
 
       // Open default email client with pre-filled content
       const mailtoLink = `mailto:${emailDraft.to || 'customer@example.com'}?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(normalizedBody)}`;
@@ -1485,11 +1515,6 @@ const EditQuotation = () => {
                         {item.orderingNumber}
                       </button>
                     )}
-                    {item.originalRequest && (
-                      <div className="original-request-hint">
-                        <span className="hint-label">Request:</span> {item.originalRequest}
-                      </div>
-                    )}
                   </td>
                   <td className="col-specs">
                     {specItems.length > 0 ? (
@@ -1560,17 +1585,25 @@ const EditQuotation = () => {
                         disabled={!item.orderingNumber || isPreviewLoading}
                         title={item.sketchFile ? 'Click to view sales drawing' : 'No drawing available'}
                       >
+                        <span 
+                          className={`availability-dot ${item.sketchFile ? 'available' : ''}`} 
+                          aria-hidden="true" 
+                        />
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                           <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                           <path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
                       </button>
                       <button
-                        className={`icon-btn preview-btn ${item.orderingNumber ? 'has-file' : 'no-file'}`}
+                        className={`icon-btn preview-btn ${item.catalogLink ? 'has-file' : 'no-file'}`}
                         onClick={() => item.orderingNumber && handleOpenPreview(item.orderingNumber, 'catalog')}
                         disabled={!item.orderingNumber || isPreviewLoading}
-                        title={item.orderingNumber ? 'Click to view catalog' : 'No catalog available'}
+                        title={item.catalogLink ? 'Click to view catalog' : 'No catalog available'}
                       >
+                        <span 
+                          className={`availability-dot ${item.catalogLink ? 'available' : ''}`} 
+                          aria-hidden="true" 
+                        />
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                           <path d="M6.5 2H20V22H6.5A2.5 2.5 0 0 1 4 19.5V4.5A2.5 2.5 0 0 1 6.5 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>

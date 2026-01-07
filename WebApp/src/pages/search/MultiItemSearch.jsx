@@ -299,6 +299,19 @@ const MultiItemSearch = () => {
       // Check if manually entered or matched
       const hasOrderingNumber = selectedMatchData || item.manualOrderingNo;
       const isIncomplete = !hasOrderingNumber;
+
+      // Prefer resolved pointer data (from Products table) when available
+      const primaryCatalog = selectedMatchData?.catalogProducts?.[0];
+      const salesDrawings = selectedMatchData?.salesDrawings || [];
+
+      // Catalog: we want the S3 key if it exists
+      // For resolved catalog products from API, _fileKey is populated from DynamoDB
+      const catalogLink = primaryCatalog?._fileKey || primaryCatalog?.fileKey || '';
+
+      // Sales drawing: use the first drawing's fileKey as the sketch file reference
+      const sketchFile = salesDrawings.length > 0
+        ? (salesDrawings[0].fileKey || null)
+        : null;
       
       return {
         orderNo: item.itemNumber,
@@ -309,8 +322,8 @@ const MultiItemSearch = () => {
         quantity: item.quantity,
         price: 0, // Price to be filled in quotation
         margin: 20,
-        sketchFile: null,
-        catalogLink: '',
+        sketchFile,
+        catalogLink,
         notes: selectedMatchData 
           ? `Confidence: ${selectedMatchData.confidence}%` 
           : item.manualOrderingNo 

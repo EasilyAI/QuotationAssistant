@@ -71,7 +71,6 @@ export interface SalesDrawingPointer {
   fileName?: string;
   manufacturer?: string;
   notes?: string;
-  link?: string; // SwagelokLink
 }
 
 /**

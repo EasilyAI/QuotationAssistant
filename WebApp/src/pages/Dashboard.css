@@ -321,21 +321,6 @@
   gap: 4px;
 }
 
-.incomplete-badge-small {
-  display: inline-block;
-  background: #FEF3C7;
-  color: #92400E;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  width: fit-content;
-}
-
-.has-incomplete {
-  background: #FFFBEB;
-}
-
 .action-link.primary-action {
   color: var(--color-primary);
   font-weight: 700;

@@ -288,22 +288,59 @@ const SingleSearch = () => {
     setDialogOpen(true);
   };
 
-  const handleSelectQuotation = (quotationId) => {
-    // Create quotation item from selected product
-    const quotationItem = {
+  /**
+   * Build a quotation line item from the currently selected product,
+   * enriching it with catalog / sales drawing S3 keys when available.
+   */
+  const buildQuotationItemFromSelectedProduct = async () => {
+    const orderingNumber = selectedProduct?.orderingNo || '';
+    const name = selectedProduct?.name || '';
+    
+    let sketchFile = null;
+    let catalogLink = '';
+    
+    if (orderingNumber) {
+      try {
+        // Fetch full product record to access catalogProducts and salesDrawings
+        const productData = await fetchProductByOrderingNumber(orderingNumber);
+        const catalogProducts = productData.catalogProducts || [];
+        const salesDrawings = productData.salesDrawings || [];
+
+        // Catalog: prefer resolved file key directly from product data
+        const primaryCatalogProduct = catalogProducts[0];
+        if (primaryCatalogProduct && (primaryCatalogProduct._fileKey || primaryCatalogProduct.fileKey)) {
+          catalogLink = primaryCatalogProduct._fileKey || primaryCatalogProduct.fileKey || '';
+        }
+
+        // Sales drawing: take first pointer's fileKey as sketch file reference
+        if (salesDrawings.length > 0) {
+          sketchFile = salesDrawings[0].fileKey || null;
+        }
+      } catch (err) {
+        // If product fetch fails, fall back to basic item without links
+        // eslint-disable-next-line no-console
+        console.error('Error fetching product for quotation item:', err);
+      }
+    }
+
+    return {
       orderNo: 1, // Will be adjusted in the quotation page
-      orderingNumber: selectedProduct?.orderingNo || '',
-      requestedItem: selectedProduct?.name || '',
-      productName: selectedProduct?.name || '',
+      orderingNumber,
+      requestedItem: name,
+      productName: name,
       productType: 'Valve', // Default, can be changed in quotation
       quantity: 1,
       price: 0, // Price to be filled in quotation
       margin: 20,
-      sketchFile: null,
-      catalogLink: '',
+      sketchFile,
+      catalogLink,
       notes: 'Added from single search',
       isIncomplete: false
     };
+  };
+
+  const handleSelectQuotation = async (quotationId) => {
+    const quotationItem = await buildQuotationItemFromSelectedProduct();
 
     // Navigate to edit quotation with the new item
     navigate(`/quotations/edit/${quotationId}`, { 
@@ -314,22 +351,8 @@ const SingleSearch = () => {
     });
   };
 
-  const handleCreateNew = () => {
-    // Create quotation item from selected product
-    const quotationItem = {
-      orderNo: 1,
-      orderingNumber: selectedProduct?.orderingNo || '',
-      requestedItem: selectedProduct?.name || '',
-      productName: selectedProduct?.name || '',
-      productType: 'Valve',
-      quantity: 1,
-      price: 0,
-      margin: 20,
-      sketchFile: null,
-      catalogLink: '',
-      notes: 'Added from single search',
-      isIncomplete: false
-    };
+  const handleCreateNew = async () => {
+    const quotationItem = await buildQuotationItemFromSelectedProduct();
 
     // Navigate to metadata form first, then to items page
     navigate('/quotations/new', { 

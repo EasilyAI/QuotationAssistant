@@ -59,7 +59,6 @@ const buildSourcesFromPointers = (record = {}) => {
       hasPrice: false,
       fileId: drawing.fileId,
       fileKey: drawing.fileKey,
-      link: drawing.link, // External link if available
     });
   });
 
@@ -237,6 +236,63 @@ const ProductPage = () => {
     return buildDefaultProductDetails(orderingNo, specifications);
   }, [productRecord, fallbackProduct, specifications, orderingNo]);
 
+  /**
+   * Build a quotation line item from the current product,
+   * enriching it with catalog / sales drawing S3 keys when available.
+   */
+  const buildQuotationItemForQuotation = useCallback(() => {
+    // Base identity/price information comes from derived productDetails
+    const orderingNumber = productDetails.orderingNo || '';
+    
+    // Avoid "Product Not Found" - use orderingNumber if productName is that
+    let name = productDetails.productName;
+    if (!name || name === 'Product Not Found') {
+      name = productDetails.orderingNo || orderingNumber || 'Product';
+    }
+
+    // Default values
+    let sketchFile = null;
+    let catalogLink = null;
+
+    // If we have a live product record from the API, use its resolved pointers
+    if (productRecord) {
+      const catalogProducts = productRecord.catalogProducts || [];
+      const salesDrawings = productRecord.salesDrawings || [];
+
+      // Catalog: prefer resolved file key (_fileKey) but fall back to fileKey
+      const primaryCatalogProduct = catalogProducts[0];
+      if (primaryCatalogProduct) {
+        const fileKey = primaryCatalogProduct._fileKey || primaryCatalogProduct.fileKey;
+        if (fileKey) {
+          catalogLink = fileKey;
+        }
+      }
+
+      // Sales drawing: take first drawing's fileKey as sketch reference
+      if (salesDrawings && salesDrawings.length > 0) {
+        const firstDrawing = salesDrawings[0];
+        if (firstDrawing && firstDrawing.fileKey) {
+          sketchFile = firstDrawing.fileKey;
+        }
+      }
+    }
+
+    return {
+      orderNo: 1, // Will be adjusted in the quotation page
+      orderingNumber,
+      requestedItem: name,
+      productName: name,
+      productType: productDetails.type || 'Valve',
+      quantity: 1,
+      price: productDetails.price || 0,
+      margin: 20,
+      sketchFile,
+      catalogLink,
+      notes: 'Added from product page',
+      isIncomplete: false,
+    };
+  }, [productRecord, productDetails]);
+
   const handleSpecChange = (key, value) => {
     setSpecifications((prev) => ({
       ...prev,
@@ -375,21 +431,8 @@ const ProductPage = () => {
   };
 
   const handleSelectQuotation = (quotationId) => {
-    // Create quotation item from product details
-    const quotationItem = {
-      orderNo: 1, // Will be adjusted in the quotation page
-      orderingNumber: productDetails.orderingNo || '',
-      requestedItem: productDetails.productName || productDetails.orderingNo || '',
-      productName: productDetails.productName || productDetails.orderingNo || '',
-      productType: productDetails.type || 'Valve',
-      quantity: 1,
-      price: productDetails.price || 0,
-      margin: 20,
-      sketchFile: null,
-      catalogLink: '',
-      notes: 'Added from product page',
-      isIncomplete: false
-    };
+    // Create quotation item from product details + resolved file pointers
+    const quotationItem = buildQuotationItemForQuotation();
 
     // Navigate to edit quotation with the new item
     navigate(`/quotations/edit/${quotationId}`, { 
@@ -401,21 +444,8 @@ const ProductPage = () => {
   };
 
   const handleCreateNew = () => {
-    // Create quotation item from product details
-    const quotationItem = {
-      orderNo: 1,
-      orderingNumber: productDetails.orderingNo || '',
-      requestedItem: productDetails.productName || productDetails.orderingNo || '',
-      productName: productDetails.productName || productDetails.orderingNo || '',
-      productType: productDetails.type || 'Valve',
-      quantity: 1,
-      price: productDetails.price || 0,
-      margin: 20,
-      sketchFile: null,
-      catalogLink: '',
-      notes: 'Added from product page',
-      isIncomplete: false
-    };
+    // Create quotation item from product details + resolved file pointers
+    const quotationItem = buildQuotationItemForQuotation();
 
     // Navigate to metadata form first, then to items page
     navigate('/quotations/new', { 

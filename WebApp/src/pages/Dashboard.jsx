@@ -41,9 +41,8 @@ const Dashboard = () => {
       setError(null);
       
       try {
-        // Fetch drafts (incomplete or draft status)
+        // Fetch drafts (draft status)
         const draftsResult = await getQuotations({
-          incomplete: true,
           status: 'Draft',
           limit: 10
         });
@@ -320,13 +319,10 @@ const Dashboard = () => {
                   </tr>
                 ) : (
                   displayedQuotations.map((quotation) => (
-                  <tr key={quotation.id} className={quotation.incompleteItems > 0 ? 'has-incomplete' : ''}>
+                  <tr key={quotation.id}>
                     <td className="col-quotation-name">
                       <div className="quotation-name-cell">
                         {quotation.name}
-                        {quotation.incompleteItems > 0 && (
-                          <span className="incomplete-badge-small">{quotation.incompleteItems} incomplete</span>
-                        )}
                       </div>
                     </td>
                     <td className="col-created-at text-secondary">{quotation.createdDate}</td>
@@ -337,7 +333,7 @@ const Dashboard = () => {
                           className="action-link primary-action"
                           onClick={() => handleEditQuotation(quotation.id)}
                         >
-                          {quotation.incompleteItems > 0 ? 'Continue →' : 'Edit'}
+                          Edit
                         </button>
                         <button 
                           className="action-link danger"

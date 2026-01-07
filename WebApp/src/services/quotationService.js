@@ -97,7 +97,7 @@ const transformLineFromBackend = (backendLine, index, defaultMargin = 20) => {
     price: hasPrice ? parseFloat(basePrice) : null, // null indicates price not found
     margin: margin,
     sketchFile: backendLine.drawing_link || null,
-    catalogLink: backendLine.catalog_link || '',
+    catalogLink: backendLine.catalog_link || null,
     notes: backendLine.notes || '',
     isIncomplete: !backendLine.ordering_number || !backendLine.ordering_number.trim(),
     line_id: backendLine.line_id,
@@ -118,6 +118,10 @@ const transformLineToBackend = (frontendLine) => {
   const margin = frontendLine.margin;
   const marginPct = margin != null ? parseFloat(margin) / 100 : undefined;
   
+  // Extract S3 links - check multiple possible field names
+  const drawingLink = frontendLine.sketchFile || frontendLine.drawing_link || null;
+  const catalogLink = frontendLine.catalogLink || frontendLine.catalog_link || null;
+
   return {
     ordering_number: frontendLine.orderingNumber || '',
     product_name: frontendLine.productName || frontendLine.requestedItem || 'Item',
@@ -125,11 +129,11 @@ const transformLineToBackend = (frontendLine) => {
     quantity: frontendLine.quantity || 1,
     base_price: basePrice,
     margin_pct: marginPct,
-    drawing_link: frontendLine.sketchFile || null,
-    catalog_link: frontendLine.catalogLink || '',
+    drawing_link: drawingLink,
+    catalog_link: catalogLink,
     notes: frontendLine.notes || '',
     source: frontendLine.source || 'manual',
-    original_request: frontendLine.originalRequest || ''
+    original_request: frontendLine.originalRequest || frontendLine.original_request || ''
   };
 };
 
@@ -596,7 +600,7 @@ export const saveQuotationFullState = async (quotationId, quotationState) => {
         base_price: item.price != null ? parseFloat(item.price) : null,
         margin_pct: item.margin != null ? parseFloat(item.margin) / 100 : null,
         drawing_link: item.sketchFile || null,
-        catalog_link: item.catalogLink || '',
+        catalog_link: item.catalogLink || null,
         notes: item.notes || '',
         source: item.source || 'manual',
         original_request: item.originalRequest || ''
