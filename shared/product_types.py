@@ -168,7 +168,6 @@ class SalesDrawingPointer(TypedDict, total=False):
     fileName: Optional[str]
     manufacturer: Optional[str]
     notes: Optional[str]
-    link: Optional[str]
 
 
 class Product(TypedDict, total=False):

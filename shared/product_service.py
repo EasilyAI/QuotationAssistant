@@ -65,6 +65,9 @@ def _resolve_catalog_product_pointers(
             continue
 
         products = _convert_decimals(document.get("products", []))
+        # Catalog file metadata (S3 key, file name, etc.) lives on the catalog-products document
+        catalog_file_key = document.get("fileKey")
+        catalog_file_name = document.get("fileName")
 
         for pointer in pointers:
             table_index = pointer.get("tableIndex")
@@ -81,9 +84,32 @@ def _resolve_catalog_product_pointers(
             )
 
             if matched:
-                resolved.append({**matched, "_fileId": file_id})
+                # Attach document-level file metadata so callers can access S3 key directly
+                enriched = {
+                    **matched,
+                    "_fileId": file_id,
+                }
+                # Prefer explicit catalog fileKey on the document; fall back to any pointer-level fileKey
+                file_key = catalog_file_key or pointer.get("fileKey")
+                if file_key:
+                    enriched["_fileKey"] = file_key
+                if catalog_file_name:
+                    enriched["_fileName"] = catalog_file_name
+
+                resolved.append(enriched)
             else:
-                resolved.append(pointer)
+                # No matched product row; still attach file metadata to pointer for best effort
+                enriched_pointer = {
+                    **pointer,
+                    "_fileId": file_id,
+                }
+                file_key = catalog_file_key or pointer.get("fileKey")
+                if file_key:
+                    enriched_pointer["_fileKey"] = file_key
+                if catalog_file_name:
+                    enriched_pointer["_fileName"] = catalog_file_name
+
+                resolved.append(enriched_pointer)
 
     return resolved
 
