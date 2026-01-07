@@ -145,21 +145,14 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
     customer = quotation.get('customer', {})
     customer_name = customer.get('name', 'Customer')
     currency = quotation.get('currency', 'ILS')
-    totals = quotation.get('totals', {})
-    total = totals.get('total', 0.0)
-    
-    # Convert to float to handle Decimal types from DynamoDB
-    total_float = float(total) if total is not None else 0.0
-    
+    # We intentionally do not include grand totals in the email content
     body_lines = [
         f"Dear {customer_name},",
         "",
         f"Please find below the quotation details for your review:",
         "",
-        f"Quotation Number: {quotation_number}",
         f"Quotation Name: {quotation_name}",
         f"Total Items: {len(lines)}",
-        f"Grand Total: {currency} {total_float:.2f}",
         "",
         "Items:"
     ]
@@ -193,12 +186,9 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
     
     body_lines.extend([
         "",
-        f"Grand Total: {currency} {total_float:.2f}",
-        "",
         "Please review and let us know if you have any questions.",
         "",
-        "Best regards,",
-        "Your Sales Team"
+        "Best regards,"
     ])
 
     # Add optional section listing drawing links so that they are visible
@@ -212,7 +202,10 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
             filename = attachment.get("filename", "Drawing")
             url = attachment.get("presigned_url")
             if url:
-                body_lines.append(f"- {filename}: {url}")
+                # Use a short, readable label and put the URL on its own line.
+                # Most email clients will auto-link the URL, while the label keeps the email tidy.
+                body_lines.append(f"- {filename}")
+                body_lines.append(f"  Link: {url}")
 
     body = "\n".join(body_lines)
     
