@@ -9,11 +9,17 @@ import 'react-pdf/dist/Page/TextLayer.css';
 import './CatalogPreviewDialog.css';
 
 // Configure PDF worker source
-// Use local file from public folder - it's copied during build
-// This avoids CDN issues and works reliably in both dev and production
-// pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-// Use CDN-hosted worker to avoid any hosting rewrite issues
-// pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// NOTE ON HOSTING QUIRKS (Amplify):
+// 1) Local worker file (`/pdf.worker.min.mjs` in `public/`):
+//    - Worked locally/Vercel, but on Amplify the request was rewritten to `index.html`
+//      by SPA rewrite rules, returning HTML instead of JS and breaking the worker.
+// 2) unpkg CDN (`https://unpkg.com/pdfjs-dist@.../pdf.worker.min.mjs`):
+//    - Blocked by the app's Content-Security-Policy (only jsDelivr is allowed in script-src),
+//      so the worker could not be loaded and pdf.js fell back to the fake worker.
+// 3) Current solution (jsDelivr CDN below):
+//    - Uses a CSP-allowed CDN and matches the installed `pdfjs-dist` version,
+//      avoiding both Amplify rewrite issues and CSP violations.
+//    - If hosting environment changes, update CSP or point this to a trusted origin.
 pdfjs.GlobalWorkerOptions.workerSrc =
   `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
