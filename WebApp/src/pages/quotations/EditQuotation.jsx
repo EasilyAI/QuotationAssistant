@@ -17,6 +17,7 @@ import {
   exportStockCheck,
   exportPriorityImport,
   generateEmailDraft,
+  sendEmail,
   saveQuotationFullState
 } from '../../services/quotationService';
 import { getCurrentUserInfo } from '../../services/authService';
@@ -1117,47 +1118,51 @@ const EditQuotation = () => {
 
   const handleExportCustomerEmail = async () => {
     if (!quotation?.id) {
-      alert('Please save the quotation first before generating email');
+      alert('Please save the quotation first before sending email');
       return;
     }
     
     try {
-      const emailDraft = await generateEmailDraft(quotation.id, quotation.customer?.email);
-
-      // Get current user name for email signature
-      let userName = 'Your Sales Team';
+      // Get current user info for email
+      let senderName = 'Your Sales Team';
+      let userEmail = null;
       try {
         const userInfo = await getCurrentUserInfo();
-        if (userInfo && userInfo.name) {
-          userName = userInfo.name;
+        if (userInfo) {
+          if (userInfo.name) {
+            senderName = userInfo.name;
+          }
+          if (userInfo.email) {
+            userEmail = userInfo.email;
+          }
         }
       } catch (e) {
-        console.error('Failed to fetch current user info for email signature:', e);
+        console.error('Failed to fetch current user info:', e);
       }
 
-      // Append personalized signature if not already present
-      const baseBody = emailDraft.body || '';
-      const signatureBlock = `\n${userName}`;
-      const bodyWithSignature = baseBody.endsWith(signatureBlock)
-        ? baseBody
-        : `${baseBody}\n${userName}`;
-
-      // Normalize line endings for better compatibility with Outlook / Gmail
-      const normalizedBody = bodyWithSignature.replace(/\n/g, '\r\n');
-
-      // Open default email client with pre-filled content
-      const mailtoLink = `mailto:${emailDraft.to || 'customer@example.com'}?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(normalizedBody)}`;
-      window.location.href = mailtoLink;
-      
-      // Note: Attachments (sketch drawings) will need to be handled by the email client
-      // The presigned URLs are in emailDraft.attachments
-      if (emailDraft.attachments && emailDraft.attachments.length > 0) {
-        console.log('Email attachments available:', emailDraft.attachments);
-        // Some email clients support attachments via data URIs, but this is limited
+      if (!userEmail) {
+        alert('Unable to get your email address. Please ensure you are logged in.');
+        return;
       }
+
+      // Confirm before sending - explain it will be sent to user's email for forwarding
+      const confirmMessage = `This will send an email with all sales drawings attached to ${userEmail}. You can then forward it to the customer. Continue?`;
+      if (!window.confirm(confirmMessage)) {
+        return;
+      }
+
+      // Send email with attachments via Resend to the user's email
+      // The user can then forward it to the customer
+      const result = await sendEmail(quotation.id, {
+        customerEmail: userEmail, // Send to user's email for forwarding
+        senderName: senderName
+      });
+
+      alert(`Email sent successfully to ${userEmail}! You can now forward it to the customer with all sales drawings attached.`);
+      console.log('Email sent successfully:', result);
     } catch (err) {
-      console.error('Error generating email draft:', err);
-      alert(err.message || 'Failed to generate email draft');
+      console.error('Error sending email:', err);
+      alert(err.message || 'Failed to send email. Please try again.');
     }
   };
 

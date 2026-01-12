@@ -124,6 +124,10 @@ If you want to use DynamoDB Local instead of AWS:
      --endpoint-url http://localhost:8000
    ```
 
+### Installing Python Dependencies for Local Development
+
+When running `serverless offline`, the `serverless-python-requirements` plugin will package dependencies automatically. All required dependencies (boto3, openpyxl, python-dateutil) are already included and should work out of the box with AWS SDK.
+
 ### Troubleshooting
 
 **Error: "ResourceNotFoundException: Requested resource not found"**
@@ -174,9 +178,10 @@ This means the DynamoDB table doesn't exist or isn't accessible. Check:
 - `POST /quotations/{quotationId}/exports/priority-import` - Generate priority import Excel
 - `GET /quotations/{quotationId}/exports/{exportType}/download` - Get presigned download URL
 
-### Email Draft
+### Email
 
 - `POST /quotations/{quotationId}/email-draft` - Generate email draft with sales drawing attachments
+- `POST /quotations/{quotationId}/send-email` - Send email with attachments via AWS SES
 
 ## Environment Variables
 
@@ -189,6 +194,7 @@ Required:
 
 Optional:
 - `VAT_RATE` - Default VAT rate (default: `0.18`)
+- `SES_SENDER_EMAIL` - AWS SES verified sender email address (default: `hbaws1925@gmail.com`)
 
 ## Price Calculation
 
@@ -224,7 +230,9 @@ Exports are generated on-demand and returned directly to the user's computer. Th
 - Returns Excel file as base64-encoded data in JSON response
 - Frontend automatically triggers browser download
 
-## Email Draft
+## Email
+
+### Email Draft
 
 The email draft endpoint returns:
 ```json
@@ -244,6 +252,45 @@ The email draft endpoint returns:
 ```
 
 **Note**: Attachments include ONLY sales drawings (sketch files) from line items. Excel exports are NOT included.
+
+### Send Email with Attachments
+
+The send email endpoint (`POST /quotations/{quotationId}/send-email`) uses AWS SES to send emails with all sales drawings attached as files.
+
+**Prerequisites**:
+1. **Verify sender email in AWS SES**: The sender email address must be verified in AWS SES. Default is `hbaws1925@gmail.com`.
+
+2. **Set `SES_SENDER_EMAIL` in your `.env` file** (optional, defaults to `hbaws1925@gmail.com`):
+   ```
+   SES_SENDER_EMAIL=hbaws1925@gmail.com
+   ```
+
+3. **AWS Credentials**: Ensure your Lambda execution role has SES permissions:
+   - `ses:SendEmail`
+   - `ses:SendRawEmail`
+
+**How it works**:
+- Downloads all sales drawing files from S3
+- Builds MIME multipart email message with attachments
+- Sends email via AWS SES API with attachments
+- Email is sent to the specified recipient (defaults to current user's email for forwarding)
+
+**Request body** (optional):
+```json
+{
+  "customer_email": "customer@example.com",
+  "sender_email": "sender@example.com",
+  "sender_name": "John Doe"
+}
+```
+
+**Response**:
+```json
+{
+  "message": "Email sent successfully",
+  "email_id": "ses-message-id"
+}
+```
 
 ## Authentication
 

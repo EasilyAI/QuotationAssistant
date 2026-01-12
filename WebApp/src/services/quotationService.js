@@ -572,6 +572,34 @@ export const generateEmailDraft = async (quotationId, customerEmail) => {
 };
 
 /**
+ * Send email with attachments via Resend
+ */
+export const sendEmail = async (quotationId, options = {}) => {
+  const { customerEmail, senderEmail, senderName } = options;
+  
+  const response = await authenticatedFetch(
+    buildQuotationsUrl(`/${quotationId}/send-email`),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        customer_email: customerEmail,
+        sender_email: senderEmail,
+        sender_name: senderName
+      })
+    },
+    'quotation'
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to send email' }));
+    throw new Error(error.error || error.message || `Failed to send email: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data;
+};
+
+/**
  * Save complete quotation state (replaces everything atomically)
  * 
  * This is the new simplified approach that replaces the entire quotation state

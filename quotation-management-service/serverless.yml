@@ -11,7 +11,7 @@ provider:
   architecture: x86_64
   region: ${opt:region, 'us-east-1'}
   stage: ${opt:stage, 'dev'}
-  profile: ${opt:profile, 'hb-client'}  # Use AWS profile for offline/local development
+  profile: hb-client  # Always use client AWS profile
   memorySize: 512
   timeout: 30
   
@@ -73,6 +73,9 @@ provider:
     # VAT Configuration
     VAT_RATE: ${env:VAT_RATE, '0.18'}
     
+    # Email Service (AWS SES)
+    SES_SENDER_EMAIL: ${env:SES_SENDER_EMAIL, 'hbaws1925@gmail.com'}
+    
     # Logging
     LOG_LEVEL: INFO
   
@@ -105,6 +108,13 @@ provider:
           Resource:
             - arn:aws:s3:::${self:custom.filesBucket}
             - arn:aws:s3:::${self:custom.filesBucket}/*
+        
+        # SES permissions for sending emails
+        - Effect: Allow
+          Action:
+            - ses:SendEmail
+            - ses:SendRawEmail
+          Resource: '*'
         
         # CloudWatch Logs
         - Effect: Allow
@@ -204,6 +214,10 @@ functions:
       # Email Draft
       - httpApi:
           path: /quotations/{quotationId}/email-draft
+          method: post
+      # Send Email
+      - httpApi:
+          path: /quotations/{quotationId}/send-email
           method: post
 
 plugins:

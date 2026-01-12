@@ -7,6 +7,12 @@ import logging
 from typing import Dict, Any, List, Optional
 import boto3
 import sys
+import base64
+from io import BytesIO
+
+# Configure logger first
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 # Add shared directory to path
 SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -17,17 +23,48 @@ for path in {SERVICE_ROOT, REPO_ROOT, SHARED_DIR}:
     if path not in sys.path:
         sys.path.append(path)
 
+# AWS SES client for sending emails
+ses_client = None
+# Get region from Lambda environment (AWS_REGION is set automatically in Lambda)
+# Fall back to AWS_DEFAULT_REGION or default to us-east-1
+SES_REGION = os.getenv('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION') or 'us-east-1'
+SES_SENDER_EMAIL = os.getenv('SES_SENDER_EMAIL', 'hbaws1925@gmail.com')
+
+# Check if we're in real AWS Lambda (not serverless-offline)
+# Serverless-offline may set LAMBDA_TASK_ROOT, but we can detect real Lambda by checking
+# if we're in /var/task (real Lambda) vs local filesystem
+is_real_lambda = os.path.exists('/var/task') and os.getenv('LAMBDA_TASK_ROOT')
+
+# Get AWS profile for local development (serverless-offline)
+# In real Lambda, we use IAM roles, not AWS profiles
+if is_real_lambda:
+    aws_profile = None
+else:
+    # Check for AWS profile from environment or serverless.yml
+    aws_profile = os.getenv('AWS_PROFILE') or os.environ.get('AWS_PROFILE') or os.getenv('AWS_DEFAULT_PROFILE') or os.environ.get('AWS_DEFAULT_PROFILE') or 'hb-client'
+
+try:
+    # Create SES client with profile if running locally
+    if aws_profile and not is_real_lambda:
+        session = boto3.Session(profile_name=aws_profile, region_name=SES_REGION)
+        ses_client = session.client('ses')
+    else:
+        # Use default credentials (IAM role in Lambda)
+        ses_client = boto3.client('ses', region_name=SES_REGION)
+    
+    # Log SES client initialization (without sensitive account info)
+    logger.info(f"AWS SES client initialized - Region: {SES_REGION}")
+except Exception as e:
+    logger.warning(f"Could not initialize AWS SES client: {str(e)}")
+
+# Try to import shared product service
 try:
     from shared.product_service import fetch_product
 except ImportError:
-    logger = logging.getLogger(__name__)
     logger.warning("Could not import shared.product_service - sales drawings from products will not be available")
     fetch_product = None
 
 from services.quotation_service import get_quotation
-
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 s3_client = boto3.client('s3')
 FILES_BUCKET = os.getenv('FILES_BUCKET', 'hb-files-raw')
@@ -229,4 +266,230 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         email_draft['cc'] = customer.get('cc')
     
     return email_draft
+
+
+def download_file_from_s3(s3_key: str) -> Optional[bytes]:
+    """
+    Download file from S3.
+    
+    Args:
+        s3_key: S3 key for the file
+    
+    Returns:
+        File content as bytes or None on error
+    """
+    try:
+        response = s3_client.get_object(Bucket=FILES_BUCKET, Key=s3_key)
+        return response['Body'].read()
+    except Exception as e:
+        logger.error(f"Error downloading file {s3_key} from S3: {str(e)}")
+        return None
+
+
+def send_email_with_attachments(
+    quotation_id: str,
+    customer_email: Optional[str] = None,
+    sender_email: Optional[str] = None,
+    sender_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Send email with attachments via AWS SES.
+    
+    Args:
+        quotation_id: Quotation ID
+        customer_email: Optional customer email address (overrides quotation customer email)
+        sender_email: Optional sender email address (defaults to SES_SENDER_EMAIL)
+        sender_name: Optional sender name
+    
+    Returns:
+        Dict with 'success' boolean and 'message' or 'error' string
+    """
+    if not ses_client:
+        return {'success': False, 'error': 'AWS SES client not available'}
+    
+    try:
+        # Generate email draft
+        email_draft = generate_email_draft(quotation_id, customer_email)
+        if not email_draft:
+            return {'success': False, 'error': 'Quotation not found'}
+        
+        # Validate recipient email
+        recipient_email = email_draft.get('to')
+        if not recipient_email:
+            return {'success': False, 'error': 'No recipient email address found'}
+        
+        # Log email sending attempt (without sensitive account info)
+        logger.info(f"Sending email - From: {SES_SENDER_EMAIL}, To: {recipient_email}, Subject: {email_draft.get('subject', 'N/A')}")
+        
+        # Determine sender email (must be plain email for SES Source field)
+        if sender_email:
+            email_from = sender_email
+        else:
+            email_from = SES_SENDER_EMAIL
+        
+        # Format sender with name for MIME headers (only used in raw email)
+        # Note: SES Source field must be plain email, display name goes in MIME From header
+        if sender_name:
+            email_from_formatted = f'{sender_name} <{email_from}>'
+        else:
+            email_from_formatted = email_from
+        
+        # Download and prepare attachments for SES
+        email_attachments = []
+        attachments = email_draft.get('attachments', [])
+        
+        for attachment in attachments:
+            s3_key = attachment.get('s3_key')
+            filename = attachment.get('filename', 'attachment')
+            
+            if not s3_key:
+                logger.warning(f"Skipping attachment {filename} - no S3 key")
+                continue
+            
+            # Download file from S3
+            file_content = download_file_from_s3(s3_key)
+            if not file_content:
+                logger.warning(f"Failed to download {s3_key} for attachment {filename}")
+                continue
+            
+            # Determine content type from filename extension
+            content_type = 'application/octet-stream'  # Default
+            filename_lower = filename.lower()
+            if filename_lower.endswith('.pdf'):
+                content_type = 'application/pdf'
+            elif filename_lower.endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                content_type = f'image/{filename_lower.split(".")[-1]}'
+            elif filename_lower.endswith('.dwg'):
+                content_type = 'application/acad'
+            elif filename_lower.endswith('.dxf'):
+                content_type = 'application/dxf'
+            
+            # SES expects attachments with data (bytes) and content type
+            email_attachments.append({
+                'filename': filename,
+                'data': file_content,
+                'content_type': content_type
+            })
+        
+        # Convert plain text body to HTML with proper formatting
+        body_text = email_draft.get('body', '')
+        # Convert newlines to <br> and preserve formatting
+        body_html = body_text.replace('\n', '<br>')
+        # Wrap in a simple HTML structure for better email client compatibility
+        body_html = f'<div style="font-family: Arial, sans-serif; line-height: 1.6;">{body_html}</div>'
+        
+        # Prepare recipients
+        destination = {
+            'ToAddresses': [recipient_email]
+        }
+        
+        # Add CC if present
+        if email_draft.get('cc'):
+            cc_list = [email_draft['cc']] if isinstance(email_draft['cc'], str) else email_draft['cc']
+            destination['CcAddresses'] = cc_list
+        
+        # Build SES message
+        message = {
+            'Subject': {
+                'Data': email_draft.get('subject', 'Quotation'),
+                'Charset': 'UTF-8'
+            },
+            'Body': {
+                'Text': {
+                    'Data': body_text,
+                    'Charset': 'UTF-8'
+                },
+                'Html': {
+                    'Data': body_html,
+                    'Charset': 'UTF-8'
+                }
+            }
+        }
+        
+        # If we have attachments OR a sender name, we need to use send_raw_email
+        # (SES Source field doesn't support display names, but MIME From header does)
+        if email_attachments or sender_name:
+            # Build raw email message with attachments using email.mime
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+            from email.mime.base import MIMEBase
+            from email import encoders
+            
+            msg = MIMEMultipart('mixed')
+            msg['From'] = email_from_formatted
+            msg['To'] = recipient_email
+            msg['Subject'] = email_draft.get('subject', 'Quotation')
+            
+            if email_draft.get('cc'):
+                cc_list = [email_draft['cc']] if isinstance(email_draft['cc'], str) else email_draft['cc']
+                msg['Cc'] = ', '.join(cc_list)
+            
+            # Add text and HTML parts
+            msg_alternative = MIMEMultipart('alternative')
+            msg_alternative.attach(MIMEText(body_text, 'plain', 'utf-8'))
+            msg_alternative.attach(MIMEText(body_html, 'html', 'utf-8'))
+            msg.attach(msg_alternative)
+            
+            # Add attachments
+            for attachment in email_attachments:
+                content_type = attachment.get('content_type', 'application/octet-stream')
+                # Parse content type (e.g., "application/pdf" -> ("application", "pdf"))
+                main_type, sub_type = content_type.split('/', 1) if '/' in content_type else ('application', 'octet-stream')
+                
+                part = MIMEBase(main_type, sub_type)
+                part.set_payload(attachment['data'])
+                encoders.encode_base64(part)
+                part.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename= {attachment["filename"]}'
+                )
+                msg.attach(part)
+            
+            # Send raw email via SES
+            raw_message = msg.as_string()
+            result = ses_client.send_raw_email(
+                Source=email_from,
+                Destinations=[recipient_email] + (destination.get('CcAddresses', [])),
+                RawMessage={'Data': raw_message.encode('utf-8')}
+            )
+        else:
+            # Send simple email without attachments
+            # SES Source field must be plain email address (not "Name <email>")
+            result = ses_client.send_email(
+                Source=email_from,  # Plain email only - SES requirement
+                Destination=destination,
+                Message=message
+            )
+        
+        # SES returns a MessageId on success
+        if result and 'MessageId' in result:
+            message_id = result['MessageId']
+            logger.info(f"Email sent successfully via AWS SES. MessageId: {message_id}, To: {recipient_email}")
+            return {
+                'success': True,
+                'message': f'Email sent successfully to {recipient_email}. MessageId: {message_id}',
+                'email_id': message_id,
+                'recipient': recipient_email
+            }
+        
+        logger.error(f"Failed to send email via SES: {result}")
+        return {'success': False, 'error': 'Failed to send email - no message ID returned'}
+            
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error sending email: {error_msg}", exc_info=True)
+        
+        # Provide helpful error message for common SES issues
+        if 'MessageRejected' in error_msg and 'not verified' in error_msg:
+            return {
+                'success': False,
+                'error': f'Email address not verified in AWS SES. Please verify {email_from} in AWS SES console for region {SES_REGION}. Error: {error_msg}'
+            }
+        elif 'MessageRejected' in error_msg:
+            return {
+                'success': False,
+                'error': f'Email rejected by AWS SES. Please check SES configuration. Error: {error_msg}'
+            }
+        
+        return {'success': False, 'error': f'Failed to send email: {error_msg}'}
 

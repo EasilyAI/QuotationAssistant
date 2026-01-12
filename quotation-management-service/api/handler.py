@@ -29,7 +29,7 @@ from api.exports import (
     handle_export_priority_import,
     handle_get_export_download
 )
-from api.email import handle_email_draft
+from api.email import handle_email_draft, handle_send_email
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -153,6 +153,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # Email Draft
     elif path.endswith('/email-draft') and method == 'POST':
         return handle_email_draft(event)
+    
+    # Send Email
+    elif path.endswith('/send-email') and method == 'POST':
+        return handle_send_email(event)
     
     else:
         return create_response(404, {
