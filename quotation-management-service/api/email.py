@@ -65,7 +65,7 @@ def handle_send_email(event: Dict[str, Any]) -> Dict[str, Any]:
         # Send email with attachments
         result = send_email_with_attachments(
             quotation_id=quotation_id,
-            customer_email='hbaws1925@gmail.com',
+            customer_email=customer_email,
             sender_email='hbaws1925@gmail.com',
             sender_name=sender_name
         )

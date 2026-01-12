@@ -1124,14 +1124,12 @@ const EditQuotation = () => {
     
     try {
       // Get current user info for email
-      let senderName = 'Your Sales Team';
+      let senderName = 'Quotation Assistant';
       let userEmail = null;
       try {
         const userInfo = await getCurrentUserInfo();
         if (userInfo) {
-          if (userInfo.name) {
-            senderName = userInfo.name;
-          }
+          // Sender name remains 'Your Sales Team' (not using userInfo.name)
           if (userInfo.email) {
             userEmail = userInfo.email;
           }

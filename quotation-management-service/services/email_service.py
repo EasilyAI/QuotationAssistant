@@ -173,76 +173,66 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         if has_drawing:
             line_has_drawing_map[idx] = True
     
-    # Generate email subject
+    # Generate email subject (without quotation ID)
     quotation_name = quotation.get('name', 'Quotation')
-    quotation_number = quotation.get('quotation_id', '')[:8]  # Short ID
-    subject = f"Quotation {quotation_number} - {quotation_name}"
+    subject = quotation_name
     
     # Generate email body
     customer = quotation.get('customer', {})
     customer_name = customer.get('name', 'Customer')
-    currency = quotation.get('currency', 'ILS')
-    # We intentionally do not include grand totals in the email content
+    
+    # Opening phrase about sales drawings
     body_lines = [
         f"Dear {customer_name},",
         "",
-        f"Please find below the quotation details for your review:",
+        f"This email contains sales drawings for your requested products.",
         "",
-        f"Quotation Name: {quotation_name}",
         f"Total Items: {len(lines)}",
-        "",
-        "Items:"
+        ""
     ]
     
-    # Add line items
+    # Separate items into those with attachments and those without
+    items_with_attachments = []
+    items_without_attachments = []
+    
     for idx, line in enumerate(lines, start=1):
-        product_name = line.get('product_name', '')
+        ordering_number = line.get('ordering_number', '').strip()
         quantity = line.get('quantity', 1)
-        final_price = line.get('final_price', 0.0)
         
         # Convert to float to handle Decimal types from DynamoDB
         quantity_float = float(quantity) if quantity is not None else 1.0
-        final_price_float = float(final_price) if final_price is not None else 0.0
-        line_total = final_price_float * quantity_float
-        
-        notes = line.get('notes', '')
-        
-        body_lines.append(f"\n{idx}. {product_name}")
         # Format quantity as integer if whole number, otherwise as decimal
         quantity_str = f"{int(quantity_float)}" if quantity_float == int(quantity_float) else f"{quantity_float}"
-        body_lines.append(f"   - Quantity: {quantity_str}")
-        body_lines.append(f"   - Unit Price: {currency} {final_price_float:.2f}")
-        body_lines.append(f"   - Subtotal: {currency} {line_total:.2f}")
         
-        if notes:
-            body_lines.append(f"   - Notes: {notes}")
-
-        # Check if this line has sales drawings attached (based on earlier collection)
-        if line_has_drawing_map.get(idx):
-            body_lines.append(f"   - Sales Drawing: Attached")
+        # Check if this line has sales drawings attached
+        has_attachment = line_has_drawing_map.get(idx, False)
+        
+        # Format: ordering_number (Quantity)
+        if ordering_number:
+            item_text = f"{idx}. {ordering_number} (Quantity: {quantity_str})"
+        else:
+            item_text = f"{idx}. (Quantity: {quantity_str})"
+        
+        if has_attachment:
+            items_with_attachments.append(item_text)
+        else:
+            items_without_attachments.append(item_text)
+    
+    # Add items with attachments
+    if items_with_attachments:
+        body_lines.append("Items with attachments:")
+        body_lines.extend(items_with_attachments)
+        body_lines.append("")
+    
+    # Add items without attachments
+    if items_without_attachments:
+        body_lines.append("Items missing attachments:")
+        body_lines.extend(items_without_attachments)
+        body_lines.append("")
     
     body_lines.extend([
-        "",
-        "Please review and let us know if you have any questions.",
-        "",
         "Best regards,"
     ])
-
-    # Add optional section listing drawing links so that they are visible
-    # in all email clients, even when attachments cannot be auto-attached
-    if attachments:
-        body_lines.extend([
-            "",
-            "Sales drawings (clickable links):"
-        ])
-        for attachment in attachments:
-            filename = attachment.get("filename", "Drawing")
-            url = attachment.get("presigned_url")
-            if url:
-                # Use a short, readable label and put the URL on its own line.
-                # Most email clients will auto-link the URL, while the label keeps the email tidy.
-                body_lines.append(f"- {filename}")
-                body_lines.append(f"  Link: {url}")
 
     body = "\n".join(body_lines)
     
