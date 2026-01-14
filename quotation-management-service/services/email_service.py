@@ -195,9 +195,10 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
     # 1) items with drawings and ordering numbers
     # 2) items with ordering numbers but no drawings
     # 3) missing products with no ordering number
-    items_with_attachments: List[Dict[str, str]] = []
-    items_without_attachments: List[Dict[str, str]] = []
-    missing_products: List[Dict[str, str]] = []
+    # Track original row numbers (1-indexed position in quotation)
+    items_with_attachments: List[Dict[str, Any]] = []
+    items_without_attachments: List[Dict[str, Any]] = []
+    missing_products: List[Dict[str, Any]] = []
     
     for idx, line in enumerate(lines, start=1):
         ordering_number = line.get('ordering_number', '').strip()
@@ -215,11 +216,13 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
             items_with_attachments.append({
                 'ordering_number': ordering_number,
                 'quantity': quantity_str,
+                'row_number': idx,  # Preserve original row number
             })
         elif has_ordering and not has_attachment:
             items_without_attachments.append({
                 'ordering_number': ordering_number,
                 'quantity': quantity_str,
+                'row_number': idx,  # Preserve original row number
             })
         else:
             # Missing product (no ordering number) – use product name or original request as label
@@ -231,27 +234,32 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
             missing_products.append({
                 'label': label,
                 'quantity': quantity_str,
+                'row_number': idx,  # Preserve original row number
             })
     
-    # Add items with attachments - numbering starts from 1 in this section
+    # Add items with attachments - show original row numbers
     if items_with_attachments:
         body_lines.append("Items with attachments:")
-        for i, item in enumerate(items_with_attachments, start=1):
-            body_lines.append(f"{i}. {item['ordering_number']} (Quantity: {item['quantity']})")
+        for item in items_with_attachments:
+            body_lines.append(f"Row #{item['row_number']}: {item['ordering_number']} (Quantity: {item['quantity']})")
         body_lines.append("")
     
-    # Add items without attachments - numbering restarts from 1
+    # Add items without attachments - show original row numbers
     if items_without_attachments:
         body_lines.append("Items missing attachments:")
-        for i, item in enumerate(items_without_attachments, start=1):
-            body_lines.append(f"{i}. {item['ordering_number']} (Quantity: {item['quantity']})")
+        for item in items_without_attachments:
+            body_lines.append(f"Row #{item['row_number']}: {item['ordering_number']} (Quantity: {item['quantity']})")
         body_lines.append("")
 
-    # Add missing products (no ordering number) in their own list with fresh numbering
+    # Add missing products (no ordering number) - show original row numbers
     if missing_products:
-        body_lines.append("Missing products (no ordering number):")
-        for i, item in enumerate(missing_products, start=1):
-            body_lines.append(f"{i}. {item['label']} (Quantity: {item['quantity']})")
+        body_lines.append("Items with no ordering number chosen:")
+        for item in missing_products:
+            # For items without ordering number, show label or just row number
+            if item['label'] and item['label'] != 'Missing product':
+                body_lines.append(f"Row #{item['row_number']}: {item['label']} (Quantity: {item['quantity']})")
+            else:
+                body_lines.append(f"Row #{item['row_number']}: (Quantity: {item['quantity']})")
         body_lines.append("")
     
     body_lines.extend([

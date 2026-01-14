@@ -276,6 +276,19 @@
   font-size: 14px;
 }
 
+.ai-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #EEF2FF;
+  border-radius: 999px;
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: 600;
+  color: #4F46E5;
+}
+
 /* Autocomplete styles moved to AutocompleteResults.css */
 
 .dropdown-wrapper {

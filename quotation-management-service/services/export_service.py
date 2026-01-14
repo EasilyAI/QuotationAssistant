@@ -19,9 +19,9 @@ logger.setLevel(getattr(logging, log_level, logging.INFO))
 
 def generate_stock_check_excel(quotation: Dict[str, Any]) -> BytesIO:
     """
-    Generate stock check Excel file.
+    Generate stock check Excel file for manufacturer order list.
     
-    Format: ordering_number, quantity
+    Format: ordering_number, quantity (ONLY - no product name or other columns)
     
     Args:
         quotation: Quotation data
@@ -33,7 +33,7 @@ def generate_stock_check_excel(quotation: Dict[str, Any]) -> BytesIO:
     ws = wb.active
     ws.title = "Stock Check"
     
-    # Header row
+    # Header row - ONLY ordering number and quantity (no product name)
     headers = ['Ordering Number', 'Quantity']
     ws.append(headers)
     
@@ -43,12 +43,14 @@ def generate_stock_check_excel(quotation: Dict[str, Any]) -> BytesIO:
         cell.alignment = Alignment(horizontal='center')
     
     # Data rows - only lines with ordering_number
+    # Include ONLY ordering_number and quantity (no product_name, description, etc.)
     lines = quotation.get('lines', [])
     for line in lines:
         ordering_number = line.get('ordering_number', '').strip()
         if ordering_number:  # Only include lines with ordering number
             quantity = line.get('quantity', 1)
             quantity_float = float(quantity) if quantity is not None else 1.0
+            # Append ONLY ordering number and quantity - no other columns
             ws.append([
                 ordering_number,
                 quantity_float,

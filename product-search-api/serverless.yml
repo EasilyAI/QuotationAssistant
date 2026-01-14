@@ -55,8 +55,8 @@ provider:
     EMBEDDING_MODEL: amazon.titan-embed-text-v1
     VECTOR_SIZE: 1536
     
-    # Optional: OpenAI API Key (if using OpenAI embeddings)
-    # OPENAI_API_KEY: ${env:OPENAI_API_KEY, ''}
+    # Optional: OpenAI API Key for re-ranking
+    OPENAI_API_KEY: ${env:OPENAI_API_KEY}
     
     # DynamoDB Configuration
     PRODUCT_TABLE: ${self:custom.productsTable}
@@ -141,7 +141,8 @@ custom:
   pythonRequirements:
     # Build deps into a Lambda layer (Linux wheels) and keep function zips small
     layer: true
-    requirementsFile: layer/requirements.txt
+    # Use the dedicated requirements file inside the layer directory
+    fileName: layer/requirements.txt
     dockerizePip: false
     pipCmdExtraArgs:
       - "--platform"
@@ -240,6 +241,7 @@ package:
     - 'api/**'
     - 'schemas/**'
     - '../shared/**'
+    - '../utils/**'
 
 resources:
   Outputs:

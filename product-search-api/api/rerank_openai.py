@@ -9,28 +9,48 @@ import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-# Ensure repo root (for shared utils) is on sys.path
+# Ensure both service root and repo root (for shared utils) are on sys.path.
+# This is needed so that `utils.openaiClient` (located at the repo root) can be imported
+# both locally and inside the Lambda package.
 CURRENT_DIR = os.path.dirname(__file__)
-REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.append(REPO_ROOT)
+SERVICE_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))  # e.g., product-search-api root or Lambda task root (/var/task)
+REPO_ROOT = os.path.abspath(os.path.join(SERVICE_ROOT, ".."))
 
-try:
-    from utils.openaiClient import OpenAIClient
-except ImportError:  # pragma: no cover - defensive in case of path issues
-    OpenAIClient = None  # type: ignore
+# Add paths to sys.path - in Lambda, SERVICE_ROOT will be /var/task where utils/ lives
+for path in (SERVICE_ROOT, REPO_ROOT):
+    if path not in sys.path:
+        sys.path.insert(0, path)  # Insert at beginning for priority
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 
 
-def _get_openai_client() -> OpenAIClient:
+def _get_openai_client():
     """
     Lazily construct an OpenAI client.
     """
-    if OpenAIClient is None:
-        raise RuntimeError("OpenAIClient is not available. Check Python path and dependencies.")
-    return OpenAIClient()
+    # Lazy import to ensure path setup happens first
+    try:
+        from utils.openaiClient import OpenAIClient
+        return OpenAIClient()
+    except ImportError as e:
+        # Log detailed error information for debugging
+        logger.error(
+            f"Failed to import OpenAIClient. "
+            f"CURRENT_DIR={CURRENT_DIR}, SERVICE_ROOT={SERVICE_ROOT}, REPO_ROOT={REPO_ROOT}, "
+            f"sys.path={sys.path}, error={str(e)}"
+        )
+        # Check if utils directory exists
+        utils_path = os.path.join(SERVICE_ROOT, "utils")
+        utils_path_alt = os.path.join(REPO_ROOT, "utils")
+        logger.error(
+            f"Checking utils paths: {utils_path} exists={os.path.exists(utils_path)}, "
+            f"{utils_path_alt} exists={os.path.exists(utils_path_alt)}"
+        )
+        raise RuntimeError(
+            f"OpenAIClient is not available. Check Python path and dependencies. "
+            f"Import error: {str(e)}"
+        )
 
 
 def _is_ordering_number_query(query: str) -> bool:

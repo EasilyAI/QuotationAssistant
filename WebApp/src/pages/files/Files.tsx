@@ -198,6 +198,7 @@ const Files = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<string | null>(null);
+  const [selectedFileType, setSelectedFileType] = useState<BusinessFileType | null>(null);
   const [files, setFiles] = useState<DBFile[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [inProgressPage, setInProgressPage] = useState(1);
@@ -260,9 +261,10 @@ const Files = () => {
           ? new Date(upload.createdAt).getFullYear().toString()
           : null;
       const matchesYear = !selectedYear || createdAtYear === selectedYear;
-      return matchesSearch && matchesCategory && matchesYear;
+      const matchesFileType = !selectedFileType || upload.businessFileType === selectedFileType;
+      return matchesSearch && matchesCategory && matchesYear && matchesFileType;
     });
-  }, [searchQuery, selectedCategory, selectedYear]);
+  }, [searchQuery, selectedCategory, selectedYear, selectedFileType]);
 
   const filteredCompletedUploads = useMemo(
     () => filterUploads(completedUploads),
@@ -297,6 +299,16 @@ const Files = () => {
     return Array.from(years).sort((a, b) => Number(b) - Number(a));
   }, [filteredCompletedUploads]);
 
+  const availableFileTypes = useMemo(() => {
+    const types = new Set<BusinessFileType>();
+    filteredCompletedUploads.forEach((file) => {
+      if (file.businessFileType) {
+        types.add(file.businessFileType);
+      }
+    });
+    return Array.from(types);
+  }, [filteredCompletedUploads]);
+
   const paginatedInProgress = useMemo(
     () => paginate(inProgressUploads, inProgressPage, IN_PROGRESS_PAGE_SIZE),
     [inProgressUploads, inProgressPage]
@@ -323,7 +335,7 @@ const Files = () => {
 
   useEffect(() => {
     setCompletedPage(1);
-  }, [searchQuery, selectedCategory, selectedYear]);
+  }, [searchQuery, selectedCategory, selectedYear, selectedFileType]);
 
   useEffect(() => {
     setInProgressPage(1);
@@ -480,7 +492,6 @@ const Files = () => {
       <div className="section-header">
         <h2 className="section-title">Uploads in progress</h2>
       </div>
-
       <div className="files-table-container">
         <div className="files-table">
           <div className="files-table-inner">
@@ -607,11 +618,10 @@ const Files = () => {
         </div>
       )}
 
-      {/* All Catalogs Section */}
+      {/* All Files Section */}
       <div className="section-header">
         <h2 className="section-title">All Files</h2>
       </div>
-
       {/* Search Bar */}
       <div className="search-section">
         <div className="search-container">
@@ -636,18 +646,16 @@ const Files = () => {
 
       {/* Filters */}
       <div className="filter-section">
-        <button
-          className={`filter-tag ${selectedCategory ? 'active' : ''}`}
-          type="button"
-          onClick={() => setSelectedCategory(null)}
-        >
-          <span>{selectedCategory || 'All Categories'}</span>
-          <svg className="filter-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M5 7.5L10 12.5L15 7.5" stroke="#121417" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        {availableCategories.length > 0 && (
-          <div className="filter-options">
+        <div className="filter-group">
+          <span className="filter-label">Category:</span>
+          <div className="filter-chips-container">
+            <button
+              type="button"
+              className={`filter-chip ${!selectedCategory ? 'selected' : ''}`}
+              onClick={() => setSelectedCategory(null)}
+            >
+              All
+            </button>
             {availableCategories.map((category) => (
               <button
                 key={category}
@@ -659,19 +667,17 @@ const Files = () => {
               </button>
             ))}
           </div>
-        )}
-        <button
-          className={`filter-tag ${selectedYear ? 'active' : ''}`}
-          type="button"
-          onClick={() => setSelectedYear(null)}
-        >
-          <span>{selectedYear || 'All Years'}</span>
-          <svg className="filter-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M5 7.5L10 12.5L15 7.5" stroke="#121417" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        {availableYears.length > 0 && (
-          <div className="filter-options">
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Year:</span>
+          <div className="filter-chips-container">
+            <button
+              type="button"
+              className={`filter-chip ${!selectedYear ? 'selected' : ''}`}
+              onClick={() => setSelectedYear(null)}
+            >
+              All
+            </button>
             {availableYears.map((year) => (
               <button
                 key={year}
@@ -683,7 +689,29 @@ const Files = () => {
               </button>
             ))}
           </div>
-        )}
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">File Type:</span>
+          <div className="filter-chips-container">
+            <button
+              type="button"
+              className={`filter-chip ${!selectedFileType ? 'selected' : ''}`}
+              onClick={() => setSelectedFileType(null)}
+            >
+              All
+            </button>
+            {availableFileTypes.map((fileType) => (
+              <button
+                key={fileType}
+                type="button"
+                className={`filter-chip ${selectedFileType === fileType ? 'selected' : ''}`}
+                onClick={() => setSelectedFileType(fileType === selectedFileType ? null : fileType)}
+              >
+                {fileType}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* All Catalogs Table */}

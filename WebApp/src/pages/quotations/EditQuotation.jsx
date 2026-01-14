@@ -730,8 +730,8 @@ const EditQuotation = () => {
         }
       }
 
-      // If no catalog or type is sales-drawing, try sales drawing
-      if (!fileKey && (type === 'sales-drawing' || type === 'auto')) {
+      // If no catalog or type is sales-drawing/sketch, try sales drawing
+      if (!fileKey && (type === 'sales-drawing' || type === 'sketch' || type === 'auto')) {
         if (salesDrawings.length > 0) {
           const primarySalesDrawing = salesDrawings[0];
           fileKey = primarySalesDrawing.fileKey;

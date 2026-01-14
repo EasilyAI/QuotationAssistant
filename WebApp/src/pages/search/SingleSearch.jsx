@@ -604,14 +604,10 @@ const SingleSearch = () => {
                 )}
               </div>
 
-              <button
-                type="button"
-                className={`filter-pill filter-pill-toggle ${useAI ? 'active' : ''}`}
-                onClick={() => setUseAI((prev) => !prev)}
-              >
-                <span className="filter-pill-icon">{useAI ? '✨' : '⚡'}</span>
-                <span className="filter-pill-value">{useAI ? 'AI Enhanced' : 'Standard'}</span>
-              </button>
+              <div className="ai-mode-badge">
+                <span className="filter-pill-icon">✨</span>
+                <span className="filter-pill-value">AI enhanced search</span>
+              </div>
             </div>
           </div>
         </div>

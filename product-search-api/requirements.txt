@@ -5,3 +5,4 @@ boto3>=1.34.0
 
 # Qdrant Client (lightweight, pure Python)
 qdrant-client>=1.7.0
+openai>=1.0.0

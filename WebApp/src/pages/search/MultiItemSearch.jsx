@@ -629,6 +629,16 @@ const MultiItemSearch = () => {
                 The system will search manufacturer catalogs and suggest matches for each item.
               </p>
               
+              <div className="empty-state-actions" style={{ marginBottom: '20px' }}>
+                <a
+                  href="/templates/batch-search-template.xlsx"
+                  download
+                  className="download-template-button"
+                >
+                  Download file template
+                </a>
+              </div>
+
               <div className="empty-state-instructions">
                 <h3 className="empty-state-instructions-title">Required Excel Columns:</h3>
                 <ul className="empty-state-instructions-list">
@@ -653,16 +663,6 @@ const MultiItemSearch = () => {
                 </ul>
               </div>
 
-              <div className="empty-state-actions">
-                <a
-                  href="/templates/batch-search-template.xlsx"
-                  download
-                  className="download-template-button"
-                >
-                  Download file template
-                </a>
-              </div>
-
               <div className="empty-state-note">
                 <p>
                   <strong>Note:</strong> Each row must have either an ordering number or description. 
@@ -672,19 +672,16 @@ const MultiItemSearch = () => {
             </div>
           </div>
         )}
-
         {/* Loading State */}
         {isLoading && (
-          <div className="loading-state-container">
-            <div className="loading-spinner">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="12" cy="12" r="10" stroke="#2188C9" strokeWidth="2" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="32">
-                  <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
-                  <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
-                </circle>
-              </svg>
+          <div className="batch-loading-container">
+            <div className="batch-loading-spinner">
+              <span className="spinner-ring" />
+              <span className="spinner-ring" />
+              <span className="spinner-ring" />
             </div>
-            <p className="loading-text">Processing Excel file and searching products...</p>
+            <p className="batch-loading-title">Processing your batch search…</p>
+            <p className="batch-loading-text">We’re fetching matches and validating the file.</p>
           </div>
         )}
 
@@ -856,6 +853,21 @@ const MultiItemSearch = () => {
                                     {item.manualOrderingNo}
                                   </button>
                                   <span className="manual-badge">Manual</span>
+                                  <button
+                                    className="clear-manual-btn"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setItems(items.map(itm => 
+                                        itm.id === item.id 
+                                          ? { ...itm, manualOrderingNo: null, status: item.matches.length > 0 ? 'Match Pending' : 'No Matches' }
+                                          : itm
+                                      ));
+                                    }}
+                                    title="Clear manual entry"
+                                  >
+                                    ✕
+                                  </button>
                                 </div>
                               ) : item.matches.length > 0 ? (
                                 <div className="ordering-number-pending-wrapper">
@@ -931,7 +943,7 @@ const MultiItemSearch = () => {
                                     />
                                     {autocompleteData[`${item.id}-manual`]?.show && autocompleteData[`${item.id}-manual`]?.suggestions?.length > 0 && (
                                       <div 
-                                        className="autocomplete-dropdown"
+                                        className="autocomplete-dropdown autocomplete-dropdown-visible"
                                         onClick={(e) => e.stopPropagation()}
                                       >
                                         {autocompleteData[`${item.id}-manual`].suggestions.map((suggestion, idx) => {
@@ -1038,7 +1050,7 @@ const MultiItemSearch = () => {
                                   />
                                   {autocompleteData[item.id]?.show && autocompleteData[item.id]?.suggestions?.length > 0 && (
                                     <div 
-                                      className="autocomplete-dropdown"
+                                      className="autocomplete-dropdown autocomplete-dropdown-visible"
                                       onClick={(e) => e.stopPropagation()}
                                     >
                                       {autocompleteData[item.id].suggestions.map((suggestion, idx) => {
