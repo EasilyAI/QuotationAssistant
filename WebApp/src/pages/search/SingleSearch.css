@@ -455,8 +455,8 @@
   font-family: var(--font-family);
   font-style: normal;
   font-weight: 400;
-  font-size: 13px;
-  line-height: 19px;
+  font-size: 14px;
+  line-height: 21px;
   color: #0D171C;
   vertical-align: top;
 }
@@ -512,7 +512,7 @@
 }
 
 .spec-item {
-  font-size: 13px;
+  font-size: 14px;
   color: #0D171C;
   padding: 2px 0;
   line-height: 1.5;
@@ -534,7 +534,7 @@
   background: #E8F4F8;
   color: var(--color-primary);
   border-radius: 12px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;

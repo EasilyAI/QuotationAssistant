@@ -39,6 +39,17 @@ const FileUpload = () => {
   const fileTypeParam = searchParams.get('type');
   const fileType = useMemo(() => getFileTypeFromParam(fileTypeParam), [fileTypeParam]);
 
+  // Helper to build a year list from current year down to 2000
+  const getYearOptions = (): string[] => {
+    const current = new Date().getFullYear();
+    const start = 2000;
+    const years: string[] = [];
+    for (let y = current; y >= start; y -= 1) {
+      years.push(y.toString());
+    }
+    return years;
+  };
+
   // Initialize form data based on file type
   const getInitialFormData = (): CatalogFormData | SalesDrawingFormData | PriceListFormData => {
     const year = new Date().getFullYear().toString();
@@ -122,6 +133,11 @@ const FileUpload = () => {
     // Map catalogName and drawingName to fileName
     if (name === 'catalogName' || name === 'drawingName') {
       fieldName = 'fileName';
+    }
+
+    // Map catalogDescription textarea to the shared description field
+    if (name === 'catalogDescription') {
+      fieldName = 'description';
     }
     
     // Normalize filename to lowercase
@@ -684,7 +700,7 @@ const FileUpload = () => {
                 value={(formData as CatalogFormData).year}
                 onChange={handleInputChange}
               >
-                {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                {getYearOptions().map((year) => (
                   <option key={year} value={year}>{year}</option>
                 ))}
               </select>
@@ -751,7 +767,7 @@ const FileUpload = () => {
                 value={(formData as SalesDrawingFormData).year}
                 onChange={handleInputChange}
               >
-                {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                {getYearOptions().map((year) => (
                   <option key={year} value={year}>{year}</option>
                 ))}
               </select>
@@ -794,7 +810,7 @@ const FileUpload = () => {
                 value={(formData as PriceListFormData).year}
                 onChange={handleInputChange}
               >
-                {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                {getYearOptions().map((year) => (
                   <option key={year} value={year}>{year}</option>
                 ))}
               </select>

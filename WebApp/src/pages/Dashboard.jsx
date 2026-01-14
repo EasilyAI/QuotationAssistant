@@ -8,8 +8,6 @@ import './Dashboard.css';
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('open-drafts');
-  const [draftQuotations, setDraftQuotations] = useState([]);
   const [recentQuotations, setRecentQuotations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -34,30 +32,35 @@ const Dashboard = () => {
     fetchUserInfo();
   }, []);
 
-  // Fetch quotations on mount
+  // Fetch quotations on mount - get last 4 sorted by updated_at
   useEffect(() => {
     const fetchQuotations = async () => {
       setLoading(true);
       setError(null);
       
       try {
-        // Fetch drafts (draft status)
-        const draftsResult = await getQuotations({
-          status: 'Draft',
-          limit: 10
-        });
-        setDraftQuotations(draftsResult.quotations || []);
-        
-        // Fetch recent quotations
-        const recentResult = await getQuotations({
+        // Fetch all quotations (or recent ones)
+        const result = await getQuotations({
           recent: true,
-          limit: 3
+          limit: 100 // Get more to sort and take top 4
         });
-        setRecentQuotations(recentResult.quotations || []);
+        
+        const allQuotations = result.quotations || [];
+        
+        // Sort by updated_at (most recent first) and take last 4
+        const sortedQuotations = allQuotations
+          .sort((a, b) => {
+            const dateA = a.updatedAt || a.updated_at || a.createdDate || a.created_at || '';
+            const dateB = b.updatedAt || b.updated_at || b.createdDate || b.created_at || '';
+            // Sort descending (newest first)
+            return new Date(dateB) - new Date(dateA);
+          })
+          .slice(0, 4); // Take last 4 (most recently updated)
+        
+        setRecentQuotations(sortedQuotations);
       } catch (err) {
         console.error('Error fetching quotations:', err);
         setError(err.message || 'Failed to load quotations');
-        setDraftQuotations([]);
         setRecentQuotations([]);
       } finally {
         setLoading(false);
@@ -101,8 +104,6 @@ const Dashboard = () => {
 
     fetchFiles();
   }, []);
-  
-  const displayedQuotations = activeTab === 'open-drafts' ? draftQuotations : recentQuotations;
 
   // Filter in-progress uploads (not completed and not failed)
   const inProgressUploads = useMemo(() => {
@@ -132,7 +133,6 @@ const Dashboard = () => {
       try {
         await deleteQuotation(id);
         // Remove from local state
-        setDraftQuotations(prev => prev.filter(q => q.id !== id));
         setRecentQuotations(prev => prev.filter(q => q.id !== id));
       } catch (err) {
         console.error('Error deleting quotation:', err);
@@ -263,27 +263,6 @@ const Dashboard = () => {
         {/* Quotations Section */}
         <div className="dashboard-section quotations-header">
           <h2 className="section-title">Continue Your Work</h2>
-          <p className="section-subtitle">Pick up where you left off with your quotations</p>
-        </div>
-
-        {/* Tabs */}
-        <div className="dashboard-section tabs-section">
-          <div className="tabs-container">
-            <button
-              className={`tab ${activeTab === 'open-drafts' ? 'active' : ''}`}
-              onClick={() => setActiveTab('open-drafts')}
-            >
-              <span className="tab-icon">✏️</span>
-              Open Drafts ({draftQuotations.length})
-            </button>
-            <button
-              className={`tab ${activeTab === 'recent' ? 'active' : ''}`}
-              onClick={() => setActiveTab('recent')}
-            >
-              <span className="tab-icon">📋</span>
-              Recent
-            </button>
-          </div>
         </div>
 
         {/* Quotations Table */}
@@ -311,14 +290,14 @@ const Dashboard = () => {
                       Error: {error}
                     </td>
                   </tr>
-                ) : displayedQuotations.length === 0 ? (
+                ) : recentQuotations.length === 0 ? (
                   <tr>
                     <td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>
                       No quotations found
                     </td>
                   </tr>
                 ) : (
-                  displayedQuotations.map((quotation) => (
+                  recentQuotations.map((quotation) => (
                   <tr key={quotation.id}>
                     <td className="col-quotation-name">
                       <div className="quotation-name-cell">

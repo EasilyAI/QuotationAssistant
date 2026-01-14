@@ -252,10 +252,13 @@ const MultiItemSearch = () => {
   const handleChooseMatch = (itemId, matchId) => {
     setItems(items.map(item => {
       if (item.id === itemId) {
+        const isCurrentlySelected = item.selectedMatch === matchId;
         return {
           ...item,
-          selectedMatch: matchId,
-          status: 'Match Found',
+          selectedMatch: isCurrentlySelected ? null : matchId,
+          status: isCurrentlySelected
+            ? (item.matches.length > 0 ? 'Match Pending' : 'No Matches')
+            : 'Match Found',
           isExpanded: false
         };
       }
@@ -648,6 +651,16 @@ const MultiItemSearch = () => {
                     <span className="instruction-note">Recommended: {Object.values(ProductCategory).join(', ')}. Missing product type may affect search accuracy.</span>
                   </li>
                 </ul>
+              </div>
+
+              <div className="empty-state-actions">
+                <a
+                  href="/templates/batch-search-template.xlsx"
+                  download
+                  className="download-template-button"
+                >
+                  Download file template
+                </a>
               </div>
 
               <div className="empty-state-note">

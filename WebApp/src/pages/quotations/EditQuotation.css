@@ -357,6 +357,10 @@
   flex-shrink: 0;
 }
 
+.export-menu-container {
+  position: relative;
+}
+
 .status-dropdown-compact {
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
@@ -404,6 +408,36 @@
 .btn-save-compact:hover {
   background: #1a6ea0;
   border-color: #155d87;
+}
+
+.btn-export-compact {
+  background: #ffffff;
+  color: #2188C9;
+  border: 1px solid #2188C9;
+  padding: 0.5rem 0.875rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 36px;
+  box-sizing: border-box;
+}
+
+.btn-export-compact:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.btn-export-compact:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.export-menu-dropdown {
+  min-width: 260px;
 }
 
 /* Controls Bar - REMOVED (functionality moved to actions menu and inline editing) */

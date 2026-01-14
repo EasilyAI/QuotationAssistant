@@ -212,15 +212,12 @@ const InlineEditablePrice = ({ value, onChange, currency = 'USD', placeholder = 
   );
 };
 
-// Actions Menu Component
+// Actions Menu Component (non-export utilities)
 const ActionsMenu = ({ 
   onEditMetadata, 
   onPullPrices, 
   onApplyMargin, 
   onReturnToBatchSearch,
-  onExportManufacturer,
-  onExportERP,
-  onExportCustomerEmail,
   globalMargin,
   setGlobalMargin,
   quotationId,
@@ -328,42 +325,6 @@ const ActionsMenu = ({
               </button>
             </>
           )}
-
-          <div className="menu-divider"></div>
-          <div className="menu-label">Export</div>
-          
-          <button 
-            onClick={() => handleAction(onExportManufacturer)} 
-            className="menu-item"
-            disabled={!quotationId}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            Manufacturer Order List
-          </button>
-          
-          <button 
-            onClick={() => handleAction(onExportERP)} 
-            className="menu-item"
-            disabled={!quotationId}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            ERP Input File
-          </button>
-          
-          <button 
-            onClick={() => handleAction(onExportCustomerEmail)} 
-            className="menu-item"
-            disabled={!quotationId}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            Customer Email Template
-          </button>
         </div>
       )}
     </div>
@@ -830,6 +791,8 @@ const EditQuotation = () => {
   const [useRegularSearch, setUseRegularSearch] = useState(false);
   const [semanticSearchExecuted, setSemanticSearchExecuted] = useState(false);
   const [addingProductOrderingNumber, setAddingProductOrderingNumber] = useState(null);
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef(null);
   
   // Manual item dialog state
   const [showManualItemDialog, setShowManualItemDialog] = useState(false);
@@ -1164,16 +1127,50 @@ const EditQuotation = () => {
     }
   };
 
-  const handleFinalizeQuotation = () => {
-    const incompleteItems = quotation.items.filter(item => item.isIncomplete || !item.orderingNumber);
-    if (incompleteItems.length > 0) {
-      alert(`Please complete ${incompleteItems.length} incomplete item(s) before finalizing.`);
-      return;
+  const handleFinalizeQuotation = async () => {
+    if (!quotation) return;
+
+    const updatedQuotation = {
+      ...quotation,
+      status: QuotationStatus.APPROVED
+    };
+
+    setIsSaving(true);
+    try {
+      let saved;
+
+      if (!updatedQuotation.id) {
+        // Create new quotation and then save full state as Approved
+        const created = await createQuotation({
+          quotationName: updatedQuotation.quotationName || updatedQuotation.name,
+          customer: updatedQuotation.customer,
+          currency: updatedQuotation.currency,
+          defaultMargin: updatedQuotation.defaultMargin,
+          notes: updatedQuotation.notes,
+          status: updatedQuotation.status
+        });
+
+        if (updatedQuotation.items && updatedQuotation.items.length > 0) {
+          await saveQuotationFullState(created.id, {
+            ...updatedQuotation,
+            id: created.id
+          });
+        }
+
+        saved = { ...updatedQuotation, id: created.id };
+      } else {
+        saved = await saveQuotationFullState(updatedQuotation.id, updatedQuotation);
+      }
+
+      setQuotation(saved);
+      setHasUnsavedChanges(false);
+      navigate('/quotations');
+    } catch (err) {
+      console.error('Error finalizing quotation:', err);
+      alert(err.message || 'Failed to finalize quotation');
+    } finally {
+      setIsSaving(false);
     }
-    
-    setQuotation(prev => ({ ...prev, status: 'sent for confirmation' }));
-    alert('Quotation finalized and sent for confirmation!');
-    navigate('/quotations');
   };
 
   // Update status in LOCAL state only - will be saved when user clicks Save
@@ -1359,7 +1356,7 @@ const EditQuotation = () => {
           {hasUnsavedChanges && <span className="unsaved-dot" title="Unsaved changes">•</span>}
           <button 
             onClick={handleSave} 
-            className="btn-save-compact" 
+            className="btn-primary" 
             title="Save quotation"
             disabled={isSaving}
           >
@@ -1370,14 +1367,66 @@ const EditQuotation = () => {
             </svg>
             {isSaving ? 'Saving...' : 'Save'}
           </button>
+          <div className="export-menu-container" ref={exportMenuRef}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setIsExportMenuOpen((open) => !open)}
+              disabled={!quotation?.id}
+              title="Export quotation"
+            >
+              Export
+            </button>
+            {isExportMenuOpen && (
+              <div className="actions-menu-dropdown export-menu-dropdown">
+                <div className="menu-label">Export</div>
+                <button
+                  onClick={() => {
+                    setIsExportMenuOpen(false);
+                    handleExportManufacturer();
+                  }}
+                  className="menu-item"
+                  disabled={!quotation?.id}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Manufacturer Order List
+                </button>
+                <button
+                  onClick={() => {
+                    setIsExportMenuOpen(false);
+                    handleExportERP();
+                  }}
+                  className="menu-item"
+                  disabled={!quotation?.id}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  ERP Input File
+                </button>
+                <button
+                  onClick={() => {
+                    setIsExportMenuOpen(false);
+                    handleExportCustomerEmail();
+                  }}
+                  className="menu-item"
+                  disabled={!quotation?.id}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Customer Email Template
+                </button>
+              </div>
+            )}
+          </div>
           <ActionsMenu 
             onEditMetadata={handleEditMetadata}
             onPullPrices={handlePullPrices}
             onApplyMargin={handleApplyGlobalMargin}
             onReturnToBatchSearch={batchSearchAvailable && incompleteCount > 0 ? handleReturnToBatchSearch : null}
-            onExportManufacturer={handleExportManufacturer}
-            onExportERP={handleExportERP}
-            onExportCustomerEmail={handleExportCustomerEmail}
             globalMargin={globalMargin}
             setGlobalMargin={setGlobalMargin}
             quotationId={quotation?.id}

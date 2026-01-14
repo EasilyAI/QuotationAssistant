@@ -179,6 +179,8 @@ def rerank_results(
         is_ordering_number = _is_ordering_number_query(query)
         query_specs = _extract_specs_from_query(query) if not is_ordering_number else {}
 
+        logger.info(f"Starting rerank for query: {query}, is_ordering_number: {is_ordering_number}, query_specs: {query_specs}, num_results: {len(results)}, top_k: {top_k}")
+
         # Serialize results with extracted specifications
         serialized_results = []
         for idx, item in enumerate(results):
@@ -196,6 +198,11 @@ def rerank_results(
                     "specifications": product_specs if product_specs else None,  # Include specs if available
                 }
             )
+
+        # Log a small sample of serialized results for debugging (avoid huge payloads)
+        if serialized_results:
+            sample_for_log = serialized_results[:5]
+            logger.info(f"Serialized results sample for rerank: {sample_for_log}")
 
         # Build system prompt based on query type
         if is_ordering_number:
@@ -230,23 +237,30 @@ def rerank_results(
                 "Given a user query that appears to be a PRODUCT DESCRIPTION (natural language) and a list of candidate results, your job is to:\n"
                 "1. Carefully read the query and each candidate's fields (orderingNumber, category, searchText, specifications, score, relevance).\n"
                 "2. Extract any technical specifications from the query (e.g., size, pressure, material, temperature, thread type).\n"
+                "   Treat NUMERIC SPECIFICATIONS (especially sizes and pressures) as VERY IMPORTANT SIGNALS, but do not fully disqualify other items.\n"
                 "3. Judge how relevant each candidate is to the query, prioritizing:\n"
-                "   - TECHNICAL SPECIFICATIONS MATCH: Compare specifications from the query with product specifications.\n"
-                "     Products with specifications that DO NOT match the query requirements should be heavily penalized.\n"
-                "     Products with matching or compatible specifications should be prioritized.\n"
+                "   - TECHNICAL SPECIFICATIONS MATCH (HIGHEST PRIORITY SIGNAL):\n"
+                "     * Compare specifications from the query with product specifications.\n"
+                "     * Products whose size/pressure/material clearly MATCH the query should be ranked at the top with high relevancy scores.\n"
+                "     * Products whose size/pressure/material clearly DO NOT match the query requirements should receive much lower relevancy scores and appear below matching items, but may still appear in the list if there are few or no exact matches.\n"
+                "     * When the query includes an explicit size (e.g. '1/4 inch', '3/8\"', '1 inch'), items with that SAME size should be ranked above items with different sizes.\n"
+                "     * Do NOT rank items with different sizes (e.g. '1/4', '3/8', '1/2', '1\"') above exact size matches, unless the query clearly allows a range or alternatives.\n"
                 "   - Semantic match between the query description and searchText.\n"
                 "   - Category alignment when relevant.\n"
                 "   - The original similarity score and relevance label as a soft signal only.\n"
-                "4. CRITICAL: Reject products with specifications that are clearly incompatible with the query.\n"
-                "   For example, if the query asks for '1/2 inch' but a product has '3/4 inch', it should be ranked lower.\n"
-                "   If the query asks for '1000psi' but a product has '500psi', it should be ranked lower unless it's clearly compatible.\n"
-                "5. Select the single best set of top results strictly from the provided list.\n\n"
+                "4. CRITICAL: Strongly down-rank products with specifications that are clearly incompatible with the query (give them noticeably lower relevancy scores), rather than completely rejecting them.\n"
+                "   For example:\n"
+                "   - If the query asks for '1/2 inch' but a product has '3/4 inch' or '1/4 inch', those products should be ranked significantly lower than any '1/2 inch' products, with clearly lower relevancy scores.\n"
+                "   - If the query asks for '1/4 inch' NPT, then '1/4' NPT products should be ranked above '3/8', '1/2', or '1 inch' products, and given higher relevancy scores.\n"
+                "   - If the query asks for '1000psi' but a product has '500psi', it should be ranked lower unless the query explicitly allows lower pressure ratings.\n"
+                "5. When some products are missing a specification that is clearly required by the query (for example, no size is specified on the product but the query includes a size), rank them BELOW products with explicit, matching specifications, but they may still appear with moderate or low relevancy scores.\n"
+                "6. Select the single best set of top results strictly from the provided list.\n\n"
                 "Important rules:\n"
                 "- NEVER invent or fabricate new items.\n"
                 "- ONLY reference candidates by their provided `index`.\n"
-                "- SPECIFICATIONS ARE CRITICAL: Products with incompatible specifications should be ranked much lower.\n"
+                "- SPECIFICATIONS ARE CRITICAL: Products with incompatible specifications must be ranked much lower and should not appear above exact or clearly compatible matches, but they can still appear as lower-ranked options.\n"
                 "- If several items are similarly relevant, prefer those with clearer, more specific searchText and matching specifications.\n"
-                "- Do not perform any fuzzy creative interpretation; be precise and conservative.\n\n"
+                "- Do not perform any fuzzy creative interpretation; be precise and conservative when comparing numeric values like sizes and pressures.\n\n"
                 "Output format:\n"
                 "- You MUST respond with valid JSON only, no extra text.\n"
                 "- The JSON must have the shape:\n"
@@ -254,7 +268,7 @@ def rerank_results(
                 "- `top_indices` must be a list of unique integers that exist in the input indices.\n"
                 "- `relevancy_scores` must be a dictionary mapping index (as string) to a relevancy score (0.0-1.0).\n"
                 "- Return them in the desired order from most relevant to least relevant.\n"
-                "- Relevancy scores should reflect how well each result matches the query, with special attention to specification compatibility.\n"
+                "- Relevancy scores should reflect how well each result matches the query, with special attention to specification compatibility, especially exact numeric matches for size and pressure.\n"
             )
 
         # Build user prompt with query specifications if available
@@ -282,6 +296,10 @@ def rerank_results(
             temperature=0,
         )
 
+        logger.info(
+            f"LLM rerank raw response: {response_json}"
+        )
+
         raw_indices = response_json.get("top_indices") or []
         relevancy_scores = response_json.get("relevancy_scores") or {}
         
@@ -306,6 +324,21 @@ def rerank_results(
         if not valid_indices:
             logger.warning("LLM returned no valid indices; falling back to original ranking")
             return results[:top_k]
+
+        # If LLM returned fewer than top_k, fill remaining slots with highest-scoring original results
+        if len(valid_indices) < top_k:
+            # Get all indices not already selected, sorted by original score (descending)
+            remaining_indices = [
+                (i, results[i].get('score', 0.0))
+                for i in range(len(results))
+                if i not in seen
+            ]
+            # Sort by score descending, then take top ones to fill up to top_k
+            remaining_indices.sort(key=lambda x: x[1], reverse=True)
+            needed = top_k - len(valid_indices)
+            for i, _ in remaining_indices[:needed]:
+                valid_indices.append(i)
+            logger.info(f"Filled {needed} additional slots from original ranking to reach top_k={top_k}")
 
         # Re-rank results and override confidence scores based on relevancy
         re_ranked = []

@@ -21,7 +21,7 @@ def generate_stock_check_excel(quotation: Dict[str, Any]) -> BytesIO:
     """
     Generate stock check Excel file.
     
-    Format: ordering_number, quantity, product_name
+    Format: ordering_number, quantity
     
     Args:
         quotation: Quotation data
@@ -34,7 +34,7 @@ def generate_stock_check_excel(quotation: Dict[str, Any]) -> BytesIO:
     ws.title = "Stock Check"
     
     # Header row
-    headers = ['Ordering Number', 'Quantity', 'Product Name']
+    headers = ['Ordering Number', 'Quantity']
     ws.append(headers)
     
     # Style header
@@ -47,10 +47,11 @@ def generate_stock_check_excel(quotation: Dict[str, Any]) -> BytesIO:
     for line in lines:
         ordering_number = line.get('ordering_number', '').strip()
         if ordering_number:  # Only include lines with ordering number
+            quantity = line.get('quantity', 1)
+            quantity_float = float(quantity) if quantity is not None else 1.0
             ws.append([
                 ordering_number,
-                line.get('quantity', 1),
-                line.get('product_name', '')
+                quantity_float,
             ])
     
     # Auto-adjust column widths

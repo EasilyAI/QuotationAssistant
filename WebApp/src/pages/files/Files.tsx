@@ -269,6 +269,34 @@ const Files = () => {
     [completedUploads, filterUploads]
   );
 
+  // Derive filter option lists from completed uploads so filters are data‑driven
+  const availableCategories = useMemo(() => {
+    const labels = new Set<string>();
+    filteredCompletedUploads.forEach((file) => {
+      const label = getProductCategoryLabel(file);
+      if (label && label !== '—') {
+        labels.add(label);
+      }
+    });
+    return Array.from(labels).sort();
+  }, [filteredCompletedUploads]);
+
+  const availableYears = useMemo(() => {
+    const years = new Set<string>();
+    filteredCompletedUploads.forEach((file) => {
+      const year =
+        file.createdAtIso
+          ? new Date(file.createdAtIso).getFullYear()
+          : file.createdAt
+          ? new Date(file.createdAt).getFullYear()
+          : undefined;
+      if (year) {
+        years.add(year.toString());
+      }
+    });
+    return Array.from(years).sort((a, b) => Number(b) - Number(a));
+  }, [filteredCompletedUploads]);
+
   const paginatedInProgress = useMemo(
     () => paginate(inProgressUploads, inProgressPage, IN_PROGRESS_PAGE_SIZE),
     [inProgressUploads, inProgressPage]
@@ -581,7 +609,7 @@ const Files = () => {
 
       {/* All Catalogs Section */}
       <div className="section-header">
-        <h2 className="section-title">All Catalogs</h2>
+        <h2 className="section-title">All Files</h2>
       </div>
 
       {/* Search Bar */}
@@ -608,24 +636,54 @@ const Files = () => {
 
       {/* Filters */}
       <div className="filter-section">
-        <button className="filter-tag" onClick={() => setSelectedCategory(selectedCategory ? null : 'valve')}>
-          <span>Product Category</span>
+        <button
+          className={`filter-tag ${selectedCategory ? 'active' : ''}`}
+          type="button"
+          onClick={() => setSelectedCategory(null)}
+        >
+          <span>{selectedCategory || 'All Categories'}</span>
           <svg className="filter-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M5 7.5L10 12.5L15 7.5" stroke="#121417" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
-        <button className="filter-tag" onClick={() => setSelectedYear(selectedYear ? null : '2024')}>
-          <span>Year</span>
+        {availableCategories.length > 0 && (
+          <div className="filter-options">
+            {availableCategories.map((category) => (
+              <button
+                key={category}
+                type="button"
+                className={`filter-chip ${selectedCategory === category ? 'selected' : ''}`}
+                onClick={() => setSelectedCategory(category === selectedCategory ? null : category)}
+              >
+                {category}
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          className={`filter-tag ${selectedYear ? 'active' : ''}`}
+          type="button"
+          onClick={() => setSelectedYear(null)}
+        >
+          <span>{selectedYear || 'All Years'}</span>
           <svg className="filter-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M5 7.5L10 12.5L15 7.5" stroke="#121417" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
-        <button className="filter-tag">
-          <span>Sort by</span>
-          <svg className="filter-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M5 7.5L10 12.5L15 7.5" stroke="#121417" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
+        {availableYears.length > 0 && (
+          <div className="filter-options">
+            {availableYears.map((year) => (
+              <button
+                key={year}
+                type="button"
+                className={`filter-chip ${selectedYear === year ? 'selected' : ''}`}
+                onClick={() => setSelectedYear(year === selectedYear ? null : year)}
+              >
+                {year}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* All Catalogs Table */}
@@ -676,8 +734,12 @@ const Files = () => {
                     </div>
                     <div className="files-table-cell actions">
                       <div className="action-links-inline">
-                        <button className="action-link" onClick={() => handleView(upload)}>View</button>
-                        <span className="action-separator">|</span>
+                        {upload.businessFileType !== BusinessFileType.PriceList && (
+                          <>
+                            <button className="action-link" onClick={() => handleView(upload)}>View</button>
+                            <span className="action-separator">|</span>
+                          </>
+                        )}
                         <button className="action-link" onClick={() => handleDownload(upload.fileId)}>Download</button>
                       </div>
                     </div>

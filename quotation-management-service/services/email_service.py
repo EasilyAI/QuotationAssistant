@@ -191,9 +191,13 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         ""
     ]
     
-    # Separate items into those with attachments and those without
-    items_with_attachments = []
-    items_without_attachments = []
+    # Separate items into:
+    # 1) items with drawings and ordering numbers
+    # 2) items with ordering numbers but no drawings
+    # 3) missing products with no ordering number
+    items_with_attachments: List[Dict[str, str]] = []
+    items_without_attachments: List[Dict[str, str]] = []
+    missing_products: List[Dict[str, str]] = []
     
     for idx, line in enumerate(lines, start=1):
         ordering_number = line.get('ordering_number', '').strip()
@@ -204,30 +208,50 @@ def generate_email_draft(quotation_id: str, customer_email: Optional[str] = None
         # Format quantity as integer if whole number, otherwise as decimal
         quantity_str = f"{int(quantity_float)}" if quantity_float == int(quantity_float) else f"{quantity_float}"
         
-        # Check if this line has sales drawings attached
         has_attachment = line_has_drawing_map.get(idx, False)
-        
-        # Format: ordering_number (Quantity)
-        if ordering_number:
-            item_text = f"{idx}. {ordering_number} (Quantity: {quantity_str})"
+        has_ordering = bool(ordering_number)
+
+        if has_ordering and has_attachment:
+            items_with_attachments.append({
+                'ordering_number': ordering_number,
+                'quantity': quantity_str,
+            })
+        elif has_ordering and not has_attachment:
+            items_without_attachments.append({
+                'ordering_number': ordering_number,
+                'quantity': quantity_str,
+            })
         else:
-            item_text = f"{idx}. (Quantity: {quantity_str})"
-        
-        if has_attachment:
-            items_with_attachments.append(item_text)
-        else:
-            items_without_attachments.append(item_text)
+            # Missing product (no ordering number) – use product name or original request as label
+            label = (
+                line.get('original_request')
+                or line.get('product_name')
+                or 'Missing product'
+            )
+            missing_products.append({
+                'label': label,
+                'quantity': quantity_str,
+            })
     
-    # Add items with attachments
+    # Add items with attachments - numbering starts from 1 in this section
     if items_with_attachments:
         body_lines.append("Items with attachments:")
-        body_lines.extend(items_with_attachments)
+        for i, item in enumerate(items_with_attachments, start=1):
+            body_lines.append(f"{i}. {item['ordering_number']} (Quantity: {item['quantity']})")
         body_lines.append("")
     
-    # Add items without attachments
+    # Add items without attachments - numbering restarts from 1
     if items_without_attachments:
         body_lines.append("Items missing attachments:")
-        body_lines.extend(items_without_attachments)
+        for i, item in enumerate(items_without_attachments, start=1):
+            body_lines.append(f"{i}. {item['ordering_number']} (Quantity: {item['quantity']})")
+        body_lines.append("")
+
+    # Add missing products (no ordering number) in their own list with fresh numbering
+    if missing_products:
+        body_lines.append("Missing products (no ordering number):")
+        for i, item in enumerate(missing_products, start=1):
+            body_lines.append(f"{i}. {item['label']} (Quantity: {item['quantity']})")
         body_lines.append("")
     
     body_lines.extend([
