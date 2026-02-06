@@ -24,6 +24,12 @@ const poolData = {
 
 const userPool = COGNITO_USER_POOL_ID ? new CognitoUserPool(poolData) : null;
 
+// Store CognitoUser outside React lifecycle to preserve internal authentication state
+// This is necessary because CognitoUser objects contain non-serializable internal state
+let pendingPasswordChangeUser = null;
+let pendingPasswordChangeAttributes = null;
+let pendingPasswordChangeRequiredAttributes = null;
+
 /**
  * Get current authenticated user
  * @returns {CognitoUser|null} Current user or null if not authenticated
@@ -118,10 +124,14 @@ export const signIn = async (username, password) => {
           attributesObj.email = username;
         }
         
+        // Store CognitoUser outside React lifecycle to preserve internal state
+        pendingPasswordChangeUser = cognitoUser;
+        pendingPasswordChangeAttributes = attributesObj;
+        pendingPasswordChangeRequiredAttributes = requiredAttributes || [];
+        
         // Return special response so Login component can show password change form
         resolve({
           code: 'NEW_PASSWORD_REQUIRED',
-          cognitoUser: cognitoUser,
           userAttributes: attributesObj,
           requiredAttributes: requiredAttributes || [],
         });
@@ -138,94 +148,99 @@ export const signIn = async (username, password) => {
  * @param {array} requiredAttributes - Required attributes from newPasswordRequired callback
  * @returns {Promise<{token: string, user: object}>} Authentication result
  */
-export const completeNewPasswordChallenge = async (cognitoUser, newPassword, userAttributes = {}, requiredAttributes = []) => {
+export const completeNewPasswordChallenge = async (newPassword, userAttributes = {}, requiredAttributes = []) => {
   return new Promise((resolve, reject) => {
-    // Build attributes map to avoid duplicates - use Map with attribute name as key
-    const attributesMap = new Map();
+    // Use the stored CognitoUser from module scope to preserve internal state
+    const cognitoUser = pendingPasswordChangeUser;
     
+    // Validate cognitoUser
+    if (!cognitoUser) {
+      reject(new Error('CognitoUser object is required. Please sign in again.'));
+      return;
+    }
+
+    // Validate that cognitoUser has the required method
+    if (typeof cognitoUser.completeNewPasswordChallenge !== 'function') {
+      reject(new Error('CognitoUser object is invalid or has lost its internal state'));
+      return;
+    }
+    
+    // Use stored attributes if not provided (for backward compatibility)
+    const safeUserAttributes = userAttributes && Object.keys(userAttributes).length > 0 
+      ? userAttributes 
+      : (pendingPasswordChangeAttributes || {});
+    const safeRequiredAttributes = requiredAttributes && requiredAttributes.length > 0
+      ? requiredAttributes
+      : (pendingPasswordChangeRequiredAttributes || []);
+
+    // Ensure userAttributes is always an object
+    const finalUserAttributes = safeUserAttributes && typeof safeUserAttributes === 'object' ? safeUserAttributes : {};
+    
+    // Ensure requiredAttributes is always an array
+    const finalRequiredAttributes = Array.isArray(safeRequiredAttributes) ? safeRequiredAttributes : [];
+
     // List of read-only attributes we should never try to set
     const readOnlyAttributes = ['sub', 'email_verified', 'phone_number_verified', 'cognito:user_status'];
     
-    // Process required attributes
-    if (requiredAttributes && Array.isArray(requiredAttributes) && requiredAttributes.length > 0) {
-      requiredAttributes.forEach(attrName => {
+    // Build attributes as a PLAIN OBJECT (not array of CognitoUserAttribute)
+    // The SDK's completeNewPasswordChallenge expects { attributeName: value } format
+    const attributesObject = {};
+    
+    // Only process attributes if requiredAttributes is provided and has items
+    if (finalRequiredAttributes && finalRequiredAttributes.length > 0) {
+      finalRequiredAttributes.forEach(attrName => {
         // Skip read-only attributes
         if (readOnlyAttributes.includes(attrName)) {
           return;
         }
         
-        // Skip if we already have this attribute
-        if (attributesMap.has(attrName)) {
-          return;
-        }
+        // Get attribute value from userAttributes
+        let attrValue = null;
         
-        // Check if attribute exists in userAttributes with a valid value
-        if (userAttributes[attrName] && String(userAttributes[attrName]).trim() !== '') {
-          const attrValue = String(userAttributes[attrName]).trim();
-          attributesMap.set(attrName, attrValue);
+        if (finalUserAttributes[attrName] && String(finalUserAttributes[attrName]).trim() !== '') {
+          // Use the value from userAttributes if it exists and is not empty
+          attrValue = String(finalUserAttributes[attrName]).trim();
         } else if (attrName === 'name') {
           // Generate name from email if name is required but not provided
-          const email = userAttributes.email || '';
+          // This is necessary because Cognito requires the name attribute
+          const email = finalUserAttributes.email || '';
           if (email) {
-            const nameFromEmail = email.split('@')[0].trim() || 'User';
-            attributesMap.set('name', nameFromEmail);
+            // Extract name from email (part before @)
+            const nameFromEmail = email.split('@')[0].trim();
+            // Capitalize first letter
+            attrValue = nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1).toLowerCase();
           } else {
             // Fallback if no email
-            attributesMap.set('name', 'User');
+            attrValue = 'User';
           }
+        }
+        
+        // Only add attribute if we have a valid value
+        if (attrValue && attrValue.trim() !== '') {
+          attributesObject[attrName] = attrValue.trim();
         }
       });
     }
-    
-    // Convert map to array of CognitoUserAttribute objects
-    // Create a fresh array to avoid any serialization issues
-    const attributes = [];
-    attributesMap.forEach((value, name) => {
-      // Only add if value is not empty
-      if (value && String(value).trim() !== '') {
-        try {
-          const attr = new CognitoUserAttribute({
-            Name: String(name),
-            Value: String(value).trim(),
-          });
-          // Verify it's a valid CognitoUserAttribute
-          if (attr && attr.Name && attr.Value) {
-            attributes.push(attr);
-          }
-        } catch (e) {
-          console.error(`Error creating attribute ${name}:`, e);
-        }
-      }
-    });
     
     // Debug logging
-    console.log('Password change - Required attributes:', requiredAttributes);
-    console.log('Password change - User attributes:', userAttributes);
-    console.log('Password change - Attributes array length:', attributes.length);
-    console.log('Password change - Attributes to send:', attributes.map(a => ({ Name: a.Name, Value: a.Value })));
-    console.log('Password change - Is array?', Array.isArray(attributes));
-
-    // Workaround for SDK serialization bug:
-    // If we have attributes, ensure they're in a clean array format
-    // The SDK sometimes has issues serializing CognitoUserAttribute arrays
-    let attributesToPass;
-    if (attributes.length === 0) {
-      attributesToPass = undefined;
-    } else {
-      // Recreate attributes as fresh objects to avoid any serialization issues
-      attributesToPass = attributes.map(attr => {
-        return new CognitoUserAttribute({
-          Name: String(attr.Name),
-          Value: String(attr.Value),
-        });
-      });
-    }
+    console.log('completeNewPasswordChallenge - Required attributes:', finalRequiredAttributes);
+    console.log('completeNewPasswordChallenge - User attributes:', finalUserAttributes);
+    console.log('completeNewPasswordChallenge - Attributes object:', attributesObject);
     
-    console.log('Password change - Final attributes to pass:', attributesToPass ? attributesToPass.length : 'undefined');
+    // Only pass attributes object if it has values, otherwise pass undefined
+    const finalAttributes = Object.keys(attributesObject).length > 0 ? attributesObject : undefined;
+    
+    console.log('completeNewPasswordChallenge - Final attributes:', finalAttributes);
+    
+    // Ensure cognitoUser is still valid before calling
+    if (!cognitoUser || typeof cognitoUser.completeNewPasswordChallenge !== 'function') {
+      reject(new Error('CognitoUser object is invalid. Please sign in again.'));
+      return;
+    }
     
     cognitoUser.completeNewPasswordChallenge(
       newPassword,
-      attributesToPass,
+      finalAttributes,
       {
         onSuccess: (result) => {
           const token = result.getIdToken().getJwtToken();
@@ -234,11 +249,32 @@ export const completeNewPasswordChallenge = async (cognitoUser, newPassword, use
             email: result.getIdToken().payload.email || '',
             sub: result.getIdToken().payload.sub,
           };
+          // Clear stored values after successful password change
+          pendingPasswordChangeUser = null;
+          pendingPasswordChangeAttributes = null;
+          pendingPasswordChangeRequiredAttributes = null;
+          
           resolve({ token, user });
         },
         onFailure: (err) => {
           console.error('Password change error:', err);
           console.error('Password change error details:', JSON.stringify(err, null, 2));
+          
+          // DON'T clear stored values on password policy errors
+          // Only clear on authentication/session errors
+          // This allows the user to retry with a valid password
+          const isSessionError = err.code === 'NotAuthorizedException' || 
+                                  err.code === 'ExpiredCodeException' ||
+                                  err.message?.includes('session');
+          
+          if (isSessionError) {
+            // Clear stored values only for session errors
+            pendingPasswordChangeUser = null;
+            pendingPasswordChangeAttributes = null;
+            pendingPasswordChangeRequiredAttributes = null;
+          }
+          // For password policy errors, keep the CognitoUser so user can retry
+          
           reject(new Error(err.message || err.code || 'Failed to set new password'));
         },
       }

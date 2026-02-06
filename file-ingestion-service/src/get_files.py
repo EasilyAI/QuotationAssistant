@@ -320,7 +320,7 @@ def assemble_chunked_products(items):
 def get_catalog_products(event, context):
     """
     Get all products for a CATALOG file from the catalog products table.
-    Catalog products are stored as a single document per file.
+    Catalog products are stored in chunks, so we need to query all chunks and assemble them.
     """
     print(f"[get_catalog_products] Starting request")
     
@@ -342,13 +342,27 @@ def get_catalog_products(event, context):
             "headers": get_cors_headers(),
         }
     
-    # Get products from catalog products table
+    # Get products from catalog products table (query all chunks)
     table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
     try:
         print(f"[get_catalog_products] Querying table {CATALOG_PRODUCTS_TABLE} for fileId: {file_id}")
-        response = table.get_item(Key={"fileId": file_id})
         
-        if "Item" not in response:
+        # Query all chunks for this file
+        from boto3.dynamodb.conditions import Key
+        response = table.query(
+            KeyConditionExpression=Key("fileId").eq(file_id)
+        )
+        chunks = response.get("Items", [])
+        
+        # Continue paginating if needed
+        while response.get("LastEvaluatedKey"):
+            response = table.query(
+                KeyConditionExpression=Key("fileId").eq(file_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            chunks.extend(response.get("Items", []))
+        
+        if not chunks:
             print(f"[get_catalog_products] No products found for file {file_id}")
             return {
                 "statusCode": 404,
@@ -361,20 +375,19 @@ def get_catalog_products(event, context):
                 "headers": get_cors_headers(),
             }
         
-        document = response["Item"]
-        document_json = json.loads(json.dumps(document, default=str))
-        products = document_json.get("products", [])
+        # Assemble products from chunks (similar to price list products)
+        all_products, metadata = assemble_chunked_products(chunks)
         
-        print(f"[get_catalog_products] Found {len(products)} products for file {file_id}")
+        print(f"[get_catalog_products] Found {len(all_products)} products for file {file_id} in {len(chunks)} chunks")
         
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "fileId": file_id,
-                "products": products,
-                "count": len(products),
-                "sourceFile": document_json.get("sourceFile", ""),
-                "createdAt": document_json.get("createdAt", 0),
+                "products": all_products,
+                "count": len(all_products),
+                "sourceFile": metadata.get("sourceFile", ""),
+                "createdAt": metadata.get("createdAt", 0),
                 "businessFileType": "Catalog"
             }),
             "headers": get_cors_headers(),
@@ -382,6 +395,8 @@ def get_catalog_products(event, context):
         
     except Exception as e:
         print(f"[get_catalog_products] ERROR: Failed to get products: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "Failed to get products"}),
@@ -543,27 +558,88 @@ def update_catalog_products(event, context):
 
     table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
     files_table = dynamodb.Table(FILES_TABLE)
+    
     try:
-        sanitized_products = convert_floats_to_decimal(products)
-        response = table.update_item(
-            Key={"fileId": file_id},
-            UpdateExpression="SET #products = :products, #productsCount = :count, #updatedAt = :updatedAt",
-            ExpressionAttributeNames={
-                "#products": "products",
-                "#productsCount": "productsCount",
-                "#updatedAt": "updatedAt",
-            },
-            ExpressionAttributeValues={
-                ":products": sanitized_products,
-                ":count": products_count,
-                ":updatedAt": timestamp,
-            },
-            ConditionExpression="attribute_exists(fileId)",
-            ReturnValues="ALL_NEW",
+        # First, get existing chunks to preserve metadata (sourceFile, createdAt)
+        response = table.query(
+            KeyConditionExpression=Key("fileId").eq(file_id)
         )
-
-        updated_item = response.get("Attributes", {})
-        updated_item_native = convert_decimals_to_native(updated_item)
+        existing_chunks = response.get("Items", [])
+        
+        # Continue paginating if needed
+        while response.get("LastEvaluatedKey"):
+            response = table.query(
+                KeyConditionExpression=Key("fileId").eq(file_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            existing_chunks.extend(response.get("Items", []))
+        
+        # Get metadata from chunk 0 if it exists
+        metadata = {}
+        if existing_chunks:
+            # Sort by chunkIndex to find chunk 0
+            existing_chunks.sort(key=lambda x: int(x.get("chunkIndex", 0)))
+            chunk_0 = existing_chunks[0]
+            if chunk_0.get("chunkIndex") == 0 or chunk_0.get("chunkIndex") == "0":
+                metadata = {
+                    "sourceFile": chunk_0.get("sourceFile", ""),
+                    "createdAt": chunk_0.get("createdAt", timestamp),
+                    "createdAtIso": chunk_0.get("createdAtIso", iso_timestamp),
+                }
+        
+        # Delete all existing chunks
+        print(f"[update_catalog_products] Deleting {len(existing_chunks)} existing chunks")
+        for chunk in existing_chunks:
+            try:
+                table.delete_item(
+                    Key={
+                        "fileId": file_id,
+                        "chunkIndex": chunk.get("chunkIndex")
+                    }
+                )
+            except Exception as e:
+                print(f"[update_catalog_products] WARNING: Failed to delete chunk {chunk.get('chunkIndex')}: {e}")
+        
+        # Convert products to Decimal format
+        sanitized_products = convert_floats_to_decimal(products)
+        
+        # Re-chunk the updated products (using same logic as price list products)
+        def split_products_into_chunks(products, chunk_size=500):
+            """Split a list of products into chunks for DynamoDB storage."""
+            if not products:
+                return [[]]  # Return one empty chunk for metadata
+            chunks = []
+            for i in range(0, len(products), chunk_size):
+                chunks.append(products[i:i + chunk_size])
+            return chunks
+        
+        chunks = split_products_into_chunks(sanitized_products, chunk_size=500)
+        total_chunks = len(chunks)
+        
+        print(f"[update_catalog_products] Splitting {len(sanitized_products)} products into {total_chunks} chunks")
+        
+        # Save new chunks
+        for chunk_idx, chunk_products in enumerate(chunks):
+            item = {
+                "fileId": file_id,
+                "chunkIndex": chunk_idx,
+                "products": chunk_products,
+                "productsInChunk": len(chunk_products),
+                "updatedAt": timestamp,
+                "updatedAtIso": iso_timestamp,
+            }
+            
+            # Add metadata to chunk 0 (preserve original metadata if available)
+            if chunk_idx == 0:
+                item["sourceFile"] = metadata.get("sourceFile", "")
+                item["createdAt"] = metadata.get("createdAt", timestamp)
+                item["createdAtIso"] = metadata.get("createdAtIso", iso_timestamp)
+                item["productsCount"] = len(sanitized_products)
+                item["totalChunks"] = total_chunks
+            
+            table.put_item(Item=item)
+            print(f"[update_catalog_products] Saved chunk {chunk_idx + 1}/{total_chunks} with {len(chunk_products)} products")
+        
         print(f"[update_catalog_products] Successfully updated products for file {file_id}")
 
         # Also update the FILES_TABLE with reviewedProductsCount and updatedAtIso
@@ -592,16 +668,21 @@ def update_catalog_products(event, context):
             "body": json.dumps(
                 {
                     "fileId": file_id,
-                    "products": updated_item_native.get("products", []),
-                    "count": updated_item_native.get("productsCount", products_count),
-                    "updatedAt": updated_item_native.get("updatedAt", timestamp),
+                    "products": sanitized_products,
+                    "count": products_count,
+                    "updatedAt": timestamp,
                     "reviewedProductsCount": reviewed_count,
                 }
             ),
             "headers": get_cors_headers(),
         }
-    except table.meta.client.exceptions.ConditionalCheckFailedException:
-        print(f"[update_catalog_products] ERROR: fileId {file_id} not found")
+    except Exception as e:
+        print(f"[update_catalog_products] ERROR: Failed to update products: {e}")
+        import traceback
+        traceback.print_exc()
+        # Check if it's a "not found" error
+        if "ConditionalCheckFailedException" in str(type(e)) or "not found" in str(e).lower():
+            print(f"[update_catalog_products] ERROR: fileId {file_id} not found")
         return {
             "statusCode": 404,
             "body": json.dumps({"error": "File not found"}),
@@ -2362,21 +2443,44 @@ def resolve_catalog_product_pointers(catalog_product_pointers: List[Dict[str, An
                 pointers_by_file[file_id] = []
             pointers_by_file[file_id].append(pointer)
     
-    # Fetch catalog products for each file
+    # Fetch catalog products for each file (now chunked, so we need to query all chunks)
     for file_id, pointers in pointers_by_file.items():
         try:
-            response = catalog_products_table.get_item(Key={"fileId": file_id})
-            catalog_doc = response.get("Item")
+            # Query all chunks for this file
+            response = catalog_products_table.query(
+                KeyConditionExpression=Key("fileId").eq(file_id)
+            )
+            chunks = response.get("Items", [])
             
-            if not catalog_doc:
+            # Continue paginating if needed
+            while response.get("LastEvaluatedKey"):
+                response = catalog_products_table.query(
+                    KeyConditionExpression=Key("fileId").eq(file_id),
+                    ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                chunks.extend(response.get("Items", []))
+            
+            if not chunks:
                 print(f"[resolve_catalog_product_pointers] Catalog document not found: fileId={file_id}")
                 # Add pointers as-is if document not found
                 resolved_products.extend(pointers)
                 continue
             
-            # Convert to native types
-            catalog_data = convert_decimals_to_native(catalog_doc)
-            products_list = catalog_data.get("products", [])
+            # Sort chunks by chunkIndex and assemble products
+            chunks.sort(key=lambda x: int(x.get("chunkIndex", 0)))
+            all_products = []
+            metadata = {}
+            
+            for chunk in chunks:
+                chunk_data = convert_decimals_to_native(chunk)
+                chunk_products = chunk_data.get("products", [])
+                all_products.extend(chunk_products)
+                
+                # Get metadata from chunk 0
+                if chunk.get("chunkIndex") == 0 or chunk.get("chunkIndex") == "0":
+                    metadata = chunk_data
+            
+            products_list = all_products
             
             # Resolve each pointer by finding the matching product in the document
             for pointer in pointers:

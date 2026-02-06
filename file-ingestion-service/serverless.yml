@@ -32,6 +32,12 @@ custom:
   priceListProductsTable: hb-pricelist-products
   # Production frontend URL (change this when deploying to production)
   productionFrontendUrl: ${env:PRODUCTION_FRONTEND_URL, 'https://main.d1xymtccqgi62h.amplifyapp.com'}
+  pythonRequirements:
+    # Use Python 3.11 for Lambda packaging
+    # Set SLS_PYTHON_BIN env var to point to your Python 3.11 installation
+    # Example: export SLS_PYTHON_BIN=~/.pyenv/versions/3.11.9/bin/python
+    # Falls back to 'python' if not set (will use pyenv local version if set)
+    pythonBin: ${env:SLS_PYTHON_BIN, 'python'}
 
 provider:
   name: aws
@@ -330,7 +336,7 @@ functions:
   # Triggered whenever a file is uploaded to the bucket (via presigned URL)
   processUploadedFile:
     handler: src/process_upload_file.process_uploaded_file
-    timeout: 45  # 5 minutes for Textract processing
+    timeout: 300  # 5 minutes for Textract processing (handles large files up to ~10MB)
     layers:
       - { Ref: SharedLambdaLayer }
     events:
@@ -365,9 +371,13 @@ resources:
         AttributeDefinitions:
           - AttributeName: fileId
             AttributeType: S
+          - AttributeName: chunkIndex
+            AttributeType: N
         KeySchema:
           - AttributeName: fileId
             KeyType: HASH
+          - AttributeName: chunkIndex
+            KeyType: RANGE
 
     ProductsTable:
       Type: AWS::DynamoDB::Table

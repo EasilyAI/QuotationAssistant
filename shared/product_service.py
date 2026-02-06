@@ -7,6 +7,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
 from .product_types import ProductData, strip_catalog_snapshots
 from .serialization import convert_decimals_to_native
@@ -58,58 +59,86 @@ def _resolve_catalog_product_pointers(
     resolved: List[Dict[str, Any]] = []
 
     for file_id, pointers in pointers_by_file.items():
-        response = table.get_item(Key={"fileId": file_id})
-        document = response.get("Item")
-        if not document:
+        # Query all chunks for this file (catalog products are now chunked)
+        try:
+            response = table.query(KeyConditionExpression=Key("fileId").eq(file_id))
+            chunks = response.get("Items", [])
+            
+            # Continue paginating if needed
+            while response.get("LastEvaluatedKey"):
+                response = table.query(
+                    KeyConditionExpression=Key("fileId").eq(file_id),
+                    ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                chunks.extend(response.get("Items", []))
+            
+            if not chunks:
+                resolved.extend(pointers)
+                continue
+            
+            # Sort chunks by chunkIndex and assemble products
+            chunks.sort(key=lambda x: int(x.get("chunkIndex", 0)))
+            all_products = []
+            metadata = {}
+            
+            for chunk in chunks:
+                chunk_products = _convert_decimals(chunk.get("products", []))
+                all_products.extend(chunk_products)
+                
+                # Get metadata from chunk 0
+                if chunk.get("chunkIndex") == 0 or chunk.get("chunkIndex") == "0":
+                    metadata = chunk
+            
+            # Catalog file metadata (S3 key, file name, etc.) lives on chunk 0
+            catalog_file_key = metadata.get("sourceFile")  # Note: was "fileKey", now "sourceFile"
+            catalog_file_name = metadata.get("fileName")
+            products = all_products
+
+            for pointer in pointers:
+                table_index = pointer.get("tableIndex")
+                product_id = pointer.get("productId")
+                matched = next(
+                    (
+                        p
+                        for p in products
+                        if p.get("orderingNumber") == ordering_number
+                        or (table_index is not None and p.get("tableIndex") == table_index)
+                        or (product_id is not None and p.get("id") == product_id)
+                    ),
+                    None,
+                )
+
+                if matched:
+                    # Attach document-level file metadata so callers can access S3 key directly
+                    enriched = {
+                        **matched,
+                        "_fileId": file_id,
+                    }
+                    # Prefer explicit catalog fileKey on the document; fall back to any pointer-level fileKey
+                    file_key = catalog_file_key or pointer.get("fileKey")
+                    if file_key:
+                        enriched["_fileKey"] = file_key
+                    if catalog_file_name:
+                        enriched["_fileName"] = catalog_file_name
+
+                    resolved.append(enriched)
+                else:
+                    # No matched product row; still attach file metadata to pointer for best effort
+                    enriched_pointer = {
+                        **pointer,
+                        "_fileId": file_id,
+                    }
+                    file_key = catalog_file_key or pointer.get("fileKey")
+                    if file_key:
+                        enriched_pointer["_fileKey"] = file_key
+                    if catalog_file_name:
+                        enriched_pointer["_fileName"] = catalog_file_name
+
+                    resolved.append(enriched_pointer)
+        except Exception as e:
+            # If query fails, add pointers as-is
+            print(f"[_resolve_catalog_product_pointers] ERROR resolving pointers for fileId={file_id}: {e}")
             resolved.extend(pointers)
-            continue
-
-        products = _convert_decimals(document.get("products", []))
-        # Catalog file metadata (S3 key, file name, etc.) lives on the catalog-products document
-        catalog_file_key = document.get("fileKey")
-        catalog_file_name = document.get("fileName")
-
-        for pointer in pointers:
-            table_index = pointer.get("tableIndex")
-            product_id = pointer.get("productId")
-            matched = next(
-                (
-                    p
-                    for p in products
-                    if p.get("orderingNumber") == ordering_number
-                    or (table_index is not None and p.get("tableIndex") == table_index)
-                    or (product_id is not None and p.get("id") == product_id)
-                ),
-                None,
-            )
-
-            if matched:
-                # Attach document-level file metadata so callers can access S3 key directly
-                enriched = {
-                    **matched,
-                    "_fileId": file_id,
-                }
-                # Prefer explicit catalog fileKey on the document; fall back to any pointer-level fileKey
-                file_key = catalog_file_key or pointer.get("fileKey")
-                if file_key:
-                    enriched["_fileKey"] = file_key
-                if catalog_file_name:
-                    enriched["_fileName"] = catalog_file_name
-
-                resolved.append(enriched)
-            else:
-                # No matched product row; still attach file metadata to pointer for best effort
-                enriched_pointer = {
-                    **pointer,
-                    "_fileId": file_id,
-                }
-                file_key = catalog_file_key or pointer.get("fileKey")
-                if file_key:
-                    enriched_pointer["_fileKey"] = file_key
-                if catalog_file_name:
-                    enriched_pointer["_fileName"] = catalog_file_name
-
-                resolved.append(enriched_pointer)
 
     return resolved
 

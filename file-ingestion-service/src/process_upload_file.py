@@ -130,7 +130,13 @@ def update_file_status(file_id, status, **kwargs):
 def save_products_to_catalog_products_table(file_id, s3_key, event_payloads):
     """
     Save extracted products to catalog products table for review.
-    Stores ALL products as ONE document with fileId as the primary key.
+    Uses chunked storage to stay within DynamoDB's 400KB item limit.
+    
+    Table structure:
+    - fileId (PK): Partition Key
+    - chunkIndex (SK): Sort Key (0, 1, 2, ...)
+    
+    Chunk 0 contains metadata, all chunks contain products array.
     
     Args:
         file_id: File ID associated with these products
@@ -142,6 +148,7 @@ def save_products_to_catalog_products_table(file_id, s3_key, event_payloads):
     """
     table = dynamodb.Table(CATALOG_PRODUCTS_TABLE)
     timestamp = int(time.time() * 1000)
+    timestamp_iso = datetime.utcnow().isoformat() + 'Z'
     
     print(f"[save_products_to_catalog_products_table] Starting to process {len(event_payloads)} event payloads")
     
@@ -190,20 +197,37 @@ def save_products_to_catalog_products_table(file_id, s3_key, event_payloads):
     
     print(f"[save_products_to_catalog_products_table] Finished processing all payloads. Total products collected: {len(all_products)}")
     
-    # Save all products as ONE document with fileId as the key
+    # Split products into chunks to stay within DynamoDB's 400KB limit
     try:
-        document = {
-            "fileId": file_id,
-            "sourceFile": s3_key,
-            "createdAt": timestamp,
-            "updatedAt": timestamp,
-            "products": all_products,
-            "productsCount": len(all_products)
-        }
+        # Split products into chunks (using same chunk_size as price list products)
+        chunks = split_products_into_chunks(all_products, chunk_size=500)
+        total_chunks = len(chunks)
         
-        print(f"[save_products_to_catalog_products_table] Attempting to save document with {len(all_products)} products to DynamoDB...")
-        table.put_item(Item=document)
-        print(f"[save_products_to_catalog_products_table] SUCCESS: Saved {len(all_products)} products as one document with fileId: {file_id}")
+        print(f"[save_products_to_catalog_products_table] Splitting {len(all_products)} products into {total_chunks} chunks")
+        
+        # Save each chunk
+        for chunk_idx, chunk_products in enumerate(chunks):
+            item = {
+                "fileId": file_id,
+                "chunkIndex": chunk_idx,
+                "products": chunk_products,
+                "productsInChunk": len(chunk_products),
+                "updatedAt": timestamp,
+                "updatedAtIso": timestamp_iso,
+            }
+            
+            # Add metadata to chunk 0
+            if chunk_idx == 0:
+                item["sourceFile"] = s3_key
+                item["createdAt"] = timestamp
+                item["createdAtIso"] = timestamp_iso
+                item["productsCount"] = len(all_products)
+                item["totalChunks"] = total_chunks
+            
+            table.put_item(Item=item)
+            print(f"[save_products_to_catalog_products_table] Saved chunk {chunk_idx + 1}/{total_chunks} with {len(chunk_products)} products")
+        
+        print(f"[save_products_to_catalog_products_table] SUCCESS: Saved {len(all_products)} products in {total_chunks} chunks")
         return len(all_products)
         
     except Exception as e:
@@ -1056,7 +1080,7 @@ def process_uploaded_file(event, context):
             )
 
             # Step 4: Wait for job completion with polling
-            max_attempts = 60  # Increased for production (60 attempts * 2 seconds = 2 minutes max)
+            max_attempts = 150  # 150 attempts * 2 seconds = 5 minutes max (handles large files)
             attempt = 0
             status = is_job_complete(job_id, region=AWS_REGION)
             print(f"[process_uploaded_file] Initial job status: {status}")

@@ -12,7 +12,6 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
-  const [cognitoUserForPasswordChange, setCognitoUserForPasswordChange] = useState(null);
   const [userAttributesForPasswordChange, setUserAttributesForPasswordChange] = useState(null);
   const [requiredAttributesForPasswordChange, setRequiredAttributesForPasswordChange] = useState([]);
 
@@ -37,7 +36,8 @@ const Login = () => {
       
       // Check if new password is required
       if (result.code === 'NEW_PASSWORD_REQUIRED') {
-        setCognitoUserForPasswordChange(result.cognitoUser);
+        // CognitoUser is now stored in module scope in authService.js
+        // to preserve its internal authentication state
         setUserAttributesForPasswordChange(result.userAttributes || {});
         setRequiredAttributesForPasswordChange(result.requiredAttributes || []);
         setShowPasswordChange(true);
@@ -64,17 +64,36 @@ const Login = () => {
       return;
     }
 
-    // Validate password strength (basic check)
+    // Validate password policy (AWS Cognito default requirements)
+    const passwordErrors = [];
+    
     if (newPassword.length < 8) {
-      setError('Password must be at least 8 characters long');
+      passwordErrors.push('at least 8 characters');
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      passwordErrors.push('an uppercase letter');
+    }
+    if (!/[a-z]/.test(newPassword)) {
+      passwordErrors.push('a lowercase letter');
+    }
+    if (!/[0-9]/.test(newPassword)) {
+      passwordErrors.push('a number');
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?`~]/.test(newPassword)) {
+      passwordErrors.push('a special character (!@#$%^&*...)');
+    }
+    
+    if (passwordErrors.length > 0) {
+      setError(`Password must contain: ${passwordErrors.join(', ')}`);
       return;
     }
 
     setLoading(true);
 
     try {
+      // CognitoUser is stored in module scope in authService.js
+      // No need to pass it - the function will retrieve it from module scope
       await completeNewPasswordChallenge(
-        cognitoUserForPasswordChange, 
         newPassword,
         userAttributesForPasswordChange,
         requiredAttributesForPasswordChange
@@ -222,7 +241,6 @@ const Login = () => {
                 type="button"
                 onClick={() => {
                   setShowPasswordChange(false);
-                  setCognitoUserForPasswordChange(null);
                   setUserAttributesForPasswordChange(null);
                   setRequiredAttributesForPasswordChange([]);
                   setNewPassword('');
